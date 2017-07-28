@@ -17,7 +17,8 @@ class Stat(object):
     def update(self, animal, dt):
         if self.updater is not None:
             self.value += dt*animal.traits[self.updater].value
-            print('Updated {0} by {1}, it\'s now {2}'.format(self.name, dt*animal.traits[self.updater].value, self.value ))
+        else:
+            self.value += dt
 
 
 class Age(Stat):

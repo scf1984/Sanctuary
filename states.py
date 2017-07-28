@@ -1,10 +1,11 @@
 from abc import ABCMeta, abstractmethod
 
+from helper import Network
+
 
 class ABCState(metaclass=ABCMeta):
     @abstractmethod
     def __init__(self): pass
-
     @abstractmethod
     def update(self, animal, dt): pass
 
@@ -13,8 +14,7 @@ class ABCState(metaclass=ABCMeta):
 
 class Idle(ABCState):
     def __init__(self, animal):
-        super().__init__()
-
+        pass
 
     def update(self, animal, dt):
         pass
@@ -29,6 +29,10 @@ class Prowling(ABCState):
 
 
 class Chasing(ABCState):
+    pass
+
+
+class Panting(ABCState):
     pass
 
 
@@ -50,3 +54,10 @@ class Thirsty(ABCState):
 
 class Injured(ABCState):
     pass
+
+
+class StateTransitions(Network):
+    dict = {
+        Chasing: {Panting},
+        Escaping: {Panting}
+    }

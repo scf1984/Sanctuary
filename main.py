@@ -1,50 +1,8 @@
-from heapq import heappush, heappop
-from queue import Queue
-
 import time
+from heapq import heappush, heappop
 
 from entities import Bunny
-
-
-class GENDER(object):
-    MALE = 1
-    FEMALE = 2
-    UNISEX = 3
-    ASEXUAL = 4
-    SPAWN = 5
-
-
-class Tile(object):
-    ground_type = None
-    permanent_object = None
-
-
-class GroundType(object):
-    pass
-
-
-class Sand(GroundType):
-    pass
-
-
-class PermObject(object):
-    pass
-
-
-class Tree(PermObject):
-    pass
-
-
-class Event(object):
-    action_function = None
-    params = None
-    ts = None
-
-    def __lt__(self, other):
-        return self.ts < other.ts
-
-    def apply_event(self):
-        self.action_function(self.params)
+from events import Event
 
 
 class EventHeap(object):
@@ -75,6 +33,11 @@ class World(object):
         for animal in self.animals:
             animal.update(dt)
 
+    def add_event(self, event):
+        if not issubclass(event.__class__, Event):
+            raise TypeError('Tried to create an event from ' + event.__class__.__name__)
+        self.event_heap.put(event)
+
     def process_events(self):
         while self.event_heap.peek() and self.event_heap.peek().ts <= time.time():
             e = self.event_heap.pop()
@@ -90,20 +53,21 @@ class Universe(object):
 
 
 class WorldRunner(object):
-    @staticmethod
-    def run():
+    def __init__(self, **kwargs):
+        self.world = World(kwargs)
+
+    def run(self):
         import time
         loop_tick = 0.25
-        world = World(world_map=[])
         prev_time = time.time()
         while True:
             now = time.time()
             dt = now - prev_time
             prev_time = now
 
-            world.process_events()
-            world.update(dt)
-            world.render()
+            self.world.process_events()
+            self.world.update(dt)
+            self.world.render()
 
             sleep_time = max(loop_tick - (time.time() - prev_time), 0)
             print(str(sleep_time))
@@ -111,4 +75,4 @@ class WorldRunner(object):
 
 
 if __name__ == '__main__':
-    WorldRunner.run()
+    WorldRunner(world_map=[]).run()
