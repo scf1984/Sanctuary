@@ -4,24 +4,33 @@ from helper import Network
 
 
 class ABCState(metaclass=ABCMeta):
+    def __init__(self, animal):
+        self.animal = animal
+
     @abstractmethod
-    def __init__(self): pass
-    @abstractmethod
-    def update(self, animal, dt): pass
+    def update(self, dt): pass
 
     pass
 
 
 class Idle(ABCState):
     def __init__(self, animal):
-        pass
+        super().__init__(animal)
 
-    def update(self, animal, dt):
+    def update(self, dt):
         pass
 
 
 class Walking(ABCState):
-    pass
+    def __init__(self, animal, destination, speed):
+        super().__init__(animal)
+        self.destination = destination
+        self.speed = speed
+
+    def update(self, dt):
+        self.animal.location.go_to(self.destination, dt * self.speed)
+        if self.animal.location == self.destination:
+            self.animal.change_state(Idle(self.animal))
 
 
 class Prowling(ABCState):
@@ -59,5 +68,6 @@ class Injured(ABCState):
 class StateTransitions(Network):
     dict = {
         Chasing: {Panting},
-        Escaping: {Panting}
+        Escaping: {Panting},
+        Panting: {Walking}
     }

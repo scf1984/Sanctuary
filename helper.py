@@ -9,3 +9,7 @@ class Network(object):
 
     def __getitem__(self, item):
         return self.dict.get(item, self.default)
+
+    @classmethod
+    def edge_exists(cls, source, target):
+        return target in dict[source]

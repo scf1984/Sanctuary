@@ -1,8 +1,7 @@
+from random import seed
 from unittest import TestCase
 
 from traits import Metabolism, AgingRate
-
-from random import random, seed
 
 
 class TraitTests(TestCase):
