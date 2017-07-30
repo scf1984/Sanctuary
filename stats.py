@@ -23,13 +23,13 @@ class Stat(object):
 
 class Age(Stat):
     name = 'age'
-    updater = AgingRate.name
+    updater = AgingRate
 
 
 class Hunger(Stat):
     is_state_setter = True
     name = 'hunger'
-    updater = Metabolism.name
+    updater = Metabolism
 
 
 # class Health(Stat):

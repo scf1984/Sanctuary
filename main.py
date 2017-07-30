@@ -1,5 +1,11 @@
+from random import random
+from tkinter import Canvas, Tk
+
+from entities import Bunny
+from events import ChangeAnimalStateEvent
+from location import Location
+from states import Walking
 from world import World
-from tkinter import Canvas, Tk, mainloop
 
 
 class Universe(object):
@@ -9,12 +15,10 @@ class Universe(object):
 
 class WorldRunner(object):
     def __init__(self, **kwargs):
-        self.world = World(**kwargs)
+        self.world = kwargs.get('world')
         self.canvas = kwargs.get('canvas')
         if self.canvas is not None:
             self.canvas.pack()
-            y = int(100 / 2)
-            self.canvas.create_line(0, y, 100, y, fill="#476042")
 
     def run(self):
         import time
@@ -27,6 +31,7 @@ class WorldRunner(object):
 
             self.world.process_events()
             self.world.update(dt)
+            self.world.find_animal_interactions()
             if self.canvas is not None:
                 self.world.render(self.canvas)
 
@@ -36,6 +41,19 @@ class WorldRunner(object):
 
 
 if __name__ == '__main__':
+    world_size = (500, 500)
     master = Tk()
     master.update()
-    WorldRunner(world_map=[], canvas=Canvas(master, width=500, height=500)).run()
+    w = World(world_map=[], animals=[Bunny(location=Location(250, 250)) for _ in range(50)])
+    wr = WorldRunner(world=w, canvas=Canvas(master, width=world_size[0], height=world_size[1]))
+    for b in w.animals:
+        w.add_event(ChangeAnimalStateEvent(animal=b,
+                                           future_state=Walking(b,
+                                                          Location.random(
+                                                              (0, 500),
+                                                              (0, 500)
+                                                          ),
+                                                          5.0)
+                                           , dt=random()*20)
+                    )
+    wr.run()

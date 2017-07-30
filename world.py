@@ -1,8 +1,36 @@
 import time
 from heapq import heappop, heappush
+from itertools import product
+from math import floor, ceil
 
-from entities import Bunny
 from events import Event
+from traits import SightRange
+
+
+class InteractionGrid(object):
+    def __init__(self, cell_size):
+        self.interactions = set()
+        self.cell_size = cell_size
+        self.cells = dict()
+
+    def add_entity(self, entity):
+        x, y = (entity.location * (1 / self.cell_size)).coords
+        i, j = ceil(x), ceil(y)
+        cell = (i, j)
+        if cell not in self.cells:
+            self.cells[cell] = set()
+
+        neighbors = set.union(*[self.cells[c] for c in product([i+1, i-1, i], [j+1, j-1, j]) if c in self.cells])
+
+        for e in neighbors:
+            self.interactions.add((entity, e))
+            self.interactions.add((e, entity))
+        self.cells[cell].add(entity)
+
+    def get_interactions(self, entities):
+        for e in entities:
+            self.add_entity(e)
+        return self.interactions
 
 
 class EventHeap(object):
@@ -19,14 +47,14 @@ class EventHeap(object):
         if issubclass(event.__class__, Event):
             heappush(self.heap, event)
         else:
-            raise ValueError('Got a non-Event pushed into the event heap: {0}'.format(event))
+            raise TypeError('Got a non-Event pushed into the event heap: {0}'.format(event))
 
 
 class World(object):
-    def __init__(self, world_map, **kwargs):
+    def __init__(self, world_map, animals):
         self.world_map = world_map
         self.grid = [[None for _ in range(100)] for _ in range(100)]
-        self.animals = [Bunny() for _ in range(5)]
+        self.animals = animals
         self.event_heap = EventHeap()
 
     def update(self, dt):
@@ -38,12 +66,20 @@ class World(object):
             raise TypeError('Tried to create an event from ' + event.__class__.__name__)
         self.event_heap.put(event)
 
+    def find_animal_interactions(self):
+        cell_size = max(a.traits[SightRange].value for a in self.animals) * 2
+        interactions = InteractionGrid(cell_size).get_interactions(self.animals)
+        for i in interactions:
+            pass  # TODO: Decide if interactions take place!
+        del interactions
+
     def process_events(self):
         while self.event_heap.peek() and self.event_heap.peek().ts <= time.time():
             e = self.event_heap.pop()
             e.apply_event()
 
     def render(self, canvas):
+        canvas.delete('all')
         canvas.create_line(0, 0, 0, 500, fill="green", dash=(10, 10), width=3)
         canvas.create_line(0, 0, 500, 0, fill="green", dash=(10, 10), width=3)
         canvas.create_line(0, 500, 500, 500, fill="green", dash=(10, 10), width=3)

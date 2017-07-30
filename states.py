@@ -1,6 +1,7 @@
 from abc import ABCMeta, abstractmethod
 
 from helper import Network
+from location import Velocity
 
 
 class ABCState(metaclass=ABCMeta):
@@ -10,10 +11,14 @@ class ABCState(metaclass=ABCMeta):
     @abstractmethod
     def update(self, dt): pass
 
-    pass
+    @abstractmethod
+    def get_velocity(self): pass
 
 
 class Idle(ABCState):
+    def get_velocity(self):
+        return Velocity(0, 0)
+
     def __init__(self, animal):
         super().__init__(animal)
 
@@ -22,14 +27,17 @@ class Idle(ABCState):
 
 
 class Walking(ABCState):
+    def get_velocity(self):
+        return Velocity(((self.destination - self.animal.location).norm() * self.speed).coords)
+
     def __init__(self, animal, destination, speed):
         super().__init__(animal)
         self.destination = destination
         self.speed = speed
 
     def update(self, dt):
-        self.animal.location.go_to(self.destination, dt * self.speed)
-        if self.animal.location == self.destination:
+        self.animal.location = self.animal.location.go_to(self.destination, dt * self.speed)
+        if self.animal.location is self.destination:
             self.animal.change_state(Idle(self.animal))
 
 

@@ -5,6 +5,7 @@ from location import Location
 
 class TestLocation(TestCase):
     l = Location(2.0, 2)
+    d = Location(0, 2)
 
     def test_init(self):
         with self.assertRaises(ValueError):
@@ -26,4 +27,7 @@ class TestLocation(TestCase):
         self.assertAlmostEqual(self.l * self.l, 8.0)
 
     def test_go_to(self):
-        self.assertAlmostEqual(self.l.go_to(Location(0, 2), 1), Location(1, 2))
+        self.assertAlmostEqual(self.l.go_to(self.d, 1), Location(1, 2))
+
+    def test_go_to_arrive(self):
+        self.assertTrue(self.l.go_to(self.d, 10) is self.d)

@@ -1,5 +1,5 @@
 import math
-import random
+from random import gauss
 
 from helper import get_all_subclasses
 
@@ -14,13 +14,13 @@ class Trait(object):
 
     def __mul__(self, other):
         if self.__class__ != other.__class__:
-            raise ValueError("Cannon inherit two different traits!")
+            raise ValueError("Cannot inherit two different traits!")
         mean = (self.value + other.value) / 2.0
         stddev = math.sqrt((self.value - mean) ** 2 + (other.value - mean) ** 2)
         min_value = min(self.value, other.value) / self.inherit_gain
         max_value = max(self.value, other.value) * self.inherit_gain
         while True:
-            x = random.gauss(mean, stddev)
+            x = gauss(mean, stddev)
             if min_value <= x <= max_value:
                 return self.__class__(value=x)
 
@@ -32,16 +32,19 @@ class Metabolism(Trait):
 class AgingRate(Trait):
     name = 'aging_rate'
 
-# class ThirstRate(Trait):
-#     name = 'thirst_rate'
-#
-#
+
+class ThirstRate(Trait):
+    name = 'thirst_rate'
+
+
 # class MaxSpeed(Trait):
 #     name = 'max_speed'
 #
 #
-# class SightRange(Trait):
-#     name = 'sight_range'
+class SightRange(Trait):
+    name = 'sight_range'
+
+
 #
 #
 # class SightAngle(Trait):
