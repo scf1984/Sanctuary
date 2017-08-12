@@ -1,12 +1,14 @@
 from abc import ABCMeta, abstractmethod
+from random import random, uniform
 
 from helper import Network
-from location import Velocity
+from location import Velocity, Location
+from traits import MaxSpeed, Fidgetiness
 
 
 class ABCState(metaclass=ABCMeta):
-    def __init__(self, animal):
-        self.animal = animal
+    def __init__(self, entities):
+        self.entity = entities
 
     @abstractmethod
     def update(self, dt): pass
@@ -16,29 +18,33 @@ class ABCState(metaclass=ABCMeta):
 
 
 class Idle(ABCState):
-    def get_velocity(self):
-        return Velocity(0, 0)
 
-    def __init__(self, animal):
-        super().__init__(animal)
+    def get_velocity(self):
+        return Velocity.random()
+
+    def __init__(self, entities):
+        super().__init__(entities)
+        self.next_walk_time = uniform(10, 500) / entities.traits[Fidgetiness].value
 
     def update(self, dt):
-        pass
+        self.next_walk_time -= dt
+        if self.next_walk_time <= 0:
+            self.entity.change_state(Walking(self.entity))
 
 
 class Walking(ABCState):
     def get_velocity(self):
-        return Velocity(((self.destination - self.animal.location).norm() * self.speed).coords)
+        return Velocity(((self.destination - self.entity.location).norm() * self.speed).coords)
 
-    def __init__(self, animal, destination, speed):
-        super().__init__(animal)
-        self.destination = destination
-        self.speed = speed
+    def __init__(self, entities, destination=None, speed=None):
+        super().__init__(entities)
+        self.destination = destination or entities.location + Location.random() * 25
+        self.speed = speed or entities.traits[MaxSpeed].value * random() / 3.0
 
     def update(self, dt):
-        self.animal.location = self.animal.location.go_to(self.destination, dt * self.speed)
-        if self.animal.location is self.destination:
-            self.animal.change_state(Idle(self.animal))
+        self.entity.location = self.entity.location.go_to(self.destination, dt * self.speed)
+        if self.entity.location is self.destination:
+            self.entity.change_state(Idle(self.entity))
 
 
 class Prowling(ABCState):
@@ -56,26 +62,20 @@ class Panting(ABCState):
 class Escaping(ABCState):
     pass
 
-
-class InHeat(ABCState):
+class Dying(ABCState):
     pass
 
-
-class Hungry(ABCState):
-    pass
-
-
-class Thirsty(ABCState):
-    pass
-
-
-class Injured(ABCState):
+class Dead(ABCState):
     pass
 
 
 class StateTransitions(Network):
-    dict = {
-        Chasing: {Panting},
-        Escaping: {Panting},
-        Panting: {Walking}
+    edges_dict = {
+        Chasing: {Panting, Dying},
+        Escaping: {Panting, Dying},
+        Panting: {Idle, Dying},
+        Idle: {Walking, Escaping, Prowling, Dying},
+        Walking: {Idle, Escaping, Prowling, Dying},
+        Prowling: {Chasing, Idle, Dying},
+        Dying: {Dead}
     }

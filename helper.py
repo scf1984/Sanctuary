@@ -1,4 +1,4 @@
-import math
+from math import acos, sqrt, pow
 from random import uniform
 
 
@@ -7,16 +7,16 @@ def get_all_subclasses(cls):
 
 
 class Network(object):
-    dict = {}
+    edges_dict = {}
     default = None
     network_base_class = None
 
     def __getitem__(self, item):
-        return self.dict.get(item, self.default)
+        return self.edges_dict.get(item)
 
     @classmethod
     def edge_exists(cls, source, target):
-        return target in dict[source]
+        return target in cls.edges_dict[source]
 
 
 class Vector(object):
@@ -43,15 +43,23 @@ class Vector(object):
             c = Vector
         if isinstance(other, (float, int)):
             return c(self.coords[0] * other, self.coords[1] * other)
-        if isinstance(other, self.__class__):
-            return sum((self.coords[0] * other.coords[0], self.coords[1] * other.coords[1]))
+        return sum((self.coords[0] * other.coords[0], self.coords[1] * other.coords[1]))
+
+    def angle(self, other):
+        nom = self * other
+        den = sqrt(self.square_magnitude() * other.square_magnitude())
+        if den == 0.0 or abs(nom) > abs(den):
+            return 0.0
+        return acos(nom / den)
 
     def norm(self):
-        inverse_magnitude = math.pow(self.square_magnitude(), -0.5)
+        inverse_magnitude = self.square_magnitude()**-0.5
         return self * inverse_magnitude
 
     @classmethod
-    def random(cls, x_range, y_range):
+    def random(cls, x_range=None, y_range=None):
+        if x_range is None:
+            return cls(uniform(-1, 1), uniform(-1, 1)).norm()
         return cls(uniform(*x_range), uniform(*y_range))
 
     def square_magnitude(self):

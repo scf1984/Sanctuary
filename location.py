@@ -26,7 +26,7 @@ class Location(Vector):
 
     @staticmethod
     def square_distance(l1, l2):
-        return (l1 - l2).square_magnitude()
+        return (l1.coords[0] - l2.coords[0])**2 + (l1.coords[1] - l2.coords[1])**2
 
     @staticmethod
     def distance(l1, l2):

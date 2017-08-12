@@ -37,18 +37,22 @@ class ThirstRate(Trait):
     name = 'thirst_rate'
 
 
-# class MaxSpeed(Trait):
-#     name = 'max_speed'
-#
-#
+class MaxSpeed(Trait):
+    name = 'max_speed'
+
+
 class SightRange(Trait):
     name = 'sight_range'
 
 
-#
-#
-# class SightAngle(Trait):
-#     name = 'sight_angle'
+class Fidgetiness(Trait):
+    name = 'Fidgetiness'
+
+
+class SightAngle(Trait):
+    name = 'sight_angle'
+
+
 #
 #
 # class SprintRange(Trait):
@@ -62,10 +66,10 @@ class SightRange(Trait):
 # class Scent(Trait):
 #     name = 'scent_emit'
 #
-#
-# class PregnancyRate(Trait):
-#     name = 'pregnancy_rate'
-#
+
+class PregnancyRate(Trait):
+    name = 'pregnancy_rate'
+
 #
 # class LifeExpectancy(Trait):
 #     name = 'class_expectancy'
@@ -82,3 +86,5 @@ class SightRange(Trait):
 
 
 all_traits = {c.name: c for c in get_all_subclasses(Trait)}
+
+
