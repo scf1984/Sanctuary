@@ -47,7 +47,7 @@ if __name__ == '__main__':
     master = Tk()
     master.update()
     w = World(world_size=world_size, world_map=[])
-    w.entities |= {Bunny(location=Location.random((0, 500), (0, 500)), world=w) for _ in range(250)}
+    w.entities |= {Bunny(location=Location.random((0, world_size[0]), (0, world_size[1])), world=w) for _ in range(500)}
     wr = WorldRunner(world=w, canvas=Canvas(master, width=world_size[0], height=world_size[1]))
     wr.run()
 

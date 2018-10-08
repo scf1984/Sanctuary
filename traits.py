@@ -86,5 +86,3 @@ class PregnancyRate(Trait):
 
 
 all_traits = {c.name: c for c in get_all_subclasses(Trait)}
-
-

@@ -1,3 +1,4 @@
+from abc import ABC, abstractmethod
 from copy import copy
 
 from entity_mixins import Sexual, ReproductionSystem, Asexual
@@ -8,31 +9,37 @@ from traits import all_traits, Metabolism, AgingRate, ThirstRate, SightRange, Fi
     PregnancyRate
 
 
-class FoodChainLevel(object):
+class FoodChainLevel(ABC):
     def eats(self): return {}
 
 
 class Aquavore(FoodChainLevel):
-    def eats(self): return {}
+    def eats(self): return {Water}
 
 
 class Herbivore(FoodChainLevel):
-    def eats(self): return {Grass}
+    @property
+    def eats(self):
+        return set(Aquavore.__subclasses__())
 
 
 class Omnivore(FoodChainLevel):
-    def eats(self): return {Grass, Bunny}
+    @property
+    def eats(self):
+        return set(Herbivore.__subclasses__() + Aquavore.__subclasses__())
 
 
 class Carnivore(FoodChainLevel):
-    def eats(self): return {Bunny}
+    @property
+    def eats(self):
+        return set(Herbivore.__subclasses__() + Omnivore.__subclasses__())
 
 
 class SuperCarnivore(FoodChainLevel):
     def eats(self): return {}
 
 
-class Entity(ReproductionSystem, FoodChainLevel, object):
+class Entity(ReproductionSystem, FoodChainLevel, ABC):
     default_traits = {}
 
     def __mul__(self, other):
@@ -43,8 +50,9 @@ class Entity(ReproductionSystem, FoodChainLevel, object):
         return entity_class(location=self.location, world=self.world,
                             **{k: self.traits[v] * other.traits[v] for k, v in all_traits.items()})
 
+    @abstractmethod
     def is_dead(self):
-        return False
+        pass
 
     def change_state(self, new_state):
         if StateTransitions.edge_exists(self.state.__class__, new_state.__class__):
@@ -75,19 +83,24 @@ class Entity(ReproductionSystem, FoodChainLevel, object):
         return self.state.get_velocity()
 
     def interact(self, other):
-        self.interact_sex(other)
+        if self.__class__ == other.__class__:
+            self.interact_sex(other)
+        if other.__class__ in self.eats:
+            pass  # TODO: self will prowl/chase other.
+        if self.__class__ in other.eats:
+            pass  # TODO: self will avoid/escape other.
 
-        pass  # TODO: Interact with another entity!
-
-
+        pass  # TODO: Any other interactions?
 
 
 class Water(Entity):
-    pass
+    def is_dead(self):
+        pass
 
 
 class Grass(Entity, Asexual, Aquavore):
-    pass
+    def is_dead(self):
+        pass
 
 
 class Bunny(Entity, Sexual, Herbivore):
@@ -103,7 +116,9 @@ class Bunny(Entity, Sexual, Herbivore):
             PregnancyRate: PregnancyRate(50)
         }
     )
-    pass
+
+    def is_dead(self):
+        pass
 
 
 class Wolf(Entity, Sexual, Carnivore):
@@ -119,7 +134,9 @@ class Wolf(Entity, Sexual, Carnivore):
             PregnancyRate: PregnancyRate(5)
         }
     )
-    pass
+
+    def is_dead(self):
+        pass
 
 
 class FoodChain(Network):

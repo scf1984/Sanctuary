@@ -1,34 +1,42 @@
-from abc import ABCMeta
+from abc import abstractmethod, ABC
 
-from math import sin
+from interpolators import Interpolator
 
 
-class ABCInclination(metaclass=ABCMeta):
+class ABCInclination(ABC):
     inclination = 0
 
-    def update(self): pass
-    def get_value(self): pass
+    @abstractmethod
+    def update(self, t):
+        pass
+
+    @abstractmethod
+    def get_value(self, t):
+        pass
 
 
 class InHeat(ABCInclination):
-    def __init__(self, period: float, phase: float):
-        self.period = period
-        self.phase = phase
-        self.dt = 0
+    def get_value(self, t):
+        self.interpolator.get_value(t)
 
-    def update(self, t: float=None, dt: float=None):
-        if t is None:
-            self.dt = dt
-        else:
-            self.dt = t
-        self.inclination = sin(self.phase + self.period / self.dt)
+    def __init__(self, interpolator: Interpolator):
+        self.interpolator = interpolator
+
+    def update(self, t: float):
+        self.inclination = self.interpolator.get_value(t)
 
 
 class Hungry(ABCInclination):
-    pass
+    def update(self, t):
+        pass
+
+    def get_value(self, t):
+        pass
 
 
 class Thirsty(ABCInclination):
-    pass
+    def update(self, t):
+        pass
 
-
+    def get_value(self, t):
+        pass

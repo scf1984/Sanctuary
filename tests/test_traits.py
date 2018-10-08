@@ -17,4 +17,3 @@ class TraitTests(TestCase):
         self.assertAlmostEqual((Metabolism(1) * Metabolism(2)).value, 1.5469065003357403)
         with self.assertRaises(ValueError):
             Metabolism(1)*AgingRate(9)
-

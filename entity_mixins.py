@@ -1,4 +1,4 @@
-from random import sample, choice
+from random import choice
 
 
 class ReproductionSystem(object):
@@ -10,8 +10,9 @@ class ReproductionSystem(object):
 class Sexual(ReproductionSystem):
     def __init__(self):
         self.gender = choice(self.possible_genders())
+        self.baby = None
 
-    def possible_genders(self): return (GENDER.MALE, GENDER.FEMALE)
+    def possible_genders(self): return GENDER.MALE, GENDER.FEMALE
 
     def interact_sex(self, other):
         if other.__class__ == self.__class__:
@@ -25,11 +26,15 @@ class Sexual(ReproductionSystem):
 
 
 class Unisexual(ReproductionSystem):
-    def possible_genders(self): return (GENDER.UNISEX,)
+    @property
+    def possible_genders(self):
+        return GENDER.UNISEX,
 
 
 class Asexual(ReproductionSystem):
-    def possible_genders(self): return (GENDER.ASEXUAL,)
+    @property
+    def possible_genders(self):
+        return GENDER.ASEXUAL,
 
 
 class GENDER(object):
@@ -43,4 +48,3 @@ class GENDER(object):
     @staticmethod
     def is_pregnable(g):
         return g in {GENDER.FEMALE, GENDER.UNISEX}
-

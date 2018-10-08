@@ -1,6 +1,6 @@
 from events import CreateEntityEvent, ChangeEntityEvent
 from helper import get_all_subclasses
-from inclinations import Hungry
+from inclinations import Hungry, InHeat
 from traits import Metabolism, AgingRate, PregnancyRate
 
 
@@ -21,9 +21,10 @@ class Stat(object):
     def update(self, entity, world, dt=None, ds=None):
         if ds is None:
             ds = dt * (entity.traits[self.updater].value or 1.0)
-        if ((self.value - self.threshold) * (self.value + ds - self.threshold) < 0
-            or (self.value - self.threshold) == 0
-            ):
+        if (
+                (self.value - self.threshold) * (self.value + ds - self.threshold) < 0
+                or (self.value - self.threshold) == 0
+        ):
             self.threshold_function(entity)
             if self.inclination not in entity.inclinations:
                 entity.inclinations.add(self.inclination)
@@ -56,7 +57,7 @@ class Pregnancy(Stat):
     threshold = 100
     name = 'pregnancy'
     updater = PregnancyRate
-    inclination = Hungry
+    inclination = InHeat
 
     def threshold_function(self, entity):
         if self.value > self.threshold:
