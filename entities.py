@@ -1,3 +1,4 @@
+from abc import ABC, abstractmethod
 from copy import copy
 
 from entity_mixins import Sexual, ReproductionSystem, Asexual
@@ -18,6 +19,10 @@ class Entity(ReproductionSystem, object):
             entity_class = self.__class__
         return entity_class(location=self.location, world=self.world,
                             traits={k: self.traits[v] * other.traits[v] for k, v in all_traits.items()})
+
+    @abstractmethod
+    def is_dead(self):
+        pass
 
     def change_state(self, new_state):
         self.state = new_state
@@ -59,13 +64,19 @@ class Entity(ReproductionSystem, object):
         return self.state_network.current_state.velocity
 
     def interact(self, other):
-        self.interact_sex(other)
+        if self.__class__ == other.__class__:
+            self.interact_sex(other)
+        if other.__class__ in self.eats:
+            pass  # TODO: self will prowl/chase other.
+        if self.__class__ in other.eats:
+            pass  # TODO: self will avoid/escape other.
 
-        pass  # TODO: Interact with another entity!
+        pass  # TODO: Any other interactions?
 
 
 class Water(Entity):
-    pass
+    def is_dead(self):
+        pass
 
 
 class Grass(Entity, Asexual):
@@ -85,7 +96,9 @@ class Bunny(Entity, Sexual):
             PregnancyRate: PregnancyRate(50)
         }
     )
-    pass
+
+    def is_dead(self):
+        pass
 
 
 class Wolf(Entity, Sexual):
@@ -101,7 +114,9 @@ class Wolf(Entity, Sexual):
             PregnancyRate: PregnancyRate(5)
         }
     )
-    pass
+
+    def is_dead(self):
+        pass
 
 
 class FoodChain(Network):
