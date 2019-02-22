@@ -11,15 +11,24 @@ class Network(object):
     default = None
     network_base_class = None
 
-    def __getitem__(self, item):
-        return self.edges_dict.get(item)
+    def __init__(self, entity):
+        self.entity = entity
+        self.current_state = None
 
-    @classmethod
-    def edge_exists(cls, source, target):
-        return target in cls.edges_dict[source]
+    def __getitem__(self, item):
+        return self.edges_dict.get(item, None)
+
+    def set_current_state(self, target):
+        if self.current_state is None or target.__class__ in self.edges_dict[self.current_state.__class__]:
+            self.current_state = target
+        else:
+            raise ValueError('Illegal transition, from {0} to {1}'
+                             .format(self.current_state.__class__, target.__class__))
 
 
 class Vector(object):
+    __slots__ = ['coords']
+
     def __init__(self, coords, y=None):
         if not isinstance(coords, (int, float, tuple)) or not isinstance(y, (int, float)) and y is not None:
             raise ValueError('Tried to init location with something other than int/float.')
@@ -53,7 +62,7 @@ class Vector(object):
         return acos(nom / den)
 
     def norm(self):
-        inverse_magnitude = self.square_magnitude()**-0.5
+        inverse_magnitude = self.square_magnitude() ** -0.5
         return self * inverse_magnitude
 
     @classmethod

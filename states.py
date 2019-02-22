@@ -7,24 +7,27 @@ from traits import MaxSpeed, Fidgetiness
 
 
 class ABCState(metaclass=ABCMeta):
-    def __init__(self, entities):
-        self.entity = entities
+    def __init__(self, entity, destination=None):
+        self.entity = entity
+        self.destination = destination
+
+    @property
+    def velocity(self):
+        if self.destination is None:
+            return Velocity.random()
+        else:
+            return Velocity(((self.destination - self.entity.location).norm() * self.speed).coords)
 
     @abstractmethod
     def update(self, dt): pass
 
-    @abstractmethod
-    def get_velocity(self): pass
 
 
 class Idle(ABCState):
 
-    def get_velocity(self):
-        return Velocity.random()
-
-    def __init__(self, entities):
-        super().__init__(entities)
-        self.next_walk_time = uniform(10, 500) / entities.traits[Fidgetiness].value
+    def __init__(self, entity):
+        super().__init__(entity)
+        self.next_walk_time = uniform(10, 500) / entity.traits[Fidgetiness].value
 
     def update(self, dt):
         self.next_walk_time -= dt
@@ -33,13 +36,11 @@ class Idle(ABCState):
 
 
 class Walking(ABCState):
-    def get_velocity(self):
-        return Velocity(((self.destination - self.entity.location).norm() * self.speed).coords)
 
-    def __init__(self, entities, destination=None, speed=None):
-        super().__init__(entities)
-        self.destination = destination or entities.location + Location.random() * 25
-        self.speed = speed or entities.traits[MaxSpeed].value * random() / 3.0
+    def __init__(self, entity, destination=None, speed=None):
+        super().__init__(entity)
+        self.destination = destination or entity.location + Location.random() * 25
+        self.speed = speed or entity.traits[MaxSpeed].value * random() / 3.0
 
     def update(self, dt):
         self.entity.location = self.entity.location.go_to(self.destination, dt * self.speed)
@@ -51,7 +52,19 @@ class Prowling(ABCState):
     pass
 
 
+class Sexing(ABCState):
+    pass
+
+
 class Chasing(ABCState):
+    pass
+
+
+class Eating(ABCState):
+    pass
+
+
+class Drinking(ABCState):
     pass
 
 
@@ -62,14 +75,17 @@ class Panting(ABCState):
 class Escaping(ABCState):
     pass
 
+
 class Dying(ABCState):
     pass
+
 
 class Dead(ABCState):
     pass
 
 
 class StateTransitions(Network):
+    default = Idle
     edges_dict = {
         Chasing: {Panting, Dying},
         Escaping: {Panting, Dying},

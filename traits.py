@@ -26,31 +26,38 @@ class Trait(object):
 
 
 class Metabolism(Trait):
-    name = 'metabolism'
+    # name = 'metabolism'
+    pass
 
 
 class AgingRate(Trait):
-    name = 'aging_rate'
+    # name = 'aging_rate'
+    pass
 
 
 class ThirstRate(Trait):
-    name = 'thirst_rate'
+    # name = 'thirst_rate'
+    pass
 
 
 class MaxSpeed(Trait):
-    name = 'max_speed'
+    # name = 'max_speed'
+    pass
 
 
 class SightRange(Trait):
-    name = 'sight_range'
+    # name = 'sight_range'
+    pass
 
 
 class Fidgetiness(Trait):
-    name = 'Fidgetiness'
+    # name = 'Fidgetiness'
+    pass
 
 
 class SightAngle(Trait):
-    name = 'sight_angle'
+    # name = 'sight_angle'
+    pass
 
 
 #
@@ -68,7 +75,8 @@ class SightAngle(Trait):
 #
 
 class PregnancyRate(Trait):
-    name = 'pregnancy_rate'
+    # name = 'pregnancy_rate'
+    pass
 
 #
 # class LifeExpectancy(Trait):
@@ -85,6 +93,4 @@ class PregnancyRate(Trait):
 #         return [self, other][random.randint(0, 1)]
 
 
-all_traits = {c.name: c for c in get_all_subclasses(Trait)}
-
-
+all_traits = {c: c for c in get_all_subclasses(Trait)}

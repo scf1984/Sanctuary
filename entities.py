@@ -2,37 +2,13 @@ from copy import copy
 
 from entity_mixins import Sexual, ReproductionSystem, Asexual
 from helper import Network
-from states import Idle, StateTransitions
+from states import StateTransitions
 from stats import all_stats
 from traits import all_traits, Metabolism, AgingRate, ThirstRate, SightRange, Fidgetiness, MaxSpeed, SightAngle, \
     PregnancyRate
 
 
-class FoodChainLevel(object):
-    def eats(self): return {}
-
-
-class Aquavore(FoodChainLevel):
-    def eats(self): return {}
-
-
-class Herbivore(FoodChainLevel):
-    def eats(self): return {Grass}
-
-
-class Omnivore(FoodChainLevel):
-    def eats(self): return {Grass, Bunny}
-
-
-class Carnivore(FoodChainLevel):
-    def eats(self): return {Bunny}
-
-
-class SuperCarnivore(FoodChainLevel):
-    def eats(self): return {}
-
-
-class Entity(ReproductionSystem, FoodChainLevel, object):
+class Entity(ReproductionSystem, object):
     default_traits = {}
 
     def __mul__(self, other):
@@ -41,24 +17,24 @@ class Entity(ReproductionSystem, FoodChainLevel, object):
         else:
             entity_class = self.__class__
         return entity_class(location=self.location, world=self.world,
-                            **{k: self.traits[v] * other.traits[v] for k, v in all_traits.items()})
-
-    def is_dead(self):
-        return False
+                            traits={k: self.traits[v] * other.traits[v] for k, v in all_traits.items()})
 
     def change_state(self, new_state):
-        if StateTransitions.edge_exists(self.state.__class__, new_state.__class__):
-            self.state = new_state
-        else:
-            raise ValueError('Illegal transition, from {0} to {1}'.format(self.state.__class__, new_state))
+        self.state = new_state
 
     def __init__(self, **kwargs):
         self.stats = {s: s() for s in all_stats.values()}
-        self.traits = {k: kwargs.get(k, copy(self.__class__.default_traits.get(k))) for k in all_traits.values()}
+        self.traits = {
+            k:
+                kwargs.get('traits', dict())
+                    .get(k, copy(self.__class__.default_traits.get(k)))
+            for k in all_traits.values()
+        }
         self.location = kwargs.get('location')
 
         self.baby = None
-        self.state = Idle(self)
+        self.state_network = StateTransitions(self)
+        self.state = self.state_network.default(self)
         self.inclinations = set()
         self.entities_in_range = set()
 
@@ -66,13 +42,21 @@ class Entity(ReproductionSystem, FoodChainLevel, object):
 
         super().__init__()
 
+    @property
+    def state(self):
+        return self.state_network.current_state
+
+    @state.setter
+    def state(self, _state):
+        self.state_network.set_current_state(_state)
+
     def update(self, dt):
         for k, v in self.stats.items():
             v.update(self, dt=dt, world=self.world)
-        self.state.update(dt)
+        self.state_network.current_state.update(dt)
 
     def get_velocity(self):
-        return self.state.get_velocity()
+        return self.state_network.current_state.velocity
 
     def interact(self, other):
         self.interact_sex(other)
@@ -80,17 +64,15 @@ class Entity(ReproductionSystem, FoodChainLevel, object):
         pass  # TODO: Interact with another entity!
 
 
-
-
 class Water(Entity):
     pass
 
 
-class Grass(Entity, Asexual, Aquavore):
+class Grass(Entity, Asexual):
     pass
 
 
-class Bunny(Entity, Sexual, Herbivore):
+class Bunny(Entity, Sexual):
     default_traits = dict(
         {
             Metabolism: Metabolism(10),
@@ -106,7 +88,7 @@ class Bunny(Entity, Sexual, Herbivore):
     pass
 
 
-class Wolf(Entity, Sexual, Carnivore):
+class Wolf(Entity, Sexual):
     default_traits = dict(
         {
             Metabolism: Metabolism(10),
@@ -124,7 +106,6 @@ class Wolf(Entity, Sexual, Carnivore):
 
 class FoodChain(Network):
     edges_dict = {
-        Entity: set(),
         Bunny: {Grass},
         Wolf: {Bunny}
     }

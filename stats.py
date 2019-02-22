@@ -69,4 +69,4 @@ class Pregnancy(Stat):
             super().update(entity, world, dt, ds)
 
 
-all_stats = {c.name: c for c in get_all_subclasses(Stat)}
+all_stats = {c: c for c in get_all_subclasses(Stat)}
