@@ -1,12 +1,18 @@
+from dataclasses import dataclass, field
 from time import time
+from typing import Callable
 
-from world import EntityFetcher
+from world import EntityFetcher, EventHeap
 
 
+@dataclass
 class Event(EntityFetcher):
-    def __init__(self, action_function=None, ts=time(), dt=0):
-        self.action_function = action_function
-        self.ts = ts + dt
+    action_function: Callable
+    ts: float = field(default_factory=time)
+    dt: float = 0.
+
+    def __post_init__(self):
+        EventHeap().put(self)
 
     def is_invalidated(self):
         return False

@@ -1,9 +1,7 @@
-from random import random
 from time import sleep
 from tkinter import Canvas, Tk
 
 from entities import Bunny
-from events.events import CreateEntityEvent
 from location import Location
 from utils import ilen
 from world import World
@@ -45,8 +43,8 @@ if __name__ == '__main__':
     master = Tk()
     master.update()
     w = World(world_size=world_size)
-    for _ in range(250):
-        w.add_event(CreateEntityEvent(Bunny(location=Location.random((0, 500), (0, 500))), dt=random() * 10))
+    for _ in range(50):
+        Bunny(location=Location.random((0, 500), (0, 500)))
     wr = WorldRunner(world=w, canvas=Canvas(master, width=world_size[0], height=world_size[1]))
     wr.run()
 

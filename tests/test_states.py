@@ -8,5 +8,5 @@ from states import WalkingState
 class TestStates(TestCase):
     def test_walking_velocity(self):
         b = Bunny(location=Location(0, 0))
-        b.change_state(WalkingState(b, 1, Location(1, 2)))
-        self.assertEqual(b.velocity(), Velocity(1, 2).norm())
+        b.change_state(WalkingState(b.entity_id, Location(1, 2), 1))
+        self.assertEqual(b.velocity, Velocity(1, 2).norm())

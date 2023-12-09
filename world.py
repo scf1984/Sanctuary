@@ -89,12 +89,6 @@ class World(metaclass=Singleton):
         for entity in self.entities:
             entity.update(dt)
 
-    def add_event(self, event):
-        from events import Event
-        if not issubclass(event.__class__, Event):
-            raise TypeError('Tried to create an event from ' + event.__class__.__name__)
-        self.event_heap.put(event)
-
     def entity_interactions(self):
         cell_size = max(a.traits[SightRange].value for a in self.entities) * 2 if ilen(self.entities) > 0 else 1000
         interactions = InteractionGrid(cell_size).get_interactions()

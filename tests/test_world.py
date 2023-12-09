@@ -11,8 +11,7 @@ class TraitWorld(TestCase):
         b2 = Bunny(location=Location(200, 200))
         b3 = Bunny(location=Location(210, 210))
         b4 = Bunny(location=Location(270, 270))
-        entities = {b1, b2, b3, b4}
-        i = list(InteractionGrid(50).get_interactions(entities))
+        i = list(InteractionGrid(50).get_interactions())
 
         self.assertTrue((b2, b3) in i)
         self.assertTrue((b3, b4) in i)
