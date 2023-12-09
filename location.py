@@ -1,6 +1,6 @@
 import math
 
-from helper import Vector
+from utils import Vector
 
 
 class Velocity(Vector):
@@ -16,7 +16,7 @@ class Location(Vector):
             self.coords[1] - size
         )
 
-    def go_to(self, destination, dr):
+    def go_to(self, destination: 'Location', dr):
         d = destination - self
         if d * d <= dr * dr:
             return destination

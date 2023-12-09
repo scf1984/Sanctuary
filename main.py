@@ -3,20 +3,16 @@ from time import sleep
 from tkinter import Canvas, Tk
 
 from entities import Bunny
-from events import CreateEntityEvent
+from events.events import CreateEntityEvent
 from location import Location
+from utils import ilen
 from world import World
 
 
-class Universe(object):
-    worlds = []
-    pass
-
-
-class WorldRunner(object):
-    def __init__(self, **kwargs):
-        self.world = kwargs.get('world')
-        self.canvas = kwargs.get('canvas')
+class WorldRunner:
+    def __init__(self, world: World, canvas):
+        self.world = world
+        self.canvas = canvas
         if self.canvas is not None:
             self.canvas.pack()
 
@@ -40,7 +36,7 @@ class WorldRunner(object):
                 self.world.render(self.canvas)
 
             sleep_time = max(loop_tick - (time() - prev_time), 0)
-            print(str(sleep_time), len(self.world.entities))
+            print(str(sleep_time), ilen(self.world.entities))
             sleep(sleep_time)
 
 
@@ -48,9 +44,9 @@ if __name__ == '__main__':
     world_size = (500, 500)
     master = Tk()
     master.update()
-    w = World(world_size=world_size, world_map=[])
+    w = World(world_size=world_size)
     for _ in range(250):
-        w.add_event(CreateEntityEvent(Bunny(location=Location.random((0, 500), (0, 500)), world=w), dt=random() * 10))
+        w.add_event(CreateEntityEvent(Bunny(location=Location.random((0, 500), (0, 500))), dt=random() * 10))
     wr = WorldRunner(world=w, canvas=Canvas(master, width=world_size[0], height=world_size[1]))
     wr.run()
 

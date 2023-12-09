@@ -1,97 +1,110 @@
-from abc import ABCMeta, abstractmethod
-from random import random, uniform
+from abc import ABCMeta, abstractmethod, ABC
+from dataclasses import dataclass
+from random import uniform
 
-from helper import Network
 from location import Velocity, Location
-from traits import MaxSpeed, Fidgetiness
+from traits import Fidgetiness
+from utils import Network, Vector
+from world import Blackboard, Space
 
 
+@dataclass
 class ABCState(metaclass=ABCMeta):
-    def __init__(self, entity, destination=None):
-        self.entity = entity
-        self.destination = destination
+    entity_id: str
 
     @property
-    def velocity(self):
-        if self.destination is None:
-            return Velocity.random()
-        else:
-            return Velocity(((self.destination - self.entity.location).norm() * self.speed).coords)
+    def entity(self):
+        return Blackboard().read(Space.ENTITIES, self.entity_id)
 
     @abstractmethod
     def update(self, dt): pass
 
+    @property
+    def velocity(self):
+        return Vector((0.0, 0.0))
 
 
-class Idle(ABCState):
+@dataclass
+class ABCMovementState(ABCState, ABC):
+    destination: Location
+    speed: float
 
-    def __init__(self, entity):
-        super().__init__(entity)
-        self.next_walk_time = uniform(10, 500) / entity.traits[Fidgetiness].value
-
-    def update(self, dt):
-        self.next_walk_time -= dt
-        if self.next_walk_time <= 0:
-            self.entity.change_state(Walking(self.entity))
-
-
-class Walking(ABCState):
-
-    def __init__(self, entity, destination=None, speed=None):
-        super().__init__(entity)
-        self.destination = destination or entity.location + Location.random() * 25
-        self.speed = speed or entity.traits[MaxSpeed].value * random() / 3.0
+    @property
+    def velocity(self):
+        if self.destination is None:
+            return Velocity((0.0, 0.0))
+        else:
+            return Velocity(((self.destination - self.entity.location).norm() * self.speed).coords)
 
     def update(self, dt):
         self.entity.location = self.entity.location.go_to(self.destination, dt * self.speed)
         if self.entity.location is self.destination:
-            self.entity.change_state(Idle(self.entity))
+            self.entity.change_state(IdleState(self.entity_id))
 
 
-class Prowling(ABCState):
+@dataclass
+class IdleState(ABCState):
+    def __post_init__(self):
+        self.next_walk_time = uniform(10, 500) / self.entity.traits[Fidgetiness].value
+
+    def update(self, dt):
+        self.next_walk_time -= dt
+        if self.next_walk_time <= 0:
+            self.entity.change_state(WalkingState(self.entity_id, self.entity.location + Location(1, -1), 10))
+
+
+@dataclass
+class WalkingState(ABCMovementState):
     pass
 
 
-class Sexing(ABCState):
+@dataclass
+class ProwlingState(ABCState):
     pass
 
 
-class Chasing(ABCState):
+@dataclass
+class SexingState(ABCState):
     pass
 
 
-class Eating(ABCState):
+@dataclass
+class ChasingState(ABCMovementState):
     pass
 
 
-class Drinking(ABCState):
+class EatingState(ABCState):
     pass
 
 
-class Panting(ABCState):
+class DrinkingState(ABCState):
     pass
 
 
-class Escaping(ABCState):
+class PantingState(ABCState):
     pass
 
 
-class Dying(ABCState):
+class EscapingState(ABCMovementState):
     pass
 
 
-class Dead(ABCState):
+class DyingState(ABCState):
+    pass
+
+
+class DeadState(ABCState):
     pass
 
 
 class StateTransitions(Network):
-    default = Idle
+    default = IdleState
     edges_dict = {
-        Chasing: {Panting, Dying},
-        Escaping: {Panting, Dying},
-        Panting: {Idle, Dying},
-        Idle: {Walking, Escaping, Prowling, Dying},
-        Walking: {Idle, Escaping, Prowling, Dying},
-        Prowling: {Chasing, Idle, Dying},
-        Dying: {Dead}
+        ChasingState: {PantingState, DyingState},
+        EscapingState: {PantingState, DyingState},
+        PantingState: {IdleState, DyingState},
+        IdleState: {WalkingState, EscapingState, ProwlingState, DyingState},
+        WalkingState: {IdleState, EscapingState, ProwlingState, DyingState},
+        ProwlingState: {ChasingState, IdleState, DyingState},
+        DyingState: {DeadState}
     }

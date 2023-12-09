@@ -1,13 +1,17 @@
 import math
 from random import gauss
 
-from helper import get_all_subclasses
+from utils import get_all_subclasses
 
 
-class Trait(object):
-    name = None
+class Trait:
     value = 0.0
     inherit_gain = 1.1
+
+    @classmethod
+    @property
+    def name(cls):
+        return cls.__name__
 
     def __init__(self, value):
         self.value = value

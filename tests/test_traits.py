@@ -8,7 +8,7 @@ class TraitTests(TestCase):
 
     def test_trait(self):
         # basic qualities
-        self.assertEqual(Metabolism.name, 'metabolism')
+        self.assertEqual(Metabolism.name, 'Metabolism')
         self.assertEqual(Metabolism.inherit_gain, 1.1)
         self.assertEqual(AgingRate(1).value, 1)
 

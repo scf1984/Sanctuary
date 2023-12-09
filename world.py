@@ -1,15 +1,15 @@
-from time import time
+from enum import Enum
 from heapq import heappop, heappush
 from itertools import product
-from math import floor, ceil
+from math import ceil
+from time import time
+from warnings import warn
 
-from entities import Entity
-from events import Event
-from location import Location
-from traits import SightRange, SightAngle
+from traits import SightRange
+from utils import Singleton, ilen
 
 
-class InteractionGrid(object):
+class InteractionGrid:
     def __init__(self, cell_size):
         self.cell_size = cell_size
         self.cells = dict()
@@ -22,9 +22,9 @@ class InteractionGrid(object):
             self.cells[cell] = set()
         self.cells[cell].add(entity)
 
-    def get_interactions(self, entities):
+    def get_interactions(self):
+        entities = tuple(Blackboard().iterate(Space.ENTITIES))
         for e in entities:
-            e.entities_in_range.clear()
             self.add_entity(e)
 
         for (i, j) in self.cells.keys():
@@ -33,10 +33,10 @@ class InteractionGrid(object):
             for e1 in self.cells[(i, j)]:
                 for e2 in neighbors:
                     if e1 is not e2:
-                        yield (e1, e2)
+                        yield e1, e2
 
 
-class EventHeap(object):
+class EventHeap(metaclass=Singleton):
     def __init__(self):
         self.heap = []
 
@@ -47,42 +47,66 @@ class EventHeap(object):
         return heappop(self.heap)
 
     def put(self, event):
-        if issubclass(event.__class__, Event):
-            heappush(self.heap, event)
-        else:
-            raise TypeError('Got a non-Event pushed into the event heap: {0}'.format(event))
+        heappush(self.heap, event)
 
 
-class World(object):
-    def __init__(self, world_map, **kwargs):
-        self.world_map = world_map
-        self.grid = [[None for _ in range(100)] for _ in range(100)]
-        self.entities = set()
+class Space(Enum):
+    ENTITIES = 'ENTITIES'
+
+
+class Blackboard(metaclass=Singleton):
+    def __init__(self):
+        self.data = {k: {} for k in Space}
+
+    def read(self, space: Space, key: str):
+        return self.data[space][key]
+
+    def write(self, space: Space, key: str, value):
+        self.data[space][key] = value
+
+    def iterate(self, space):
+        return iter(self.data[space].values())
+
+
+class World(metaclass=Singleton):
+
+    def __init__(self, world_size=None):
+
+        if world_size is None:
+            warn('Using default world size.')
+            world_size = (500, 500)
+
+        self.world_map = world_size
+        self.grid = [[None for _ in range(world_size[0])] for _ in range(world_size[1])]
         self.event_heap = EventHeap()
+        Blackboard()
+
+    @property
+    def entities(self):
+        return Blackboard().iterate(Space.ENTITIES)
 
     def update(self, dt):
         for entity in self.entities:
             entity.update(dt)
 
     def add_event(self, event):
+        from events import Event
         if not issubclass(event.__class__, Event):
             raise TypeError('Tried to create an event from ' + event.__class__.__name__)
         self.event_heap.put(event)
 
     def entity_interactions(self):
-        cell_size = max(a.traits[SightRange].value for a in self.entities) * 2 if len(self.entities) > 0 else 1000
-        interactions = InteractionGrid(cell_size).get_interactions(self.entities)
+        cell_size = max(a.traits[SightRange].value for a in self.entities) * 2 if ilen(self.entities) > 0 else 1000
+        interactions = InteractionGrid(cell_size).get_interactions()
         for e1, e2 in interactions:
-            if Location.square_distance(e1.location, e2.location) < e1.traits[SightRange].value ** 2 and abs(
-                    e1.get_velocity().angle(e1.location - e2.location)) < e1.traits[SightAngle].value:
-                e1.entities_in_range.add(e2)
+            if e1.can_see(e2):
                 e1.interact(e2)
             # TODO: Decide if interactions take place! (heading)
 
     def process_events(self):
         while self.event_heap.peek() and self.event_heap.peek().ts <= time():
             e = self.event_heap.pop()
-            e.apply_event(self)
+            e.apply_event()
 
     def render(self, canvas):
         canvas.delete('all')
@@ -90,7 +114,15 @@ class World(object):
         canvas.create_line(0, 0, 500, 0, fill="green", width=10)
         canvas.create_line(0, 500, 500, 500, fill="green", width=10)
         canvas.create_line(500, 0, 500, 500, fill="green", width=10)
-        for entity in self.entities:
+        for entity in Blackboard().iterate(Space.ENTITIES):
             left, up, right, down = entity.location.bbox(0.00)
             canvas.create_oval(left, up, right, down, outline="red", fill="red", width=2)
         canvas.update()
+
+
+class EntityFetcher:
+    entity_id: str
+
+    @property
+    def entity(self):
+        return Blackboard().read(Space.ENTITIES, self.entity_id)

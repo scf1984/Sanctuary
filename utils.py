@@ -1,5 +1,6 @@
-from math import acos, sqrt, pow
+from math import atan2
 from random import uniform
+
 
 
 def get_all_subclasses(cls):
@@ -26,12 +27,12 @@ class Network(object):
                              .format(self.current_state.__class__, target.__class__))
 
 
-class Vector(object):
+class Vector:
     __slots__ = ['coords']
 
     def __init__(self, coords, y=None):
         if not isinstance(coords, (int, float, tuple)) or not isinstance(y, (int, float)) and y is not None:
-            raise ValueError('Tried to init location with something other than int/float.')
+            raise ValueError('Tried to init location with something other than int/float/tuple.')
         if y is None:
             self.coords = coords
         else:
@@ -48,21 +49,16 @@ class Vector(object):
 
     def __mul__(self, other):
         c = self.__class__
-        if self.__class__ != other.__class__ and issubclass(other.__class__, Vector):
-            c = Vector
         if isinstance(other, (float, int)):
             return c(self.coords[0] * other, self.coords[1] * other)
         return sum((self.coords[0] * other.coords[0], self.coords[1] * other.coords[1]))
 
-    def angle(self, other):
-        nom = self * other
-        den = sqrt(self.square_magnitude() * other.square_magnitude())
-        if den == 0.0 or abs(nom) > abs(den):
-            return 0.0
-        return acos(nom / den)
+    @property
+    def angle(self):
+        return atan2(*self.coords)
 
     def norm(self):
-        inverse_magnitude = self.square_magnitude() ** -0.5
+        inverse_magnitude = self.square_magnitude ** -0.5
         return self * inverse_magnitude
 
     @classmethod
@@ -71,5 +67,19 @@ class Vector(object):
             return cls(uniform(-1, 1), uniform(-1, 1)).norm()
         return cls(uniform(*x_range), uniform(*y_range))
 
+    @property
     def square_magnitude(self):
         return self * self
+
+
+class Singleton(type):
+    _instances = {}
+
+    def __call__(cls, *args, **kwargs):
+        if cls not in cls._instances:
+            cls._instances[cls] = super(Singleton, cls).__call__(*args, **kwargs)
+        return cls._instances[cls]
+
+
+def ilen(generator):
+    return sum(1 for _ in generator)
