@@ -11,6 +11,7 @@ from world import Blackboard, Space
 @dataclass
 class ABCState(metaclass=ABCMeta):
     entity_id: str
+    velocity = Vector((0.0, 0.0))
 
     @property
     def entity(self):
@@ -18,10 +19,6 @@ class ABCState(metaclass=ABCMeta):
 
     @abstractmethod
     def update(self, dt): pass
-
-    @property
-    def velocity(self):
-        return Vector((0.0, 0.0))
 
 
 @dataclass
