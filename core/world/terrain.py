@@ -108,26 +108,43 @@ class Terrain:
         return self._sample(self.aspect, x, y)
 
     def _sample(self, field: np.ndarray, x: np.ndarray, y: np.ndarray) -> np.ndarray:
-        x = np.asarray(x, dtype=np.float64)
-        y = np.asarray(y, dtype=np.float64)
-        in_bounds_x = np.all((x >= 0) & (x <= self.world_width))
-        in_bounds_y = np.all((y >= 0) & (y <= self.world_height))
-        if not (in_bounds_x and in_bounds_y):
-            raise ValueError("position outside terrain bounds")
+        return bilinear_sample(field, x, y, self.cell_size, self.world_width, self.world_height)
 
-        rows, cols = field.shape
-        gx = x / self.cell_size
-        gy = y / self.cell_size
-        col0 = np.floor(gx).astype(np.int64)
-        row0 = np.floor(gy).astype(np.int64)
-        col1 = np.minimum(col0 + 1, cols - 1)
-        row1 = np.minimum(row0 + 1, rows - 1)
-        fx = gx - col0
-        fy = gy - row0
 
-        top = field[row0, col0] * (1 - fx) + field[row0, col1] * fx
-        bottom = field[row1, col0] * (1 - fx) + field[row1, col1] * fx
-        return top * (1 - fy) + bottom * fy
+def bilinear_sample(
+    field: np.ndarray,
+    x: np.ndarray,
+    y: np.ndarray,
+    cell_size: float,
+    world_width: float,
+    world_height: float,
+) -> np.ndarray:
+    """Bilinearly interpolate a ``(rows, cols)`` grid field at continuous world positions.
+
+    Shared by any grid-shaped field over the terrain grid (elevation, slope, aspect, and
+    `core.world.climate`'s temperature field) so the interpolation and bounds-check logic exists
+    in exactly one place rather than being re-derived per field.
+    """
+    x = np.asarray(x, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
+    in_bounds_x = np.all((x >= 0) & (x <= world_width))
+    in_bounds_y = np.all((y >= 0) & (y <= world_height))
+    if not (in_bounds_x and in_bounds_y):
+        raise ValueError("position outside terrain bounds")
+
+    rows, cols = field.shape
+    gx = x / cell_size
+    gy = y / cell_size
+    col0 = np.floor(gx).astype(np.int64)
+    row0 = np.floor(gy).astype(np.int64)
+    col1 = np.minimum(col0 + 1, cols - 1)
+    row1 = np.minimum(row0 + 1, rows - 1)
+    fx = gx - col0
+    fy = gy - row0
+
+    top = field[row0, col0] * (1 - fx) + field[row0, col1] * fx
+    bottom = field[row1, col0] * (1 - fx) + field[row1, col1] * fx
+    return top * (1 - fy) + bottom * fy
 
 
 def _slope_and_aspect(heights: np.ndarray, cell_size: float) -> tuple[np.ndarray, np.ndarray]:
