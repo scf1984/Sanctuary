@@ -156,6 +156,12 @@ entities — no change to the table above is required.
 - **Emergent speciation.** Genetic distance accumulates between isolated populations; past a
   threshold they can no longer interbreed and are tracked as a new species the player may name.
   This makes isolation — by fence or by terrain — the most rewarding intervention in the game.
+  **Reproductive isolation degrades, it does not switch**: interbreeding probability falls
+  continuously to zero at the same threshold a split fires on, so by the time two populations
+  separate they were already hybridising at a negligible rate. Drift rates and the threshold that
+  separates isolated from mixed populations are measured in
+  [`docs/spikes/speciation-drift.md`](docs/spikes/speciation-drift.md); the threshold is a
+  per-world parameter, never hardcoded in `core/`.
 
 ### 2.6 World and space
 
@@ -286,7 +292,10 @@ Not yet decided. Do not assume answers — ask.
 - The concrete intervention catalogue and what each costs.
 - Precise metric definitions (species count vs. Shannon index vs. within-species genetic diversity).
 - Competition format: replicate count, duration, termination condition, what is measured.
-- Whether the player names species on speciation, and how lineage is displayed.
+- Whether the player names species on speciation, and how lineage is displayed. The mechanic
+  itself is settled (§2.5): `core.genetics.speciation` splits a diverged population and records
+  the parent link in a `Lineage`. What is still open is purely the player-facing half — naming and
+  presentation — so `split()` returns an opaque id and stores no name.
 
 ---
 
