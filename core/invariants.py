@@ -10,12 +10,17 @@ invariant, and the offending rows rather than letting a corrupted world run on s
 
 Only the invariants that are checkable against what exists in `core/` today are registered by
 `default_registry()`. CLAUDE.md §2.5's closed energy/nutrient loop needs an income/loss ledger
-(sunlight, respiration, feeding) that doesn't exist yet — #17 landed the loss half as a pure drain
-(`core.ecology.service.Ecology`) and records no ledger, so #18 (plants and soil nutrients), #19
-(feeding) and #21 (death and decomposition) still own the income and return sides and are open.
-Fabricating a ledger here ahead of them would be exactly the "two incompatible
-versions of the same abstraction" CLAUDE.md §7.1 warns against, so full flow conservation is left
-for those issues to register through this same harness once their systems exist.
+(sunlight, respiration, feeding): #17 landed the loss half as a pure drain
+(`core.ecology.service.Ecology`), and #18 landed the income half plus a closed nutrient ledger on
+the plant field (`core.ecology.plants.Plants.total_nutrients`). #19 (feeding) and #21 (death and
+decomposition) still own the transfer and return sides and are open, so full flow conservation is
+left for them.
+
+Nutrient conservation is not registered here even though #18 can now assert it, because
+`Predicate` takes an `EntityStore` and returns offending *rows*: the plant field has cells, not
+rows, and nothing in that signature can express it. `Plants.total_nutrients()` is asserted from
+tests instead. Widening the harness to cover field-level invariants is #91, not something to
+improvise here against the shape #7 settled (CLAUDE.md §7.2).
 """
 
 from __future__ import annotations
@@ -105,10 +110,10 @@ def no_alive_entity_has_negative_energy(store: EntityStore) -> np.ndarray:
     """Alive rows whose energy has gone negative.
 
     §2.5's metabolic pool is a hard budget: a trait's upkeep can drive an entity's energy to
-    zero, never below it. Nothing in `core/` yet spends or grants energy (the full sunlight ->
-    upkeep -> death ledger is #17-#19, #21, still open), but this half of the invariant --
-    energy never goes negative -- holds regardless of which system does the spending, so it is
-    checkable now and stays true once those systems land.
+    zero, never below it. Only #17's upkeep drain spends the pool so far -- #18's sunlight income
+    reaches plants, not animals, and the transfer into an animal is #19's feeding, still open --
+    but this half of the invariant, that energy never goes negative, holds regardless of which
+    system does the spending, so it is checkable now and stays true once those systems land.
     """
     return np.flatnonzero(store.alive & (store.energy < 0))
 

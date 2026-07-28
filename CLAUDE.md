@@ -155,6 +155,16 @@ entities — no change to the table above is required.
   charge a positive cost, or it is unbounded free benefit and runs away in every climate.
 - **Closed nutrient loop.** Energy enters only as sunlight driving plant growth. Carcasses decompose
   and return nutrients to soil. Without closure, populations either explode or flatline.
+  **Plants are a field, not entities** — decided in #18, which owned the choice. Growth is a
+  per-cell quantity over the terrain grid (`core.ecology.plants`), advanced as whole-array
+  operations; there is no plant row in the entity store. Plant *identity* buys the ecology nothing
+  — a herbivore grazes a patch, not a numbered shrub — while costing a row and a genome each on a
+  population that would outnumber the animals by orders of magnitude. Local competition, the one
+  thing the field model had to keep, survives: grazing depletes the cell it happens in, and
+  contending grazers split it. Reopen this only for a mechanic that genuinely needs a specific
+  plant (a fruiting tree an animal returns to), and as a new issue rather than a retrofit.
+  Nutrients are conserved exactly, across soil, standing biomass, and a ledger of what grazing has
+  carried out of the field and decomposition has yet to return.
 - **Heritable drive weights.** Behaviour is a fixed set of authored drives (hunger, thirst, fear,
   lust, fatigue) competing each tick by utility score — but *the weights and thresholds are genes*.
   Boldness, sociality, and parental investment therefore evolve rather than being designed.

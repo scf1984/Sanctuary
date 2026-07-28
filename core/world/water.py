@@ -33,9 +33,9 @@ class Water:
                          which happens at map-edge outlets (water leaves the world there) and at
                          the exact center of a perfectly flat plateau.
     flow_accumulation:   (height, width) float32, cell-count. Number of cells, including itself,
-                         whose drainage passes through this cell — a proxy for channel width that
-                         a future river-rendering system can threshold; nothing here consumes it
-                         yet.
+                         whose drainage passes through this cell — read by
+                         `core.ecology.plants` as its soil-moisture proxy, and a proxy for
+                         channel width that a future river-rendering system can threshold.
 
     Constructed either by `generate()` from a `Terrain`, or directly from these three arrays plus
     `cell_size` when restoring from a snapshot — mirroring `Terrain`'s own constructor, so a
