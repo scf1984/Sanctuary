@@ -165,6 +165,19 @@ entities — no change to the table above is required.
   plant (a fruiting tree an animal returns to), and as a new issue rather than a retrofit.
   Nutrients are conserved exactly, across soil, standing biomass, and a ledger of what grazing has
   carried out of the field and decomposition has yet to return.
+- **Foraging perception is a field query; foraging *choice* is a drive** — decided in #93, which
+  owned it. `Plants.perceive(x, y, radius)` reports every patch a forager can find and what stands
+  on it. It ranks nothing: which patch is worth walking to weighs payoff against the cost of the
+  walk, and that belongs to the hunger drive (#22), not to the field. The settled scoring rule the
+  drive implements is `biomass / (1 + distance / forage_reluctance)`, argmax — distance-discounted
+  rather than raw, because a grazer that crosses its whole sight range for a marginally richer cell
+  neither feeds efficiently nor produces the local grazing pressure the field model exists to
+  express. `forage_reluctance` is per-world config owned by the service that scores, never by
+  `Plants`, which would otherwise carry a coefficient it never reads (§8.2). Small values keep
+  grazers local and strip ground bare before they move; large ones spread pressure out.
+  **Sight range gates perception**, supplied as a caller-computed radius exactly as `SpatialIndex`
+  takes its cell size: the field knows nothing of genes, and unlimited perception would leave sight
+  range charged by the metabolic budget while buying nothing but predator avoidance.
 - **Heritable drive weights.** Behaviour is a fixed set of authored drives (hunger, thirst, fear,
   lust, fatigue) competing each tick by utility score — but *the weights and thresholds are genes*.
   Boldness, sociality, and parental investment therefore evolve rather than being designed.
