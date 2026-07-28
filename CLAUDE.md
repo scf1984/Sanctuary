@@ -334,6 +334,12 @@ issue state is authoritative; the label is a convenience for filtering.
 
 An issue with no `⛔ Blocked by` section is ready to start.
 
+**A closed blocker is not automatically a satisfied one.** If a blocker is closed but its deliverable
+plainly does not exist — a benchmark issue whose numbers are still `TBD`, a CI issue with no
+pipeline — say so and stop, exactly as if it were open. Closing is an administrative act; the
+deliverable is the thing downstream work actually depends on. Do not build on a foundation that was
+marked done but is not.
+
 ### 7.2 Abstractions are owned by their issue
 
 The issue that introduces an abstraction defines it. Downstream issues consume that abstraction as
@@ -342,6 +348,12 @@ abstraction, that is a signal to reopen the upstream issue and discuss — not t
 locally.
 
 ### 7.3 Definition of done
+
+**Do not close an issue whose deliverable does not exist.** If the work could not be completed —
+tooling missing, permission denied, blocked on something unforeseen — leave it open and say why. An
+issue closed with a placeholder deliverable is worse than one left open, because everything
+downstream then treats a gap as a foundation. #1 was closed carrying a benchmark report of `TBD`,
+and #4 inherited it as a satisfied blocker; that is the failure mode.
 
 An issue is done when: the code is merged; tests were written as §8.1 requires; anything in §5 it
 answers has been moved out of Open Questions and into a settled section; any performance claim it

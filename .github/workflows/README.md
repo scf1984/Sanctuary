@@ -62,6 +62,33 @@ Claude Code sessions here too, not only to Action runs.
 Writes are denied: closing, reopening, merging, deleting, and `gh api -X`. `gh issue comment` is
 allowed, because §7.1 requires an agent to comment when it stops on a blocker.
 
+### Why the agent can execute code
+
+The first version of this allowed `gh` and nothing else, which was a mistake with consequences.
+Agents had **no ability to run anything at all** — `python`, `pytest`, `ruff`, `mypy` all came back
+as `This command requires approval` with nobody present to approve.
+
+That is not a cosmetic limitation. It made two rules unsatisfiable:
+
+- **§8.1 test-first.** An agent that cannot run a test cannot write one first in any meaningful
+  sense. It can produce a file; it cannot know the test fails, then passes.
+- **§8.5 measure, do not guess.** #1 was a benchmarking spike whose entire deliverable was numbers.
+  With no execution, it was closed carrying a report that says *"Status: blocked on execution"* and
+  a results table of `TBD` — and #4, which depends on those numbers, then had nothing to build on.
+
+The allow list now covers the Python toolchain and read/write git operations. Destructive commands
+stay denied.
+
+### A note on the duplicated rule syntax
+
+Each rule appears twice, as `Bash(cmd:*)` and `Bash(cmd *)`. This is deliberate. The published
+examples show the space form, while the colon form is what most Claude Code configurations use for
+prefix matching, and the failure reported by agents is consistent with a syntax mismatch rather than
+a missing rule. Listing both costs nothing and removes the ambiguity as a variable.
+
+If a future run confirms which form actually matches, delete the other — carrying both permanently
+would violate §8.2.
+
 ---
 
 ## `claude-code-review.yml` — automatic pull request review

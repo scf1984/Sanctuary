@@ -82,6 +82,12 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
+          # Passed explicitly rather than relying on the project file being
+          # auto-discovered. Agents reported every gh and python command coming
+          # back as "This command requires approval" even though the rules were
+          # committed, so auto-discovery cannot be assumed to be happening here.
+          settings: .claude/settings.json
+
           # Lets Claude read CI results on pull requests.
           additional_permissions: |
             actions: read
