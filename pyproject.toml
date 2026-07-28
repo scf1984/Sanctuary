@@ -35,7 +35,7 @@ py-modules = [
     "utils",
     "world",
 ]
-packages = ["events", "stats"]
+packages = ["events", "stats", "core", "core.world"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
