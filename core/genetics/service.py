@@ -75,6 +75,15 @@ class Genetics(DomainService):
             )
         return inherit_genes(self.genes(parent_a), self.genes(parent_b), inherit_gain, rng)
 
+    def species_ids(self, selection: Selection) -> np.ndarray:
+        """(len(selection),) int32: each entity's species id, in ascending row order.
+
+        Species ids are opaque registry keys, not row indices, so handing them out does not leak
+        storage layout across the service boundary (CLAUDE.md §2.3). Speciation needs this to
+        gate interbreeding on whether two creatures are still the same species (#16).
+        """
+        return self.store.species_id[selection.to_mask()]
+
     def speciate(self, selection: Selection, species_id: int) -> None:
         """Assign `species_id` to every entity in `selection`.
 

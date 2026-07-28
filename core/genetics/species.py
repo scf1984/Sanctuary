@@ -50,6 +50,20 @@ class SpeciesRegistry:
         self._mask_table = np.vstack([self._mask_table, mask])
         return species_id
 
+    def derive(self, parent_species_id: int) -> int:
+        """Register a daughter species carrying a copy of `parent_species_id`'s mask; returns its id.
+
+        The primitive `core.genetics.speciation.split` is built on: a population that has drifted
+        beyond the distance threshold becomes a separate species without any change to what its
+        members express. The copy is what makes the two masks independently editable afterwards,
+        so the branches can diverge in expression later without one rewriting the other's
+        phenotype.
+        """
+        mask = self.mask_of(parent_species_id).copy()
+        species_id = self.n_species
+        self._mask_table = np.vstack([self._mask_table, mask])
+        return species_id
+
     def mask_of(self, species_id: int) -> np.ndarray:
         """(n_genes,) bool: the expression mask for one species id."""
         if not 0 <= species_id < self.n_species:
