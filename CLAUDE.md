@@ -66,6 +66,12 @@ The feeding ratio is the main suspension-of-disbelief lever. Compressing the clo
 an animal thousands of meals per lifetime, so nothing legible happens between births. Digestion must
 run *much* slower relative to aging than reality. Distort ratios deliberately and record them here.
 
+This table's tick size and live rate rest on an assumed ~10⁷ entity-updates/sec from a NumPy SoA
+core (§2.3). That assumption is now measured and confirmed:
+[`docs/spikes/soa-throughput.md`](docs/spikes/soa-throughput.md) found 6.9M–11.6M updates/sec
+across 1,000–100,000 rows, with a 7-day offline catch-up resolving in ~108 seconds at 100,000
+entities — no change to the table above is required.
+
 ### 2.2 Randomness and reproducibility
 
 - **The simulation is not deterministic.** Two identical states may evolve differently. This is a
