@@ -137,3 +137,58 @@ class TestUnexpressedGenesSurviveInheritance:
         camouflage_expressing_species = species.register(("size", "camouflage"))
         genetics.speciate(offspring_selection, camouflage_expressing_species)
         assert genetics.expressed(offspring_selection).tolist() == [[0.5, 0.0, 0.0, 0.75]]
+
+
+class TestInherit:
+    def test_rejects_unequal_length_parent_selections(self):
+        store, _, genetics = make_world()
+        ids = store.allocate(3)
+        parent_a = selection_for(store, ids[:2])
+        parent_b = selection_for(store, ids[:1])
+
+        with pytest.raises(ValueError):
+            genetics.inherit(parent_a, parent_b, inherit_gain=1.5, rng=np.random.default_rng(0))
+
+    def test_returns_one_offspring_row_per_parent_pair_within_clamp_range(self):
+        store, _, genetics = make_world()
+        ids = store.allocate(4)
+        parent_a_selection = selection_for(store, ids[:2])
+        parent_b_selection = selection_for(store, ids[2:])
+        genetics.set_genes(
+            parent_a_selection,
+            np.array([[1.0, 2.0, 3.0, 4.0], [0.0, 0.0, 0.0, 0.0]], dtype=np.float32),
+        )
+        genetics.set_genes(
+            parent_b_selection,
+            np.array([[5.0, 6.0, 7.0, 8.0], [2.0, 2.0, 2.0, 2.0]], dtype=np.float32),
+        )
+        inherit_gain = 1.5
+
+        offspring_genes = genetics.inherit(
+            parent_a_selection, parent_b_selection, inherit_gain, np.random.default_rng(0)
+        )
+
+        parent_a_genes = genetics.genes(parent_a_selection)
+        parent_b_genes = genetics.genes(parent_b_selection)
+        low = np.minimum(parent_a_genes, parent_b_genes) / inherit_gain
+        high = np.maximum(parent_a_genes, parent_b_genes) * inherit_gain
+        assert offspring_genes.shape == (2, 4)
+        assert (offspring_genes >= low).all()
+        assert (offspring_genes <= high).all()
+
+    def test_offspring_genes_can_be_written_into_a_newly_allocated_entity(self):
+        store, _, genetics = make_world()
+        [parent_a_id] = store.allocate(1)
+        [parent_b_id] = store.allocate(1)
+        parent_a_selection = selection_for(store, [parent_a_id])
+        parent_b_selection = selection_for(store, [parent_b_id])
+        genetics.set_genes(parent_a_selection, np.array([[1.0, 2.0, 3.0, 4.0]], dtype=np.float32))
+        genetics.set_genes(parent_b_selection, np.array([[5.0, 6.0, 7.0, 8.0]], dtype=np.float32))
+
+        offspring_genes = genetics.inherit(
+            parent_a_selection, parent_b_selection, inherit_gain=1.5, rng=np.random.default_rng(0)
+        )
+        [offspring_id] = store.allocate(1, genes=offspring_genes)
+        offspring_selection = selection_for(store, [offspring_id])
+
+        assert genetics.genes(offspring_selection).tolist() == offspring_genes.tolist()

@@ -6,8 +6,9 @@ nothing in this module ever zeroes, drops, or otherwise touches an unexpressed g
 That is what lets a dormant gene resurface generations later if a descendant's species comes to
 express it again (CLAUDE.md §2.3).
 
-Trait inheritance with mutation and drift-clamping is a separate concern (#14); this service only
-provides the vectorized read/write/speciate primitives that inheritance is built on top of.
+Trait inheritance with mutation and drift-clamping (`inherit()`) delegates its math to
+`core.genetics.inheritance`, which has no notion of the store or selections -- this module's job
+is only to resolve parent selections to gene rows and back (#14).
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from __future__ import annotations
 import numpy as np
 
 from core.entities.store import EntityStore
+from core.genetics.inheritance import inherit_genes
 from core.genetics.species import SpeciesRegistry
 from core.selection import Selection
 from core.services import ColumnRegistry, DomainService
@@ -47,6 +49,31 @@ class Genetics(DomainService):
     def set_genes(self, selection: Selection, values: np.ndarray) -> None:
         """Vectorized write of full gene rows for `selection` — e.g. seeding a new population."""
         self.write("genes", selection, values)
+
+    def inherit(
+        self,
+        parent_a: Selection,
+        parent_b: Selection,
+        inherit_gain: float,
+        rng: np.random.Generator,
+    ) -> np.ndarray:
+        """(len(parent_a), n_genes) float32: one offspring gene row per parent pair.
+
+        Pairs rows by ascending row-index order within each selection -- the same order `genes()`
+        itself reads in -- so `parent_a` and `parent_b` must have equal length and it is the
+        caller's responsibility to construct them so row i of one is the intended mate of row i
+        of the other.
+
+        Reads full genotypes via `genes()`, not `expressed()`: an unexpressed gene inherits (and
+        can mutate) exactly like an expressed one (CLAUDE.md §2.3, #13's "done when"). This only
+        computes the offspring's gene values -- writing them into a newly allocated entity is the
+        caller's job, via `set_genes()` or `EntityStore.allocate(..., genes=...)`.
+        """
+        if len(parent_a) != len(parent_b):
+            raise ValueError(
+                f"parent selections must have equal length: {len(parent_a)} vs {len(parent_b)}"
+            )
+        return inherit_genes(self.genes(parent_a), self.genes(parent_b), inherit_gain, rng)
 
     def speciate(self, selection: Selection, species_id: int) -> None:
         """Assign `species_id` to every entity in `selection`.
