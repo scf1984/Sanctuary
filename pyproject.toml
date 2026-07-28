@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sanctuary"
+version = "0.1.0"
+description = "An evolving-ecosystem simulation game."
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.5",
+    "mypy>=1.10",
+]
+
+# The prototype is a flat module layout (no src/ package yet); list it explicitly
+# rather than relying on setuptools auto-discovery, which would also try to pick up
+# unrelated top-level directories as the tree evolves.
+[tool.setuptools]
+py-modules = [
+    "entities",
+    "environment",
+    "inclinations",
+    "interpolators",
+    "location",
+    "main",
+    "reproduction_systems",
+    "states",
+    "traits",
+    "utils",
+    "world",
+]
+packages = ["events", "stats"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
