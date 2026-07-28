@@ -13,8 +13,8 @@ from core.invariants import (
 )
 
 
-def make_store(initial_capacity=8, n_drives=2):
-    return EntityStore(initial_capacity=initial_capacity, n_drives=n_drives)
+def make_store(initial_capacity=8, n_drives=2, n_genes=3):
+    return EntityStore(initial_capacity=initial_capacity, n_drives=n_drives, n_genes=n_genes)
 
 
 class TestInvariantRegistry:
