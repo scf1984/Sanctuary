@@ -44,6 +44,24 @@ These go in `--append-system-prompt`, not the `prompt` input. In tag mode `promp
 triggering comment*, so rules placed there would be mixed into the user's request rather than acting
 as standing guidance.
 
+### Why the agent can read issue state
+
+§7.1 tells agents to check an issue's blockers before starting. That instruction was inert until
+two things were fixed, because agents were reporting *"I was not able to query the GitHub API"* and
+then proceeding regardless:
+
+- **`.claude/settings.json`** pre-approves read-only `gh` commands. Permission rules **merge** across
+  scopes rather than override, so this is additive — unlike `--allowedTools`, which *replaces* the
+  default tool set and would have silently stripped the agent's Edit, Write, and git access.
+- **`GH_TOKEN`** is set on the workflow step. `gh` is not authenticated in a runner by default, so
+  without it every query fails regardless of permissions.
+
+Because the settings file lives in the repository rather than the workflow, this applies to local
+Claude Code sessions here too, not only to Action runs.
+
+Writes are denied: closing, reopening, merging, deleting, and `gh api -X`. `gh issue comment` is
+allowed, because §7.1 requires an agent to comment when it stops on a blocker.
+
 ---
 
 ## `claude-code-review.yml` — automatic pull request review
