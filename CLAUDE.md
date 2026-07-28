@@ -146,6 +146,13 @@ entities — no change to the table above is required.
   size, sight range, gestation. There is no free lunch, so the environment picks the optimum and
   different biomes select different builds without designer intervention. This is the mechanism
   that makes climate zones matter genetically.
+  Upkeep is charged from the **expressed** phenotype, so a gene's cost and its benefit are
+  inseparable — an unexpressed gene is carried and inherited but neither paid for nor gained from.
+  Cost coefficients are a per-world table (`core.ecology.metabolism.MetabolismConfig`), never
+  constants in `core/`, and **every gene in the vocabulary must declare a cost, zero included**: a
+  gene added without one would silently become a free trait, which defeats the whole budget. Any
+  gene that *reduces* upkeep — insulation damping thermoregulation cost is the first — must itself
+  charge a positive cost, or it is unbounded free benefit and runs away in every climate.
 - **Closed nutrient loop.** Energy enters only as sunlight driving plant growth. Carcasses decompose
   and return nutrients to soil. Without closure, populations either explode or flatline.
 - **Heritable drive weights.** Behaviour is a fixed set of authored drives (hunger, thirst, fear,
