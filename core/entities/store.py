@@ -106,6 +106,18 @@ class EntityStore:
         """Number of free rows allocate() can currently hand out without raising."""
         return len(self._free_rows)
 
+    def free_row_mask(self) -> np.ndarray:
+        """(capacity,) bool: True where the row is on the free list, available to allocate().
+
+        Read-only visibility into free-list membership, for the invariant harness (CLAUDE.md
+        §6) to detect a row marked both `alive` and free — which can only happen if something
+        flips `alive` directly instead of going through release(), desyncing this store's own
+        bookkeeping. The free list itself stays private; only membership is exposed.
+        """
+        mask = np.zeros(self.capacity, dtype=np.bool_)
+        mask[self._free_rows] = True
+        return mask
+
     def allocate(self, n: int, **initial_values: np.ndarray) -> np.ndarray:
         """Allocate ``n`` new rows from the free list and return their stable ids.
 

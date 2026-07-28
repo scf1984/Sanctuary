@@ -146,6 +146,32 @@ class TestReleaseAndReuse:
         assert store.available == 2
 
 
+class TestFreeRowMask:
+    def test_all_rows_free_on_a_fresh_store(self):
+        store = make_store(initial_capacity=4)
+        assert store.free_row_mask().tolist() == [True, True, True, True]
+
+    def test_allocated_rows_are_not_free(self):
+        store = make_store(initial_capacity=4)
+        ids = store.allocate(2)
+        rows = {store._id_to_row[i] for i in ids.tolist()}
+        mask = store.free_row_mask()
+        assert not any(mask[row] for row in rows)
+        assert mask.sum() == 2
+
+    def test_released_rows_return_to_the_mask(self):
+        store = make_store(initial_capacity=4)
+        ids = store.allocate(4)
+        store.release(ids[:1])
+        assert store.free_row_mask().sum() == 1
+
+    def test_returned_mask_is_a_snapshot_not_a_live_view(self):
+        store = make_store(initial_capacity=4)
+        mask = store.free_row_mask()
+        store.allocate(4)
+        assert mask.tolist() == [True, True, True, True]
+
+
 class TestGrowth:
     def test_doubles_capacity(self):
         store = make_store(initial_capacity=8)

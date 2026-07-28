@@ -1,7 +1,10 @@
+import time
+
 import numpy as np
 import pytest
 
 from core.entities.store import EntityStore
+from core.invariants import InvariantRegistry, InvariantViolation
 from core.world.tick import TickLoop
 
 
@@ -119,3 +122,88 @@ class TestInterpolationState:
 
         assert snapshot[row] == 5.0
         assert loop.current_positions[0] is snapshot
+
+
+class TestDebugChecks:
+    def test_disabled_by_default_even_with_a_broken_system(self):
+        store = make_store()
+        ids = store.allocate(1, energy=np.array([0.0], dtype=np.float32))
+        row = store._id_to_row[ids[0].item()]
+
+        def create_energy_from_nowhere():
+            store.energy[row] -= 1.0
+
+        loop = TickLoop(store, systems=[create_energy_from_nowhere])
+        loop.advance(3)  # must not raise: debug_checks is off
+        assert store.energy[row] == -3.0
+
+    def test_debug_checks_requires_a_registry(self):
+        store = make_store()
+        with pytest.raises(ValueError):
+            TickLoop(store, systems=[], debug_checks=True)
+
+    def test_a_deliberately_broken_system_trips_a_registered_invariant(self):
+        store = make_store()
+        ids = store.allocate(1, energy=np.array([0.0], dtype=np.float32))
+        row = store._id_to_row[ids[0].item()]
+
+        def create_energy_from_nowhere():
+            store.energy[row] -= 1.0
+
+        registry = InvariantRegistry()
+        registry.register(
+            "no_alive_entity_has_negative_energy",
+            lambda s: np.flatnonzero(s.alive & (s.energy < 0)),
+        )
+        loop = TickLoop(
+            store, systems=[create_energy_from_nowhere], invariants=registry, debug_checks=True
+        )
+
+        with pytest.raises(InvariantViolation) as excinfo:
+            loop.advance(5)
+
+        # Fails on the first tick the broken system corrupts, not after running all 5.
+        assert excinfo.value.tick == 1
+        assert loop.tick_count == 1
+        assert excinfo.value.offending_rows.tolist() == [row]
+
+    def test_a_correct_system_never_trips_the_invariants(self):
+        store = make_store()
+        store.allocate(1, energy=np.array([10.0], dtype=np.float32))
+        registry = InvariantRegistry()
+        registry.register(
+            "no_alive_entity_has_negative_energy",
+            lambda s: np.flatnonzero(s.alive & (s.energy < 0)),
+        )
+        loop = TickLoop(store, systems=[], invariants=registry, debug_checks=True)
+        loop.advance(10)  # must not raise
+        assert loop.tick_count == 10
+
+    def test_disabled_overhead_is_negligible_next_to_enabled(self):
+        # Same store size and tick count on both sides; the only difference is debug_checks.
+        # Disabled must stay a small fraction of enabled's cost, since enabled repeats a
+        # 10,000-row vectorized predicate every tick and disabled does only the boolean branch.
+        n_entities = 10_000
+        n_ticks = 200
+
+        def build_loop(**kwargs):
+            store = make_store(initial_capacity=n_entities)
+            store.allocate(n_entities, energy=np.ones(n_entities, dtype=np.float32))
+            return TickLoop(store, systems=[], **kwargs)
+
+        loop_off = build_loop()
+        start = time.perf_counter()
+        loop_off.advance(n_ticks)
+        off_elapsed = time.perf_counter() - start
+
+        registry = InvariantRegistry()
+        registry.register(
+            "no_alive_entity_has_negative_energy",
+            lambda s: np.flatnonzero(s.alive & (s.energy < 0)),
+        )
+        loop_on = build_loop(invariants=registry, debug_checks=True)
+        start = time.perf_counter()
+        loop_on.advance(n_ticks)
+        on_elapsed = time.perf_counter() - start
+
+        assert off_elapsed < on_elapsed
