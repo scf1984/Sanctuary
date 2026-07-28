@@ -6,8 +6,8 @@ import pytest
 from core.entities.store import EntityStore, EntityStoreFull, UnknownEntityError
 
 
-def make_store(initial_capacity=8, n_drives=3):
-    return EntityStore(initial_capacity=initial_capacity, n_drives=n_drives)
+def make_store(initial_capacity=8, n_drives=3, n_genes=4):
+    return EntityStore(initial_capacity=initial_capacity, n_drives=n_drives, n_genes=n_genes)
 
 
 class TestConstruction:
@@ -19,11 +19,16 @@ class TestConstruction:
         with pytest.raises(ValueError):
             make_store(n_drives=0)
 
+    def test_rejects_non_positive_gene_count(self):
+        with pytest.raises(ValueError):
+            make_store(n_genes=0)
+
     def test_columns_start_at_requested_shape(self):
-        store = make_store(initial_capacity=8, n_drives=3)
+        store = make_store(initial_capacity=8, n_drives=3, n_genes=5)
         assert store.capacity == 8
         assert store.available == 8
         assert store.drive_scores.shape == (8, 3)
+        assert store.genes.shape == (8, 5)
 
 
 class TestAllocate:
@@ -42,19 +47,22 @@ class TestAllocate:
         assert (store.energy[rows] == 0.0).all()
         assert (store.species_id[rows] == -1).all()
         assert (store.drive_scores[rows] == 0.0).all()
+        assert (store.genes[rows] == 0.0).all()
 
     def test_seeds_initial_values_in_one_call(self):
-        store = make_store()
+        store = make_store(n_genes=2)
         ids = store.allocate(
             2,
             x=np.array([1.0, 2.0], dtype=np.float32),
             energy=np.array([50.0, 75.0], dtype=np.float32),
             species_id=np.array([4, 4], dtype=np.int32),
+            genes=np.array([[0.25, 0.5], [0.75, 1.5]], dtype=np.float32),
         )
         rows = [store._id_to_row[i] for i in ids.tolist()]
         assert store.x[rows].tolist() == [1.0, 2.0]
         assert store.energy[rows].tolist() == [50.0, 75.0]
         assert store.species_id[rows].tolist() == [4, 4]
+        assert store.genes[rows].tolist() == [[0.25, 0.5], [0.75, 1.5]]
 
     def test_reduces_available_capacity(self):
         store = make_store(initial_capacity=8)

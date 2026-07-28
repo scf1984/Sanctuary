@@ -23,6 +23,7 @@ _COLUMN_NAMES = (
     "health",
     "species_id",
     "drive_scores",
+    "genes",
     "alive",
 )
 
@@ -62,6 +63,10 @@ class EntityStore:
       drive_scores: ``(capacity, n_drives)`` float32, unit-free utility scores. Which drives
           exist is owned by the behaviour system (CLAUDE.md §8.3); this module only provides a
           column block of the width it's told to.
+      genes: ``(capacity, n_genes)`` float32, unit-free gene values over one shared vocabulary
+          (CLAUDE.md §2.3). Every entity holds every gene slot regardless of species; which genes
+          a species expresses is owned by the genetics system's species registry, not this
+          module — an unexpressed slot is stored and inherited exactly like an expressed one.
       alive: bool. True for rows currently holding a live entity.
 
     Dead rows sit on a free list and are handed back out by allocate(), so capacity grows only on
@@ -72,13 +77,16 @@ class EntityStore:
     boundary; see grow() for why.
     """
 
-    def __init__(self, initial_capacity: int, n_drives: int) -> None:
+    def __init__(self, initial_capacity: int, n_drives: int, n_genes: int) -> None:
         if initial_capacity < 1:
             raise ValueError("initial_capacity must be at least 1")
         if n_drives < 1:
             raise ValueError("n_drives must be at least 1")
+        if n_genes < 1:
+            raise ValueError("n_genes must be at least 1")
 
         self._n_drives = n_drives
+        self._n_genes = n_genes
         self._allocate_columns(initial_capacity)
         # Popped from the end, so the first allocation hands out row 0.
         self._free_rows: list[int] = list(range(initial_capacity - 1, -1, -1))
@@ -95,6 +103,7 @@ class EntityStore:
         self.health = np.zeros(capacity, dtype=np.float32)
         self.species_id = np.full(capacity, -1, dtype=np.int32)
         self.drive_scores = np.zeros((capacity, self._n_drives), dtype=np.float32)
+        self.genes = np.zeros((capacity, self._n_genes), dtype=np.float32)
         self.alive = np.zeros(capacity, dtype=np.bool_)
 
     @property

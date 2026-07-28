@@ -7,7 +7,7 @@ from core.view import EntityView, TickContext
 
 
 def make_store_and_selection():
-    store = EntityStore(initial_capacity=4, n_drives=2)
+    store = EntityStore(initial_capacity=4, n_drives=2, n_genes=3)
     ids = store.allocate(
         2,
         x=np.array([1.0, 2.0], dtype=np.float32),
@@ -37,7 +37,7 @@ class TestConstruction:
             view.energy
 
     def test_rejects_a_selection_of_more_than_one_row(self):
-        store = EntityStore(initial_capacity=4, n_drives=2)
+        store = EntityStore(initial_capacity=4, n_drives=2, n_genes=3)
         store.allocate(2)
         selection = Selection.all(store.capacity)
         with pytest.raises(ValueError):
