@@ -1,3 +1,4 @@
+import statistics
 import time
 
 import numpy as np
@@ -255,6 +256,9 @@ class TestPerformance:
     scale linearly with n, as expected for a single full pass over the population. Budgets below
     are set well above measured values to guard against real regressions without flaking on CI
     noise (CLAUDE.md §8.5).
+
+    The index-vs-brute-force comparison is measured separately, at both sides of the crossover, in
+    docs/spikes/spatial-index-crossover.md (issue #79).
     """
 
     @pytest.mark.parametrize("n", [1_000, 5_000, 20_000, 100_000])
@@ -295,12 +299,36 @@ class TestPerformance:
         update_elapsed = time.perf_counter() - start
         assert update_elapsed < 2.0
 
-    def test_beats_repeated_brute_force_scans_at_20k(self):
-        # At the scale where per-tick "every entity senses its neighbours" work happens, the
-        # index should cost far less than re-scanning the whole population for every observer --
-        # that gap is the entire reason this module exists (issue #11's "Why").
-        rng = np.random.default_rng(20_000)
-        n = 20_000
+    def test_advantage_over_brute_force_grows_with_population(self):
+        # The index's actual property is *scaling*, not "faster than brute force at some given
+        # size": a grid query costs what local density costs, while a brute-force scan costs what
+        # the whole population costs. That gap is the entire reason this module exists (issue
+        # #11's "Why"), and it is what this asserts.
+        #
+        # An earlier version asserted a bare `indexed < brute` at n=20,000. The crossover turns out
+        # to sit *at* n≈20,000 (docs/spikes/spatial-index-crossover.md), so that was asserting a
+        # coin flip, and it failed 15/15 when the test ran in isolation -- issue #79. Every
+        # threshold below is ~2x clear of the worst value measured in that spike.
+        indexed_small, brute_small = self._time_both(20_000)
+        indexed_large, brute_large = self._time_both(100_000)
+
+        # Past the crossover the index wins outright. Measured at n=100,000: 4.8x-9.3x.
+        assert brute_large / indexed_large > 2.0
+
+        # 5x the population: brute force pays for all of it, the index pays for almost none of it.
+        # Measured growth across this step: brute 6.4x-9.3x, indexed 0.88x-1.57x.
+        assert brute_large / brute_small > 3.0
+        assert indexed_large / indexed_small < 3.0
+
+    @staticmethod
+    def _time_both(n):
+        """Median indexed and brute-force cost, in seconds, of 200 single-observer queries.
+
+        Both paths are warmed before timing. The original test's flakiness was largely a cold-start
+        artifact -- first-touch page faults and dict/set allocation inside the indexed path -- so
+        omitting the warmup measures allocator state rather than query cost.
+        """
+        rng = np.random.default_rng(n)
         side = 100.0 * (n / 1_000) ** (1 / 3)
         store = random_store(n, side=side, rng=rng)
         population = Selection.all(n)
@@ -309,21 +337,26 @@ class TestPerformance:
 
         index = SpatialIndex(cell_size=radius)
         index.rebuild(store, population)
+        observer_rows = rows[:200].tolist()
 
-        observer_rows = rows[:200]
+        def indexed():
+            start = time.perf_counter()
+            for row in observer_rows:
+                observers = Selection.from_indices(np.array([row]), capacity=n)
+                index.neighbors_of(store, observers, radius)
+            return time.perf_counter() - start
 
-        start = time.perf_counter()
-        for row in observer_rows.tolist():
-            observers = Selection.from_indices(np.array([row]), capacity=n)
-            index.neighbors_of(store, observers, radius)
-        indexed_elapsed = time.perf_counter() - start
+        def brute():
+            start = time.perf_counter()
+            for row in observer_rows:
+                dx = store.x[rows] - store.x[row]
+                dy = store.y[rows] - store.y[row]
+                dz = store.z[rows] - store.z[row]
+                (dx**2 + dy**2 + dz**2 <= radius**2)
+            return time.perf_counter() - start
 
-        start = time.perf_counter()
-        for row in observer_rows.tolist():
-            dx = store.x[rows] - store.x[row]
-            dy = store.y[rows] - store.y[row]
-            dz = store.z[rows] - store.z[row]
-            (dx**2 + dy**2 + dz**2 <= radius**2)
-        brute_elapsed = time.perf_counter() - start
+        def median_of(fn):
+            fn()
+            return statistics.median(fn() for _ in range(3))
 
-        assert indexed_elapsed < brute_elapsed
+        return median_of(indexed), median_of(brute)
