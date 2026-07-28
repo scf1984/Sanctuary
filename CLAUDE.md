@@ -511,3 +511,12 @@ raised error to a defaulted value, and a tripped invariant to a clamped number.
 - **Green CI is a precondition for review, not a stage of it.** The prototype's final commit broke
   the test suite by deleting a symbol the tests imported, and it went unnoticed for two years.
 - A PR description states what changed, why, and what was measured.
+- **Stage files by name. Never `git add -A`, `git add .`, or `git commit -a`.** You are responsible
+  for every path in a commit, and a wildcard stages whatever happens to be sitting in the tree —
+  a local virtualenv, a scratch script, a downloaded fixture, another task's half-finished edit.
+  `.gitignore` is a safety net with holes in it, not the control: it only ever lists the mess
+  someone already made, so the first time a new kind of artifact appears it is unignored by
+  definition. This has already cost us once — a `.venv312/` directory (not matched by the
+  `.venv/` pattern) was swept into a commit and pushed before anyone noticed.
+  Run `git status` first, stage the paths you meant, and confirm with `git status --short` that
+  nothing else came along.
