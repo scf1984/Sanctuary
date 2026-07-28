@@ -1,3 +1,10 @@
+# Delegated implementation for the Sanctuary backlog. See issue #44.
+#
+# Tag mode: mentioning @claude on an issue or pull request starts a run. The
+# backlog was written specifically to make this work - every issue carries an
+# abstraction contract, a binding blocker list, and a definition of done - so the
+# agent's job here is to follow a specification, not to invent one.
+
 name: Claude Code
 
 on:
@@ -12,13 +19,41 @@ on:
 
 jobs:
   claude:
-    if: |
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
-      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+    # Two conditions, both required.
+    #
+    # The first is the @claude mention, which lives in a different field per event.
+    #
+    # The second is an access gate. This repository is public, so without it any
+    # passer-by could open an issue containing "@claude" and start a run.
+    # claude-code-action independently refuses actors without write access, so
+    # this is the cheaper of two gates: it declines before a runner starts rather
+    # than after. Two independent checks, because a workflow condition is easier
+    # to get subtly wrong than the action's own check, and neither should be the
+    # only thing between a public repository and someone else's token spend.
+    #
+    # The author_association coalescing relies on GitHub expressions returning the
+    # first truthy operand of ||, so a comment's association wins on comment
+    # events and falls through to the issue's on `issues` events.
+    if: >-
+      (
+        (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+        (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+        (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
+        (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+      ) &&
+      contains(
+        fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'),
+        github.event.comment.author_association ||
+        github.event.review.author_association ||
+        github.event.issue.author_association
+      )
     runs-on: ubuntu-latest
+    # A runaway agent should cost an hour, not a weekend.
+    timeout-minutes: 60
     permissions:
+      # Deliberately read-only on contents. The action mints its own installation
+      # token via OIDC to push branches, so the workflow never needs write access
+      # itself - which means a mistake here cannot reach master.
       contents: read
       pull-requests: read
       issues: read
@@ -28,7 +63,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          # Full history. CLAUDE.md section 8.2 requires every line to be
+          # justifiable, and section 1 catalogues prototype defects that are only
+          # legible with blame available.
+          fetch-depth: 0
 
       - name: Run Claude Code
         id: claude
@@ -36,15 +74,17 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
-          # This is an optional setting that allows Claude to read CI results on PRs
+          # Lets Claude read CI results on pull requests.
           additional_permissions: |
             actions: read
 
-          # Optional: Give a custom prompt to Claude. If this is not specified, Claude will perform the instructions specified in the comment that tagged it.
-          # prompt: 'Update the pull request description to include a summary of changes.'
-
-          # Optional: Add claude_args to customize behavior and configuration
-          # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
-          # or https://code.claude.com/docs/en/cli-reference for available options
-          # claude_args: '--allowed-tools Bash(gh pr *)'
-
+          # Standing instructions use --append-system-prompt rather than the
+          # `prompt` input: in tag mode `prompt` supplements the triggering
+          # comment, so rules placed there would be mixed into the user's request
+          # instead of acting as guidance.
+          #
+          # CLAUDE.md loads automatically and is not duplicated here. This
+          # restates only the rules most likely to be skipped under delegation -
+          # the ones whose violation produces work that has to be thrown away.
+          claude_args: |
+            --append-system-prompt "This repository's CLAUDE.md is binding. Before starting any issue, read its 'Blocked by' section: if any blocker is still open, comment saying so and stop. Do not stub, mock, or temporarily reimplement a blocker's scope in order to proceed - that is how two incompatible versions of the same abstraction get built (section 7.1). Do not redesign an abstraction owned by another issue; if you cannot build against it, say so rather than working around it locally (section 7.2). Write the test before the implementation wherever the contract is checkable in advance, and always for a bug fix (section 8.1). Every line you add must be justifiable: no code for later, no parameter without a caller that needs it now, no defensive checks against conditions that cannot occur, no commented-out code (section 8.2). State shape, dtype and unit on every array attribute (section 8.4). Cite a benchmark for any performance claim (section 8.5)."
