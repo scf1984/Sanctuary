@@ -18,24 +18,10 @@ dev = [
     "mypy>=1.10",
 ]
 
-# The prototype is a flat module layout (no src/ package yet); list it explicitly
-# rather than relying on setuptools auto-discovery, which would also try to pick up
-# unrelated top-level directories as the tree evolves.
-[tool.setuptools]
-py-modules = [
-    "entities",
-    "environment",
-    "inclinations",
-    "interpolators",
-    "location",
-    "main",
-    "reproduction_systems",
-    "states",
-    "traits",
-    "utils",
-    "world",
-]
-packages = ["events", "stats", "core", "core.world"]
+# core/ is the only installable package (see CLAUDE.md §4); legacy/ is kept for reference
+# only, does not run, and must never be packaged or imported by anything under core/.
+[tool.setuptools.packages.find]
+include = ["core*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -43,7 +29,14 @@ testpaths = ["tests"]
 [tool.ruff]
 target-version = "py312"
 line-length = 100
+extend-exclude = ["legacy"]
+
+# Pinned explicitly rather than left to whatever a given ruff version defaults to —
+# pyflakes plus pycodestyle's error-level checks (unused/undefined names, syntax issues).
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
 
 [tool.mypy]
 python_version = "3.12"
 ignore_missing_imports = true
+exclude = ["legacy"]
