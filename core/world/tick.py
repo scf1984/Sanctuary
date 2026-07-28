@@ -33,8 +33,10 @@ class TickLoop:
         (§2.1) so tick size is never constrained by visual smoothness. A snapshot is taken once
         per ``advance()`` call, not once per tick within it, so a large catch-up batch copies
         positions twice regardless of how many ticks it covers.
-    invariants, debug_checks: an optional InvariantRegistry (CLAUDE.md §6) evaluated against
-        ``store`` after every tick, only when ``debug_checks`` is True. Disabled is the default
+    invariants, debug_checks: an optional InvariantRegistry (CLAUDE.md §6) evaluated after every
+        tick, only when ``debug_checks`` is True. It is handed ``store``; invariants over anything
+        else the world holds — the plant field, say — close over it when they are built, so the
+        loop needs no knowledge of which domains are being checked. Disabled is the default
         and costs nothing beyond the one boolean check per tick — no registry lookup, no
         predicate call — so production runs pay nothing for a check meant for debug builds.
     """
@@ -62,7 +64,7 @@ class TickLoop:
 
         Raises ValueError for negative ``n_ticks``. When ``debug_checks`` is enabled, raises
         InvariantViolation (leaving ``tick_count`` at the failing tick) as soon as a registered
-        invariant reports offending rows, before running any further ticks.
+        invariant reports a violation, before running any further ticks.
         """
         if n_ticks < 0:
             raise ValueError("n_ticks must be non-negative")

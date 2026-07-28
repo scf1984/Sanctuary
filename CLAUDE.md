@@ -339,6 +339,15 @@ Non-determinism rules out golden-output tests. Use instead:
 - **Invariants**, asserted every tick in debug builds: energy is never created, populations are
   never negative, no entity leaves the world bounds, no entity occupies a free-list row, total
   nutrients are conserved across the loop.
+  **An invariant is not confined to entities** — decided in #91. A check returns `None` when it
+  holds and a `Violation` when it does not, describing the breach in its own terms, because the
+  original contract returned offending *row indices* and the nutrient pool lives on the plant
+  field's grid cells, which have no rows. Anything a check needs beyond the entity store — a
+  field, a config table — is **bound by closure when the invariant is built**, following the
+  precedent `no_entity_leaves_world_bounds` set with its rectangle. That keeps one predicate
+  signature for every invariant and avoids a world-context argument enumerating domains that do
+  not exist yet (§8.2); the cross-domain case is covered by the same mechanism — close over the
+  field, receive the store.
 - **Statistical tests** over many seeds: a population under predation should trend toward higher
   speed; an isolated population should accumulate genetic distance; a world with no sunlight should
   collapse. Assert distributions and directions, never exact values.
@@ -543,3 +552,26 @@ raised error to a defaulted value, and a tripped invariant to a clamped number.
   `.venv/` pattern) was swept into a commit and pushed before anyone noticed.
   Run `git status` first, stage the paths you meant, and confirm with `git status --short` that
   nothing else came along.
+
+### 8.9 Every issue is worked in a worktree, off a freshly aligned master
+
+This is the workflow for *all* issues, not a convenience for large ones. In order:
+
+1. **Align local `master` with the remote before branching.** `git fetch origin`, then
+   fast-forward. Branching off a stale `master` produces a diff full of changes someone else
+   already merged, and the conflict is discovered at review time rather than at minute one. This
+   repository has several long-lived worktrees, so a local `master` that has not been touched in
+   days is the normal case, not the exception.
+2. **Do the work in a git worktree**, one per issue, branch named for the issue
+   (`fix/91-field-invariants`). Never on `master`, and never in a worktree that already holds
+   another issue's work — §8.8's staging rule assumes the tree contains only what you put there,
+   and a shared tree breaks that assumption before you type a command.
+3. **Open the pull request from that branch**, referencing the issue.
+4. **Remove the worktree once the PR is open.** Leaving it behind is how the next task ends up
+   started in the wrong tree, and how a stale branch's virtualenv gets swept into a commit. The
+   branch survives on the remote; the working copy has done its job.
+
+The stash stack is shared across every worktree of a repository. A bare `git stash` / `git stash
+pop` can therefore pop work belonging to a different worktree entirely. Prefer a temporary WIP
+commit; if you must stash, tag it (`git stash push -u -m "<tag>"`) and restore by SHA with
+`git stash apply`, never `pop`.
