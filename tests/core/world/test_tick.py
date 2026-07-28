@@ -4,7 +4,11 @@ import numpy as np
 import pytest
 
 from core.entities.store import EntityStore
-from core.invariants import InvariantRegistry, InvariantViolation
+from core.invariants import (
+    InvariantRegistry,
+    InvariantViolation,
+    no_alive_entity_has_negative_energy,
+)
 from core.world.tick import TickLoop
 
 
@@ -152,8 +156,7 @@ class TestDebugChecks:
 
         registry = InvariantRegistry()
         registry.register(
-            "no_alive_entity_has_negative_energy",
-            lambda s: np.flatnonzero(s.alive & (s.energy < 0)),
+            "no_alive_entity_has_negative_energy", no_alive_entity_has_negative_energy
         )
         loop = TickLoop(
             store, systems=[create_energy_from_nowhere], invariants=registry, debug_checks=True
@@ -165,15 +168,14 @@ class TestDebugChecks:
         # Fails on the first tick the broken system corrupts, not after running all 5.
         assert excinfo.value.tick == 1
         assert loop.tick_count == 1
-        assert excinfo.value.offending_rows.tolist() == [row]
+        assert excinfo.value.violation.rows.tolist() == [row]
 
     def test_a_correct_system_never_trips_the_invariants(self):
         store = make_store()
         store.allocate(1, energy=np.array([10.0], dtype=np.float32))
         registry = InvariantRegistry()
         registry.register(
-            "no_alive_entity_has_negative_energy",
-            lambda s: np.flatnonzero(s.alive & (s.energy < 0)),
+            "no_alive_entity_has_negative_energy", no_alive_entity_has_negative_energy
         )
         loop = TickLoop(store, systems=[], invariants=registry, debug_checks=True)
         loop.advance(10)  # must not raise
@@ -198,8 +200,7 @@ class TestDebugChecks:
 
         registry = InvariantRegistry()
         registry.register(
-            "no_alive_entity_has_negative_energy",
-            lambda s: np.flatnonzero(s.alive & (s.energy < 0)),
+            "no_alive_entity_has_negative_energy", no_alive_entity_has_negative_energy
         )
         loop_on = build_loop(invariants=registry, debug_checks=True)
         start = time.perf_counter()
