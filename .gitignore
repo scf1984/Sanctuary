@@ -3,7 +3,12 @@
 __pycache__/
 
 # Python tooling
-.venv/
+# Virtualenvs, under any name and at any depth. Neither pattern is anchored with a leading slash,
+# so both match in every directory -- including the per-task checkouts under .claude/worktrees/,
+# which is where the .venv312/ that got committed actually lived. The trailing slash keeps these
+# matching directories only, so a file named e.g. venv_notes.md is still tracked.
+.venv*/
+venv*/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
