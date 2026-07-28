@@ -1,5 +1,61 @@
 # Workflows
 
+## `ci.yml` — tests, lint, types, and the version floor
+
+Runs on every push to `master` and every pull request. Green CI is a precondition for review, not a
+stage of it (`CLAUDE.md` §8.8). Added by #2.
+
+### Why the version matrix has two legs
+
+The prototype accidentally required *exactly* Python 3.10: it used `X | Y` at runtime (needs 3.10+)
+and `@classmethod` stacked on `@property` (removed in 3.13). Nothing recorded either fact, so the
+repository silently stopped running.
+
+That is a failure in **both directions**, and one leg cannot catch both:
+
+| leg | catches |
+|---|---|
+| **3.12** — the floor declared in `pyproject.toml` | code that needs something *newer* than the floor |
+| **3.14** — current stable | code that relies on something *since removed* |
+
+`fail-fast` is off, because knowing whether a break is floor-only or affects both versions is most
+of the diagnosis.
+
+### The `version-floor` job
+
+`pytest` only exercises code it imports. `clients/viewer` needs pygame and is never loaded in a
+headless run, so newer-than-floor syntax could sit there indefinitely. Byte-compiling the tree with
+the floor interpreter catches it — `compileall` neither imports nor executes, so no dependency is
+needed to check a module.
+
+It scans the whole tree rather than a list of directories, so the packages `CLAUDE.md` §4 still
+plans (`api/`, `service/`, `persistence/`) are covered the day they appear rather than silently
+escaping the check. `legacy/` is excluded: it is the 2017–2023 prototype, does not run, and must
+not be extended (§1).
+
+Note the division of labour. The floor job catches *syntax* above the floor. A construct that is
+valid syntax but has changed meaning — `@classmethod` on `@property` is exactly this, returning a
+different object rather than raising — is caught only because the **test suite** exercises it on
+the 3.14 leg. Tests are what catch semantic drift; the compile check catches what tests never load.
+
+### Why the viewer extra is not installed
+
+`CLAUDE.md` §3 requires the core to stay importable and runnable headless. A test run that never
+installs pygame is a standing check that it really is.
+
+### `lint` runs on the floor only
+
+`ruff` and `mypy` each pin their own target version in `pyproject.toml` (`target-version`,
+`python_version`), so running them once on the floor is the configured behaviour rather than an
+arbitrary choice of leg.
+
+This job also runs `tools/check_legacy_imports.py`. Its sibling `check_wall_clock_imports.py`
+already runs under pytest via `tests/test_no_wall_clock_imports.py`, but the legacy guard had **no
+caller at all** — `legacy/README.md` claimed it was "wired into linting" and it was not, making it
+precisely the decorative abstraction §8.2 forbids. This is that caller.
+
+---
+
 ## `claude.yml` — delegated implementation
 
 Mention `@claude` in a comment on an issue or pull request, or open an issue containing `@claude`,
