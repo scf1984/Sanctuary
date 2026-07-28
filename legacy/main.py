@@ -47,4 +47,3 @@ if __name__ == '__main__':
         Bunny(location=Location.random((0, 500), (0, 500)))
     wr = WorldRunner(world=w, canvas=Canvas(master, width=world_size[0], height=world_size[1]))
     wr.run()
-
