@@ -17,6 +17,11 @@ dev = [
     "ruff>=0.5",
     "mypy>=1.10",
 ]
+# clients/viewer is not part of core (CLAUDE.md §3.2: core has no UI dependency) and stays
+# optional so a headless install never pulls in a display library.
+viewer = [
+    "pygame>=2.5",
+]
 
 # core/ is the only installable package (see CLAUDE.md §4); legacy/ is kept for reference
 # only, does not run, and must never be packaged or imported by anything under core/.

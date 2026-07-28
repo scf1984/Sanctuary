@@ -240,6 +240,13 @@ drives, and current utility scores.
 The prototype's renderer is not a starting point — it draws zero-size ovals (`bbox(0.00)`), has no
 terrain, no species distinction, and no way to pause or inspect.
 
+**Rendering technology: pygame**, decided when building the minimal live view (issue #12). Pause,
+single-step, and adjustable speed need a real per-frame event loop and immediate-mode blitting; a
+plotting library's redraw-the-whole-figure model (e.g. matplotlib) fights that instead of
+supporting it, and a heavier GUI toolkit (Qt, etc.) buys nothing this diagnostic instrument needs.
+Terrain and water render once, as a static NumPy RGB array blitted per generation; only entity
+positions and the status readout update every frame.
+
 ---
 
 ## 4. Architecture boundaries
@@ -280,7 +287,6 @@ Not yet decided. Do not assume answers — ask.
 - Precise metric definitions (species count vs. Shannon index vs. within-species genetic diversity).
 - Competition format: replicate count, duration, termination condition, what is measured.
 - Whether the player names species on speciation, and how lineage is displayed.
-- Client rendering technology for the diagnostic viewer.
 
 ---
 
