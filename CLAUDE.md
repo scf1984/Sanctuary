@@ -372,6 +372,36 @@ answers has been moved out of Open Questions and into a settled section; any per
 makes is backed by a benchmark rather than an estimate; and every line in the diff can be justified
 under §8.2.
 
+### 7.4 Problems found in passing are filed, not mentioned
+
+**Anything you notice that is wrong and is not in your issue's scope becomes a GitHub issue before
+you finish.** Not a line in a PR description, not a comment in the code, not a remark in chat —
+those are read once and then gone, and the problem is rediscovered months later by someone who
+assumes it is new.
+
+This applies to: a test that fails for reasons unrelated to your change, a deliverable that is
+missing from a closed issue (§7.3), an abstraction that could not be used as designed (§7.2), a
+constant that contradicts the ratio table in §2.1, dead or decorative code (§8.2), and a
+performance claim you find is not backed by a measurement (§8.5). It applies whether or not you
+believe anyone will act on it. Filing costs a minute; the alternative is that the next person
+pays for the discovery again.
+
+Rules for filing:
+
+- **Do not fix it in the same pull request.** One issue per PR (§8.8). Fixing an unrelated problem
+  inline makes the diff unreviewable and hides the fix from anyone searching for it later.
+- **Say where you found it.** "Found while implementing #16 (PR #78)" is what lets a reader
+  reconstruct the context.
+- **Include the evidence, not the impression.** The failing assertion and its numbers, the command
+  you ran, the commit you verified against. A report that cannot be reproduced will be closed as
+  stale.
+- **If the problem is that a closed issue's deliverable does not exist, reopen that issue** rather
+  than filing a new one — §7.3 makes it that issue's unfinished work, and a duplicate splits the
+  history. File separately only when the original genuinely delivered its scope and something new
+  has since broken.
+- **Report tooling and permission failures too.** A `gh` query that unexpectedly needs approval is
+  a configuration bug worth an issue (§7.1), not a reason to work around it silently.
+
 ---
 
 ## 8. Engineering practice
