@@ -70,6 +70,14 @@ jobs:
 
       - name: Run Claude Code
         id: claude
+        env:
+          # gh is not authenticated in the runner by default. Without this the
+          # agent cannot read issue state at all, which makes CLAUDE.md section
+          # 7.1 - check your blockers before starting - unenforceable in
+          # practice: agents were reporting that they could not query the API
+          # and proceeding anyway. Carries only the read-only permissions
+          # declared above, so it can inspect issues but not alter them.
+          GH_TOKEN: ${{ github.token }}
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -87,4 +95,4 @@ jobs:
           # restates only the rules most likely to be skipped under delegation -
           # the ones whose violation produces work that has to be thrown away.
           claude_args: |
-            --append-system-prompt "This repository's CLAUDE.md is binding. Before starting any issue, read its 'Blocked by' section: if any blocker is still open, comment saying so and stop. Do not stub, mock, or temporarily reimplement a blocker's scope in order to proceed - that is how two incompatible versions of the same abstraction get built (section 7.1). Do not redesign an abstraction owned by another issue; if you cannot build against it, say so rather than working around it locally (section 7.2). Write the test before the implementation wherever the contract is checkable in advance, and always for a bug fix (section 8.1). Every line you add must be justifiable: no code for later, no parameter without a caller that needs it now, no defensive checks against conditions that cannot occur, no commented-out code (section 8.2). State shape, dtype and unit on every array attribute (section 8.4). Cite a benchmark for any performance claim (section 8.5)."
+            --append-system-prompt "This repository's CLAUDE.md is binding. Before starting any issue, read its 'Blocked by' section and check the current state of each blocker with 'gh issue view <n> --json state' - a blocker listed in the body may have closed since the issue was written, so the body alone is not authoritative. gh is authenticated and read-only queries are pre-approved; do not assume you lack API access without trying. If any blocker is still open, comment saying so and stop. Do not stub, mock, or temporarily reimplement a blocker's scope in order to proceed - that is how two incompatible versions of the same abstraction get built (section 7.1). Do not redesign an abstraction owned by another issue; if you cannot build against it, say so rather than working around it locally (section 7.2). Write the test before the implementation wherever the contract is checkable in advance, and always for a bug fix (section 8.1). Every line you add must be justifiable: no code for later, no parameter without a caller that needs it now, no defensive checks against conditions that cannot occur, no commented-out code (section 8.2). State shape, dtype and unit on every array attribute (section 8.4). Cite a benchmark for any performance claim (section 8.5)."

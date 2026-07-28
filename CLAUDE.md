@@ -316,6 +316,22 @@ Every issue that depends on unfinished work carries a section like:
 blocker, comment saying so and stop. Do not stub, mock, or "temporarily" reimplement a blocker's
 scope in order to proceed — that is how two incompatible versions of the same abstraction get built.
 
+**The list in an issue body is a snapshot from when it was written, not live state.** Blockers close
+over time, and an issue whose body still lists them may be perfectly ready to start. Always check:
+
+```
+gh issue view <n> --json state,title
+```
+
+Read-only `gh` queries are pre-approved in `.claude/settings.json`, and `GH_TOKEN` is set in the
+workflow, so this works without asking for permission. **If a query appears to require approval,
+that is a configuration bug worth reporting — not a reason to skip the check, and not a reason to
+assume the issue is blocked.** Concluding "I could not query the API" and then proceeding anyway is
+the failure this rule exists to prevent.
+
+The `blocked` label tracks the same information, but it is maintained by hand and can lag. Live
+issue state is authoritative; the label is a convenience for filtering.
+
 An issue with no `⛔ Blocked by` section is ready to start.
 
 ### 7.2 Abstractions are owned by their issue
