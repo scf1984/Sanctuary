@@ -1,0 +1,109 @@
+# Tests, lint, types, and the Python version floor. See issue #2.
+#
+# The prototype accidentally required *exactly* Python 3.10 -- it used `X | Y` at runtime (3.10+)
+# and `@classmethod` stacked on `@property` (removed in 3.13). Nothing recorded either fact, so the
+# repository silently stopped running (CLAUDE.md §3). That is a failure in *both* directions, and
+# the test matrix below is built to catch both: the floor leg catches code that needs something
+# newer than the declared minimum, and the current-stable leg catches code that relies on something
+# since removed.
+
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+# A superseded run tells you nothing; cancel it rather than pay for it.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # The floor declared in pyproject.toml (requires-python = ">=3.12"). Referenced by the syntax
+  # check below so the two cannot drift apart silently.
+  PYTHON_FLOOR: "3.12"
+
+jobs:
+  test:
+    name: test (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      # Don't cancel the other leg on one failure: knowing whether a break is floor-only or
+      # both-versions is most of the diagnosis.
+      fail-fast: false
+      matrix:
+        # 3.12 is the declared floor; 3.14 is current stable. Issue #2 requires both.
+        python-version: ["3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      # No viewer extra: CLAUDE.md §3 requires the core to stay importable and runnable headless,
+      # so a run that never installs pygame is a standing check that it really is.
+      - run: python -m pip install --upgrade pip
+      - run: pip install -e ".[dev]"
+
+      - run: pytest -q
+
+  version-floor:
+    name: version floor (syntax)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_FLOOR }}
+
+      # Byte-compiling with the floor interpreter fails on any syntax newer than the floor. This
+      # catches what `pytest` cannot: files the suite never imports, notably clients/viewer, which
+      # needs pygame and so is never loaded in a headless test run. compileall does not execute or
+      # import the modules, so no dependency is required to check them.
+      #
+      # legacy/ is excluded deliberately -- it is the 2017-2023 prototype, does not run, and must
+      # not be extended (CLAUDE.md §1).
+      #
+      # The whole tree is scanned rather than a list of directories, so a top-level package added
+      # later (service/, api/, persistence/ -- all planned in CLAUDE.md §4) is covered the day it
+      # appears instead of silently escaping the check. `-x legacy` is a substring search over the
+      # full path, so a future path with "legacy" elsewhere in it would also be skipped; that is
+      # acceptable for this layout and is the trade for having no coverage gap.
+      - name: Reject syntax newer than the declared floor
+        run: python -m compileall -q -x legacy .
+
+  lint:
+    name: lint and types
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_FLOOR }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - run: python -m pip install --upgrade pip
+      - run: pip install -e ".[dev]"
+
+      # Both tools pin their own target version in pyproject.toml (ruff target-version, mypy
+      # python_version), so running them once on the floor is the configured behaviour rather than
+      # an arbitrary choice of leg.
+      - run: ruff check .
+      - run: mypy core
+
+      # tools/check_wall_clock_imports.py already runs under pytest via
+      # tests/test_no_wall_clock_imports.py. Its sibling had no caller at all -- legacy/README.md
+      # claims it is "wired into linting" and it was not, making it exactly the decorative
+      # abstraction CLAUDE.md §8.2 forbids. This is that caller.
+      - name: Reject imports from legacy/
+        run: python tools/check_legacy_imports.py
