@@ -10,9 +10,10 @@ invariant, and the offending rows rather than letting a corrupted world run on s
 
 Only the invariants that are checkable against what exists in `core/` today are registered by
 `default_registry()`. CLAUDE.md §2.5's closed energy/nutrient loop needs an income/loss ledger
-(sunlight, respiration, feeding) that doesn't exist yet — #17 (metabolic budget), #18 (plants and
-soil nutrients), #19 (feeding) and #21 (death and decomposition) own that bookkeeping and are
-still open. Fabricating a ledger here ahead of them would be exactly the "two incompatible
+(sunlight, respiration, feeding) that doesn't exist yet — #17 landed the loss half as a pure drain
+(`core.ecology.service.Ecology`) and records no ledger, so #18 (plants and soil nutrients), #19
+(feeding) and #21 (death and decomposition) still own the income and return sides and are open.
+Fabricating a ledger here ahead of them would be exactly the "two incompatible
 versions of the same abstraction" CLAUDE.md §7.1 warns against, so full flow conservation is left
 for those issues to register through this same harness once their systems exist.
 """
