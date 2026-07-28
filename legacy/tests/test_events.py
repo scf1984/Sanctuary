@@ -15,4 +15,3 @@ class TestEvents(TestCase):
             w.add_event(ChangeEntityStateEvent(e.entity_id, WalkingState(e.entity_id, Location(1, 2), 1.0)))
             w.process_events()
             self.assertEqual(WalkingState, e.state.__class__)
-

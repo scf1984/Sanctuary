@@ -37,6 +37,3 @@ class Pregnancy(Stat):
     def update(self, entity, world, dt=None, ds=None):
         if entity.baby is not None:
             super().update(entity, world, dt, ds)
-
-
-
