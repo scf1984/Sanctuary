@@ -261,6 +261,20 @@ entities — no change to the table above is required.
   which is exactly what makes mimicry free. Sight (#24) perceives individuals rather than a blend
   and is therefore not under this constraint.
 
+  **Founders are evolved, never authored** — decided alongside the above, and it is what makes the
+  whole encoding honest. A new world does not begin from hand-written creatures: worlds are
+  generated headless from naive founders, run long, and most collapse; the ones that stabilise are
+  kept and shipped as starting states (#101). Hand-seeding aversion vectors would mean writing down
+  that rabbits fear wolves, which is authoring the outcome rather than the physics. Evolving them
+  offline means selection decides before the player ever arrives, by exactly the mechanism that
+  keeps deciding during play.
+
+  Two consequences follow. **Snapshots become content, not merely saves** — §3.2 already treats a
+  snapshot as the only copy of a world in existence, and now some are also shipped starting
+  material. And **the gene vocabulary becomes far more expensive to widen**, because a starting
+  state is bound to a vocabulary version, so a migration moves shipped content and not just player
+  saves. Settle the vocabulary before generating starting states.
+
   **An animal does not perceive itself.** Its own deposit is subtracted from what it samples, which
   is exact rather than approximate because a separable normalized blur's diagonal factorizes per
   axis. Without it, any lineage whose aversion overlapped its own signature — every cannibal —
@@ -467,15 +481,11 @@ Not yet decided. Do not assume answers — ask.
 
 - Seasons and weather as drivers — migration, hibernation, breeding seasonality. Wind is a
   consequence of this rather than a separate question, and scent-on-wind (#97) waits on it.
-- **What seeds a founder population's genes**, specifically its aversion vectors (§2.5). If fear is
-  purely genetic and founders start random, nothing knows what to fear until selection teaches it,
-  and selection teaches it by killing enough prey to shift the distribution. For a slow-breeding
-  species the population may crash before the lesson lands, and the result looks like a bug rather
-  than like evolution. Options span seeding founders with aversion already pointed at the
-  signatures present, seeding at random and accepting a violent first few generations as the
-  premise, and a per-world switch. Nothing is decided; the mechanic in §2.5 is unaffected either
-  way, since this is an initial condition and not a rule.
-- The concrete intervention catalogue and what each costs.
+- The concrete intervention catalogue and what each costs, and **what generates the player's
+  intervention currency** — settled only in the negative so far: not plain time-ticks. Whatever
+  generates it is what the game rewards, so it is a design decision rather than a number. Candidates
+  and their consequences are recorded on #26. Any income defined on ecosystem state waits on the
+  metric definitions below.
 - Precise metric definitions (species count vs. Shannon index vs. within-species genetic diversity).
 - Competition format: replicate count, duration, termination condition, what is measured.
 - Whether the player names species on speciation, and how lineage is displayed. The mechanic
