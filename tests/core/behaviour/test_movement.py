@@ -396,3 +396,57 @@ class TestMovementDoesNotWriteWhatItDoesNotOwn:
 
         with pytest.raises(ColumnOwnershipError, match="energy"):
             world.movement.write("energy", walker, np.zeros(len(walker), dtype=np.float32))
+
+
+class TestAStepOntoTheWorldEdge:
+    """The pricing pass and the move must agree on where a step lands (#128).
+
+    `step` snaps to the target on arrival precisely because float error on ``x + unit * distance``
+    can put the result a fraction past the boundary, where `Terrain.elevation_at` raises. The
+    pricing pass computed the same point *without* snapping, so a target on the world edge raised
+    out of the middle of a tick. Nothing caught it because #25's own tests aim at interior targets;
+    the first thing to feed a real `Hunger.forage_target` into `step` hit it at once, since
+    `Plants.perceive` reports patches on the terrain grid and its outermost column sits at exactly
+    `world_width`.
+    """
+
+    def test_a_diagonal_step_onto_the_far_corner_is_priced_without_raising(self):
+        world = World(flat_heights())
+        corner_x = world.terrain.world_width
+        corner_y = world.terrain.world_height
+        # Reach far exceeding the distance, so the step arrives and the snap is what has to apply.
+        walker = world.place(0.0, 0.0, speed=1000.0)
+
+        world.step_toward(walker, corner_x, corner_y, pace=1.0)
+
+        x, y, _z = world.position(walker)
+        assert x[0] == pytest.approx(corner_x)
+        assert y[0] == pytest.approx(corner_y)
+
+    def test_many_diagonal_steps_onto_the_edge_all_survive(self):
+        """One step lands past the boundary only when rounding breaks the wrong way — about 0.13% of
+        the time — so a single assertion would pass on a broken build. A cohort spread along the
+        edge is what makes the failure certain rather than likely.
+        """
+        world = World(flat_heights())
+        edge_x = world.terrain.world_width
+        starts_y = np.linspace(0.0, world.terrain.world_height, 200, dtype=np.float32)
+        walkers = world.place(np.zeros(200, dtype=np.float32), starts_y, speed=1000.0)
+
+        for target_y in np.linspace(0.0, world.terrain.world_height, 12):
+            world.step_toward(walkers, edge_x, float(target_y), pace=1.0)
+
+        x, _y, _z = world.position(walkers)
+        assert (x <= world.terrain.world_width).all()
+
+    def test_a_step_it_cannot_afford_still_lands_inside_the_world(self):
+        """The unaffordable path integrates a *fraction* of the step, so it does not arrive and the
+        snap does not apply — the landing point has to be in bounds on its own."""
+        world = World(flat_heights())
+        walker = world.place(0.0, 0.0, speed=1000.0, energy=np.float32(1.0))
+
+        world.step_toward(walker, world.terrain.world_width, world.terrain.world_height, pace=1.0)
+
+        x, y, _z = world.position(walker)
+        assert 0.0 <= x[0] <= world.terrain.world_width
+        assert 0.0 <= y[0] <= world.terrain.world_height
