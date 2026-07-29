@@ -101,6 +101,20 @@ Two rules the order exists to enforce, which outlive any particular sequence:
 - **`age` counts whole ticks lived**, which is why the increment precedes reproduction rather than
   following it. Incrementing after birth would make a newborn one tick old having lived none.
 
+The order above is **declared as data and consulted**, in `core.world.assembly.TICK_ORDER`: the
+assembly builds its systems into a mapping by name and sequences them *by* that tuple, so a system
+added without being placed, or a name placed with nothing behind it, raises at assembly time rather
+than running wherever import order put it (§4 forbids a rule declared as data that nothing reads).
+`build_world` is the only place a store, its services and a loop are wired together — a second
+assembly is what §7.2 exists to prevent, and the viewer's world is now config handed to this one.
+
+`TICK_ORDER` holds the **implemented prefix** of the table, in the table's relative order. Feeding
+(#19), death and decomposition (#21), reproduction (#20) and speciation (#16) have no system yet
+and are absent rather than stubbed (§8.2), so the assembled world runs without eating, dying or
+breeding. Movement likewise acts for one drive: hunger is the only one with a destination today, so
+a winner from any other drive stands still — which is a real problem rather than a gap, filed as
+#126.
+
 ### 2.2 Randomness and reproducibility
 
 - **The simulation is not deterministic.** Two identical states may evolve differently. This is a

@@ -47,8 +47,8 @@ def run(seed: int = 0, n_entities: int = 200) -> None:
     font = pygame.font.SysFont(None, 20)
     clock = pygame.time.Clock()
 
-    terrain, water, store, tick_loop = build_demo_world(seed, n_entities)
-    background = _background_surface(terrain, water, _SCREEN_SIZE)
+    world = build_demo_world(seed, n_entities)
+    background = _background_surface(world.terrain, world.water, _SCREEN_SIZE)
     playback = Playback(ticks_per_second=1.0)
 
     running = True
@@ -72,23 +72,23 @@ def run(seed: int = 0, n_entities: int = 200) -> None:
 
         n_ticks, alpha = playback.advance(elapsed_seconds)
         if n_ticks > 0:
-            tick_loop.advance(n_ticks)
+            world.loop.advance(n_ticks)
 
         screen.blit(background, (0, 0))
 
         x, y, _z = interpolate_positions(
-            tick_loop.previous_positions, tick_loop.current_positions, alpha
+            world.loop.previous_positions, world.loop.current_positions, alpha
         )
         px, py = world_to_screen(
-            x, y, terrain.world_width, terrain.world_height, *_SCREEN_SIZE
+            x, y, world.terrain.world_width, world.terrain.world_height, *_SCREEN_SIZE
         )
-        colors = species_colors(store.species_id)
+        colors = species_colors(world.store.species_id)
         for screen_x, screen_y, color in zip(px.tolist(), py.tolist(), colors.tolist()):
             pygame.draw.circle(screen, color, (screen_x, screen_y), _ENTITY_RADIUS)
 
         status = (
             f"{'PAUSED' if playback.paused else 'playing'} | "
-            f"speed x{playback.speed:g} | tick {tick_loop.tick_count}"
+            f"speed x{playback.speed:g} | tick {world.loop.tick_count}"
         )
         screen.blit(font.render(status, True, (255, 255, 255)), (8, 8))
 
