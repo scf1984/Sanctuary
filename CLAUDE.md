@@ -215,9 +215,51 @@ entities — no change to the table above is required.
   range-limited (pairwise). `acuity_m` is what the animal paid to detect on that modality and
   `emission_m` is how loudly it broadcasts on it, so both ends of every perception are genetic.
 
-  **d = 8.** Enough headroom that two unrelated lineages drifting into the same signature reads as
-  evolved mimicry rather than as an accident of a cramped space. Widening is additive and versioned
-  (§2.3), so this is a floor; narrowing is not possible.
+  **d = 8.** Cue space works like colour: three numbers describe every colour there is, including
+  ones never mixed before, and a new colour never needs a fourth channel. Likewise a slot never
+  means "wolf" — slot 3 means nothing on its own. Species are *points*, so their number is
+  unbounded; the dimension count only decides how many kinds of thing can coexist **without being
+  confused**. Eight leaves enough headroom that two unrelated lineages drifting onto the same point
+  reads as evolved mimicry rather than as an accident of a cramped space. Widening is additive and
+  versioned (§2.3), so this is a floor; narrowing is not possible.
+
+  **Slots are how many smells exist; directions are how many opinions a creature has about one.**
+  Each aversion direction produces exactly one number — a dot product against the air — and one
+  number answers one question. A creature therefore carries **two aversion directions**, because a
+  single one can only point at one region of cue space: aimed between two unrelated threats it also
+  fires at everything *between* them, harmless creatures included. Each `(direction × sense)` pair
+  is one channel of the noisy-OR above, so this needs no new machinery and #24's sight widens the
+  same product.
+
+  **Nothing anywhere lists which species interacts with which.** There is no threat table, no
+  predator/prey mask, no compatibility matrix. Every interaction is a number:
+
+  | question | answered by |
+  |---|---|
+  | Do I fear you? | aversion direction · air |
+  | Do I want to mate with you? | *my own signature* · air — free, no genes, and it tracks speciation automatically |
+  | **Can** we produce offspring? | genetic distance (#16) |
+  | Do I want to eat you? | #19's to decide — it may not use smell at all |
+  | Can I digest you once caught? | diet genes, which are not cue genes |
+
+  Note the split on the last two: finding food and being able to use it are different questions, and
+  a creature can be drawn to something it cannot digest. The species *expression mask* of §2.3 is
+  unrelated to all of this — it governs which genes a species switches on, never who interacts with
+  whom.
+
+  **How a lineage comes to fear the right thing.** It does not learn, and nothing registers
+  anything. Creatures whose aversion happens to point where a predator's signature sits notice it
+  and survive; those pointing elsewhere are eaten. After enough generations the population's
+  aversion tracks the predator — and when the predator's signature drifts, the tracking either
+  follows or that lineage pays. A newly split species is feared correctly from the instant of the
+  split, because both halves inherit the parent's signature.
+
+  **Smell is blunt, and must be.** The air holds a *blend* — a wolf and a rabbit nearby arrive as
+  one mixed reading, not two. Only a linear readout composes correctly on a blend, because the
+  response to a sum is the sum of the responses; template-matching against a mixture would report a
+  third thing that is not there. So a creature fears a *region* of cue space rather than a species,
+  which is exactly what makes mimicry free. Sight (#24) perceives individuals rather than a blend
+  and is therefore not under this constraint.
 
   **An animal does not perceive itself.** Its own deposit is subtracted from what it samples, which
   is exact rather than approximate because a separable normalized blur's diagonal factorizes per
@@ -230,7 +272,7 @@ entities — no change to the table above is required.
   | genes | meaning | cost |
   |---|---|---|
   | `signature_0..7` | position in cue space — what I smell and look like | 0 |
-  | `aversion_0..7` | direction in cue space — what frightens me | 0 |
+  | `aversion0_0..7`, `aversion1_0..7` | two directions in cue space — what frightens me | 0 |
   | `scent_emission` | broadcast strength on the scent modality | see below |
   | `scent_acuity`, `sight_acuity` | detection sensitivity per modality | positive |
   | `camouflage` | damps visual conspicuousness | **positive**, per the insulation rule above |

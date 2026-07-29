@@ -32,7 +32,10 @@ from core.world.water import Water
 # a test that spells out eight signature components per creature stops being readable.
 CHANNELS = 3
 SIGNATURE_GENES = tuple(f"signature_{i}" for i in range(CHANNELS))
-AVERSION_GENES = tuple(f"aversion_{i}" for i in range(CHANNELS))
+AVERSION_GENES = tuple(
+    tuple(f"aversion{d}_{i}" for i in range(CHANNELS)) for d in range(2)
+)
+FLAT_AVERSION = tuple(name for block in AVERSION_GENES for name in block)
 GENE_NAMES = (
     "size",
     "speed",
@@ -41,7 +44,7 @@ GENE_NAMES = (
     "scent_emission",
     "scent_acuity",
     *SIGNATURE_GENES,
-    *AVERSION_GENES,
+    *FLAT_AVERSION,
 )
 SCENT_GENES = ScentGenes(emission_gene="scent_emission", signature_genes=SIGNATURE_GENES)
 
@@ -57,7 +60,7 @@ METABOLISM_CONFIG = MetabolismConfig(
         "scent_acuity": 0.5,
         # Signature and aversion are free: smelling of something and minding something cost
         # nothing to carry. §2.5 requires every gene declare a cost, zero included.
-        **{name: 0.0 for name in (*SIGNATURE_GENES, *AVERSION_GENES)},
+        **{name: 0.0 for name in (*SIGNATURE_GENES, *FLAT_AVERSION)},
     },
     basal_rate=1.0,
     thermoregulation_rate=0.5,
@@ -558,7 +561,7 @@ def dangerous(emission=1.0):
 
 def timid(acuity=50.0):
     """Genes for a creature that fears channel 0 and broadcasts nothing."""
-    return {"scent_acuity": acuity, "aversion_0": 1.0}
+    return {"scent_acuity": acuity, "aversion0_0": 1.0}
 
 
 class TestFearScore:
@@ -669,8 +672,8 @@ class TestFearScore:
         world.genetics.set_genes(
             prey,
             gene_rows(
-                {"scent_acuity": 20.0, "aversion_0": 1.0},
-                {"scent_acuity": 20.0, "aversion_0": 0.1},
+                {"scent_acuity": 20.0, "aversion0_0": 1.0},
+                {"scent_acuity": 20.0, "aversion0_0": 0.1},
             ),
         )
         world.genetics.set_genes(predator, gene_rows(dangerous()))
@@ -717,7 +720,7 @@ class TestEmergentBehaviour:
             "scent_emission": 1.0,
             "signature_0": 1.0,
             "scent_acuity": 50.0,
-            "aversion_0": 1.0,
+            "aversion0_0": 1.0,
         }
         world.genetics.set_genes(both, gene_rows(cannibal, cannibal))
         world.scent.rebuild(both)
@@ -737,7 +740,7 @@ class TestEmergentBehaviour:
                     "scent_emission": 5.0,
                     "signature_0": 1.0,
                     "scent_acuity": 500.0,
-                    "aversion_0": 1.0,
+                    "aversion0_0": 1.0,
                 }
             ),
         )
@@ -882,8 +885,9 @@ class TestNoisyOr:
         scent_only = fear.score(prey)[0]
 
         # Stand in for #24's sight channel until it exists, to pin the composition rule now.
+        smelled = fear._channels(prey)
         sight = np.full(len(prey), 0.5, dtype=np.float32)
-        fear._channels = lambda selection: [fear._scent(selection), sight]
+        fear._channels = lambda selection: [*smelled, sight]
         both = fear.score(prey)[0]
 
         assert both > scent_only
@@ -920,7 +924,7 @@ class TestFearConfig:
         mismatched = FearConfig(
             weight=1.0,
             scent_acuity_gene="scent_acuity",
-            aversion_genes=AVERSION_GENES[:1],
+            aversion_genes=(AVERSION_GENES[0][:1],),
             detection_threshold=0.01,
             saturation=1.0,
         )
@@ -1011,3 +1015,69 @@ class TestAllFiveDrivesCompeting:
         world.behaviour.score(prey)
 
         assert world.behaviour.driven_by("hunger", prey) == prey
+
+
+class TestTwoAversionDirections:
+    """Why a creature carries more than one aversion direction (CLAUDE.md §2.5).
+
+    A single direction pointed at two unrelated threats also fires at anything whose signature is
+    a *blend* of them — a harmless creature smelling halfway between a wolf and an eagle. Two
+    directions fear the two independently, so the blend is only half of each.
+    """
+
+    WOLF = {"signature_0": 1.0}
+    BLEND = {"signature_0": 0.5, "signature_2": 0.5}
+
+    def fear_of(self, threat_signature, prey_aversion, config, acuity=5.0):
+        world = FearWorld(grid=21)
+        prey = world.spawn_as(0, 1, x=np.float32([10.0]), y=np.float32([10.0]))
+        threat = world.spawn_as(0, 1, x=np.float32([11.0]), y=np.float32([10.0]))
+        world.genetics.set_genes(
+            prey, gene_rows({"scent_acuity": acuity, **prey_aversion})
+        )
+        world.genetics.set_genes(
+            threat, gene_rows({"scent_emission": 1.0, **threat_signature})
+        )
+        world.scent.rebuild(prey | threat)
+        return world.fear(config).score(prey)[0]
+
+    def test_one_direction_cannot_tell_a_blend_from_the_real_thing(self):
+        """The limitation the second direction exists to remove."""
+        single = FearConfig(
+            weight=1.0,
+            scent_acuity_gene="scent_acuity",
+            aversion_genes=(AVERSION_GENES[0],),
+            detection_threshold=0.01,
+            saturation=1.0,
+        )
+        # One direction pointed at both wolf (channel 0) and eagle (channel 2).
+        pointed_at_both = {"aversion0_0": 1.0, "aversion0_2": 1.0}
+
+        wolf = self.fear_of(self.WOLF, pointed_at_both, single)
+        blend = self.fear_of(self.BLEND, pointed_at_both, single)
+
+        assert wolf > 0.0
+        assert blend == pytest.approx(wolf, rel=1e-5)
+
+    def test_two_directions_rank_a_blend_below_the_real_thing(self):
+        """Wolf on one direction, eagle on the other. A creature that is half of each trips each
+        direction halfway, which noisy-OR combines to less than either threat outright.
+        """
+        pointed_separately = {"aversion0_0": 1.0, "aversion1_2": 1.0}
+
+        wolf = self.fear_of(self.WOLF, pointed_separately, FEAR_CONFIG)
+        blend = self.fear_of(self.BLEND, pointed_separately, FEAR_CONFIG)
+
+        assert wolf > 0.0
+        assert blend < wolf
+
+    def test_an_unused_second_direction_contributes_nothing(self):
+        """A creature that only ever fears one thing leaves the second direction near zero, and it
+        must then cost it nothing — otherwise carrying the capacity would itself be a hazard.
+        """
+        one_thing = {"aversion0_0": 1.0}
+        both_named = {"aversion0_0": 1.0, "aversion1_1": 0.0}
+
+        assert self.fear_of(self.WOLF, one_thing, FEAR_CONFIG) == pytest.approx(
+            self.fear_of(self.WOLF, both_named, FEAR_CONFIG)
+        )

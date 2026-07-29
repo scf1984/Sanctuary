@@ -263,10 +263,15 @@ class FearConfig:
     scent_acuity_gene: the gene whose expressed value is scent detection sensitivity. Named here
         rather than assumed, as `MetabolismConfig.insulation_gene` is, because the vocabulary is
         per-world.
-    aversion_genes: the genes holding this creature's aversion vector over cue space, in channel
-        order. Must be exactly as long as the cue field has channels — a mismatch would silently
-        weight channel *k* by aversion *k+1*, which is not an error any test would catch by
-        accident.
+    aversion_genes: one gene block per **aversion direction**, each naming its genes in cue-channel
+        order. Every block must be exactly as long as the cue field has channels — a mismatch would
+        silently weight channel *k* by aversion *k+1*, which no test would catch by accident.
+
+        Two directions rather than one, because a single direction can only point at one region of
+        cue space. A creature that must fear both wolves and eagles — two unrelated signatures —
+        would need one direction pointing between them, which then also fires at everything
+        *in* between, harmless things included. A second direction lets the two be feared
+        independently (CLAUDE.md §2.5).
     detection_threshold: perceived danger below which nothing is noticed at all. This is what
         makes acuity buy *range* rather than volume — see the class docstring. Must be positive:
         at zero every creature detects every trace from anywhere, and the gene collapses into a
@@ -278,14 +283,16 @@ class FearConfig:
 
     weight: float
     scent_acuity_gene: str
-    aversion_genes: tuple[str, ...]
+    aversion_genes: tuple[tuple[str, ...], ...]
     detection_threshold: float
     saturation: float
 
     def __post_init__(self) -> None:
         _check_weight(self.weight)
         if not self.aversion_genes:
-            raise ValueError("aversion_genes must name at least one gene")
+            raise ValueError("aversion_genes must name at least one aversion direction")
+        if any(not block for block in self.aversion_genes):
+            raise ValueError("every aversion direction must name at least one gene")
         if self.detection_threshold <= 0:
             raise ValueError(
                 f"detection_threshold must be positive, got {self.detection_threshold}; see the "
@@ -301,11 +308,14 @@ class FearConfig:
 class Fear:
     """Wanting to be somewhere else, because something dangerous is near.
 
-    Fear is a **noisy-OR over perception channels** (CLAUDE.md §2.5). Each channel is one sense
-    with its own physics, reporting a detection probability in [0, 1]; fear is
-    ``weight × (1 − Π(1 − p))``. Today there is exactly one channel — scent — so the product
-    collapses to that single probability, and `_channels` is written as the explicit combination it
-    will remain rather than as a special case to be rewritten when #24 registers sight.
+    Fear is a **noisy-OR over perception channels** (CLAUDE.md §2.5), where a channel is one
+    *(aversion direction × sense)* pair reporting a detection probability in [0, 1]; fear is
+    ``weight × (1 − Π(1 − p))``. Today that is two directions over one sense — smell — and #24
+    adds sight by widening the same product, not by changing its shape.
+
+    A creature carries more than one aversion direction because a single one can only point at one
+    region of cue space. Pointing it between two unrelated threats would fire at everything in
+    between, harmless creatures included; two directions fear the two independently.
 
     **Nothing here fears a species.** Danger is the dot product of the creature's own *aversion*
     vector with the cue concentration it can smell (`core.ecology.cues`) — both ends genetic, both
@@ -336,10 +346,13 @@ class Fear:
         vocabulary: GeneVocabulary,
         config: FearConfig,
     ) -> None:
-        if len(config.aversion_genes) != scent.field.n_channels:
+        mismatched = [
+            block for block in config.aversion_genes if len(block) != scent.field.n_channels
+        ]
+        if mismatched:
             raise ValueError(
-                f"aversion_genes names {len(config.aversion_genes)} genes but the cue field has "
-                f"{scent.field.n_channels} channels; they index the same space and must match"
+                f"every aversion direction must name {scent.field.n_channels} genes, one per cue "
+                f"channel; {len(mismatched)} of {len(config.aversion_genes)} do not"
             )
         self.store = store
         self.genetics = genetics
@@ -347,35 +360,42 @@ class Fear:
         self.config = config
         # Raise KeyError naming the vocabulary version if any gene does not exist.
         self._acuity_index = vocabulary.index_of(config.scent_acuity_gene)
+        # (n_directions, n_channels): one row of gene columns per aversion direction, so scoring
+        # every direction is one matrix product rather than a loop over genes.
         self._aversion_indices = np.array(
-            [vocabulary.index_of(name) for name in config.aversion_genes], dtype=np.int64
+            [[vocabulary.index_of(name) for name in block] for block in config.aversion_genes],
+            dtype=np.int64,
         )
 
     def score(self, selection: Selection) -> np.ndarray:
         """(len(selection),) float32: weighted probability that something dangerous was detected."""
         detected = np.stack(self._channels(selection))
-        # Noisy-OR: independent senses corroborate without ever summing past certainty, which is
-        # what lets #24 add a channel without re-tuning every other drive's weight.
+        # Noisy-OR: independent detections corroborate without ever summing past certainty, which
+        # is what lets #24 add a sense without re-tuning every other drive's weight.
         return (self.config.weight * (1.0 - np.prod(1.0 - detected, axis=0))).astype(np.float32)
 
     def _channels(self, selection: Selection) -> list[np.ndarray]:
-        """Each perception channel's detection probability, (len(selection),) float32 in [0, 1].
+        """Each channel's detection probability, (len(selection),) float32 in [0, 1].
 
-        #24 appends the sight channel here. Nothing outside a channel knows how its probability
+        One channel per aversion direction, all reading the same nose. #24 appends the same
+        directions read through sight instead. Nothing outside a channel knows how its probability
         was computed, so that addition changes no other line in this class.
         """
-        return [self._scent(selection)]
-
-    def _scent(self, selection: Selection) -> np.ndarray:
-        """Detection probability from smell alone."""
         expressed = self.genetics.expressed(selection)
-        # How much of each cue channel is in the air here, against how much this particular
-        # creature minds that channel — one vectorized pass, and the only place danger is defined.
+        # Sampled once and shared: the field read is the expensive part, and every direction
+        # weighs the same air differently.
         smelled = self.scent.perceive(selection)
-        danger = (expressed[:, self._aversion_indices] * smelled).sum(axis=1)
-        perceived = expressed[:, self._acuity_index] * danger
+        acuity = expressed[:, self._acuity_index]
+        return [
+            self._detect(acuity * (expressed[:, direction] * smelled).sum(axis=1))
+            for direction in self._aversion_indices
+        ]
+
+    def _detect(self, danger: np.ndarray) -> np.ndarray:
+        """Turn perceived danger into a detection probability: nothing below the threshold,
+        certainty at saturation, linear between."""
         span = self.config.saturation - self.config.detection_threshold
-        return np.clip((perceived - self.config.detection_threshold) / span, 0.0, 1.0).astype(
+        return np.clip((danger - self.config.detection_threshold) / span, 0.0, 1.0).astype(
             np.float32
         )
 
