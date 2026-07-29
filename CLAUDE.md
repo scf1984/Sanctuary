@@ -328,6 +328,24 @@ entities — no change to the table above is required.
   it costs no column and no extra pass. Note the consistent consequence: since upkeep is charged
   from the expressed phenotype, an atrophied trait also costs less to maintain.
 
+  **Decay is strictly positive and never reaches zero, and the formula guarantees that rather than
+  a clamp doing so:**
+
+  ```
+  rate  = base_decay / (1 + senescence_resistance)     base_decay > 0, validated in config
+  decay = exp(−rate × age)                             always in (0, 1]
+  ```
+
+  The `1 +` denominator is the shape insulation already uses against thermoregulation, for the same
+  reason: a gene that only ever *reduces* something must have diminishing returns, or it buys its
+  way out of the mechanism entirely — here, into immortality. `senescence_resistance` is read as a
+  magnitude so the denominator is never below 1, and the exponential approaches zero without
+  reaching it, so an old animal becomes negligibly slow rather than literally motionless and can
+  never rejuvenate. Enforcing this in the *calculation* rather than by clamping the gene is
+  deliberate: genes drift freely and the clamp is only a numerical backstop (above), so the formula
+  has to be what holds the property. It is then asserted in the invariant harness (§6), which is
+  exactly what §8.2 asks for when something genuinely cannot occur.
+
   This makes §2.1's "herbivore lifespan ≈ 1 sim-year" an **outcome to tune the degradation rate
   toward**, not a constant to set. `maturity_age` was a config constant when the drive system was
   built (`LustConfig.maturity_age`) and is properly a gene, so age at first reproduction — one of
@@ -614,7 +632,9 @@ Non-determinism rules out golden-output tests. Use instead:
 
 - **Invariants**, asserted every tick in debug builds: energy is never created, populations are
   never negative, no entity leaves the world bounds, no entity occupies a free-list row, total
-  nutrients are conserved across the loop.
+  nutrients are conserved across the loop, and senescence decay stays within `(0, 1]` (§2.5).
+  **Invariants are never versioned** (§2.8): they hold under every rule set, so they are also the
+  line between a fix that ships in place and one that forks the rules.
   **An invariant is not confined to entities** — decided in #91. A check returns `None` when it
   holds and a `Violation` when it does not, describing the breach in its own terms, because the
   original contract returned offending *row indices* and the nutrient pool lives on the plant
