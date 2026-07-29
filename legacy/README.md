@@ -55,4 +55,4 @@ should reappear.
 ## Do not import from here
 
 Nothing outside `legacy/` may import from `legacy/`. This is enforced by
-`tools/check_legacy_imports.py` (see the repository root for how it is wired into linting).
+`python -m tools.check_legacy_imports` (see the repository root for how it is wired into linting).

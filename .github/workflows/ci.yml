@@ -105,5 +105,8 @@ jobs:
       # tests/test_no_wall_clock_imports.py. Its sibling had no caller at all -- legacy/README.md
       # claims it is "wired into linting" and it was not, making it exactly the decorative
       # abstraction CLAUDE.md §8.2 forbids. This is that caller.
+      # Run as a module rather than a path so that `tools.sources`, shared with the wall-clock
+      # check, resolves (#88). Executing the file directly puts tools/ on sys.path in place of the
+      # repository root and the import fails.
       - name: Reject imports from legacy/
-        run: python tools/check_legacy_imports.py
+        run: python -m tools.check_legacy_imports
