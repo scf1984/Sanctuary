@@ -15,8 +15,10 @@ than the current formulation delivers:
   deplete and refill. What exists is the climate field, and heat load is the honest reading of it:
   an animal in hot ground wants water. When a hydration column arrives this becomes the ambient
   half of a two-term score rather than the whole of it.
-- **Fatigue is not exertion.** Movement lands in #25, so nothing yet spends effort. Health deficit
-  is what exists, and recovery is a real reason to rest.
+- **Fatigue is not exertion.** #25 landed movement, so effort *is* now spent — but it is spent
+  straight out of the energy pool and no column records how hard an animal worked, so there is
+  nothing here to read. Health deficit is what exists, and recovery is a real reason to rest.
+  Giving fatigue its exertion term needs an exertion column and is filed separately.
 
 Fear is the exception to that pattern: its shape is settled in CLAUDE.md §2.5 rather than improvised
 here, precisely so that #24 adding sight and #97 adding wind are additions rather than rewrites.

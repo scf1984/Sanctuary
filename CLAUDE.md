@@ -166,7 +166,39 @@ entities — no change to the table above is required.
   **Effort is charged, not just distance.** Fleeing and chasing both cost energy at a premium over
   walking, and hiding costs energy to suppress scent. This is what makes hunger close off options
   rather than merely reading high: a starving animal can neither run nor hide, a predator pays for
-  every chase it loses, and prey pay for every escape. Owned by #25.
+  every chase it loses, and prey pay for every escape. Settled in #25, which owned it:
+
+  ```
+  cost = size × (transport_cost × distance × (1 + exertion_premium × pace) + climb_cost × gain)
+  ```
+
+  **The premium is a per-metre multiplier on `pace`, not a flag naming the drive.** Pricing
+  distance alone would make a chase merely long; it is the per-metre term that makes it expensive.
+  `pace` is a fraction of top speed supplied per call, so `core.behaviour.movement` knows nothing
+  about what fleeing *is* — a drive that wants urgency passes a higher number, and #19's chase and
+  #24's flight are priced without that module changing. A `MovementConfig` therefore declares
+  `walking_pace` and `exertion_premium` as one pair: they are the two halves of the walk/sprint
+  ratio, and §2.1's warning about constants drifting apart applies to them exactly.
+
+  **Only elevation *gain* is charged.** Descent costs its horizontal distance and no more —
+  raising a body against gravity is work in a way that lowering it is not. That asymmetry alone is
+  what makes a ridge a barrier and a valley a corridor, so §2.6's heightmap becomes the isolation
+  mechanism #16 needs with nobody placing a barrier.
+
+  **The pool gates the step; it does not merely record it.** An animal that cannot pay for the
+  whole step travels the fraction it can afford, and an empty one does not move at all. This is
+  what turns "a starving animal can neither run nor hide" from a description into a mechanism, and
+  it is why hunger closing off options needs no separate rule.
+
+  **Every withdrawal from the pool goes through `Ecology.spend`.** `Ecology` owns the `energy`
+  column, so a mover cannot subtract from it directly (§2.3) — it hands over a bill. That is what
+  keeps the closed loop auditable as more systems come to spend: #19's chase and #20's gestation
+  are the same call again, and the floor at zero lives in exactly one place.
+
+  **Hiding is still open.** Suppressing scent has no cost today because nothing hides —
+  `scent_emission` is authored per world and not under selection (see the reserved gene block
+  below), so there is no emission for effort to suppress. It arrives with #20's mate-finding
+  benefit, which is what gives emission a counterweight in the first place.
 - **Closed nutrient loop.** Energy enters only as sunlight driving plant growth. Carcasses decompose
   and return nutrients to soil. Without closure, populations either explode or flatline.
   **Plants are a field, not entities** — decided in #18, which owned the choice. Growth is a
