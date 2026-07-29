@@ -26,8 +26,9 @@ _NEIGHBOR_OFFSETS = (
 class Water:
     """Derived hydrology: filled heights, flow routing, drainage, and lake depth.
 
-    depth:              (height, width) float32, meters. Standing water above the original
-                         terrain; 0 where the ground is dry.
+    depth:              (height, width) float32, world units — the unit elevation is in, since
+                         depth is a difference of two elevations (#112). Standing water above
+                         the original terrain; 0 where the ground is dry.
     flow_direction:      (height, width) int8. Index into `_NEIGHBOR_OFFSETS` naming the downhill
                          neighbour each cell drains into; -1 where a cell has no lower neighbour,
                          which happens at map-edge outlets (water leaves the world there) and at
@@ -85,7 +86,7 @@ class Water:
         return cls(depth, flow_direction, flow_accumulation, terrain.cell_size)
 
     def depth_at(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
-        """Bilinearly interpolated standing-water depth (meters) at continuous world positions."""
+        """Bilinearly interpolated standing-water depth (world units) at world positions."""
         return _bilinear_sample(self.depth, x, y, self.cell_size)
 
     def is_drinkable_at(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
