@@ -30,6 +30,18 @@ include = ["core*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Test modules are imported by importlib rather than by prepending their directory to sys.path,
+# so a module's name is its full path and two `test_service.py` files in different packages no
+# longer collide (#85). Under `prepend` — pytest's default — modules are keyed by basename alone,
+# and a second file of the same name aborts collection of the *whole suite* rather than failing
+# one test. `core/` already has `service.py` under both `genetics/` and `ecology/`, and the
+# convention here is one `test_<module>.py` mirroring it, so collisions are the normal case.
+addopts = ["--import-mode=importlib"]
+# Required *because* of the line above: importlib mode does not touch sys.path at all, so the
+# repository root is no longer added for us and `import core...` stops resolving in a working
+# copy that was never `pip install -e .`'d. A root `conftest.py` used to supply this as a side
+# effect of where it sat; stating it is the same behaviour without the indirection (§8.7).
+pythonpath = ["."]
 
 [tool.ruff]
 target-version = "py312"
