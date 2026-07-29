@@ -306,15 +306,32 @@ entities — no change to the table above is required.
   | `camouflage` | damps visual conspicuousness | **positive**, per the insulation rule above |
   | `sex_allocation`, `selfing_rate` | reproduction, continuously (#20) | #20's to set |
   | `maturity_age` | ticks before an animal seeks a mate at all | 0 — late maturity is already paid for in generations forgone |
-  | `life_expectancy` | ticks before senescence begins | **needs an explicit trade-off** — see below |
+  | `senescence_resistance` | damps how fast performance traits degrade with age | **positive**, per the insulation rule |
   | `commitment` | how doggedly a drive holds a target across ticks (#100) | 0 — selection on what the persistence achieves |
 
-  `maturity_age` and `life_expectancy` were config constants when the drive system was built
-  (`LustConfig.maturity_age`); both are properly genes, so life history evolves rather than being
-  tuned. **`life_expectancy` is the one gene above that does not bound itself.** Living longer is
-  pure benefit with no cost attached, so it would run away — it needs the classic life-history
-  trade-off, longevity bought against fecundity, and which form that takes is #20's and #21's to
-  settle. Left free it violates the rule below.
+  **Senescence is degradation, not a timer.** There is no `life_expectancy` gene and no death clock.
+  Instead, *performance* traits decay with age — speed, sight and scent acuity — while identity
+  traits (cue signature) and capacity traits (size) do not. An old animal is slower, so it catches
+  less and escapes less, and it eventually cannot cover its own upkeep. **Death then falls out of
+  starvation and predation, mechanisms that already exist**, rather than from an age check; #21
+  needs no separate mortality rule for old age, and `Ecology.starving` is already the path.
+
+  A lifespan gene was considered and rejected: living longer is pure benefit, so it runs away and
+  every lineage evolves toward immortality. `senescence_resistance` inverts that into something the
+  budget already knows how to bound — it *reduces* degradation and therefore must charge positive
+  upkeep, exactly as insulation must. Biologically this is right too: bodily maintenance and repair
+  are metabolically expensive. The equilibrium is then set by the environment rather than by a
+  designer — high-predation worlds favour breed-fast-die-young, safe ones favour the long-lived —
+  which is real life-history theory falling out of the energy budget.
+
+  Degradation applies **at expression time**, alongside the species mask in `Genetics.expressed`, so
+  it costs no column and no extra pass. Note the consistent consequence: since upkeep is charged
+  from the expressed phenotype, an atrophied trait also costs less to maintain.
+
+  This makes §2.1's "herbivore lifespan ≈ 1 sim-year" an **outcome to tune the degradation rate
+  toward**, not a constant to set. `maturity_age` was a config constant when the drive system was
+  built (`LustConfig.maturity_age`) and is properly a gene, so age at first reproduction — one of
+  the most strongly selected life-history traits there is — evolves rather than being chosen.
 
   **Camouflage is environment-dependent**: visual conspicuousness is `size × (1 − camouflage ×
   match(local terrain))`, so the same allele is excellent on scree and useless on grass, and
@@ -430,6 +447,32 @@ entities — no change to the table above is required.
   (§8.2), and where a test asserts behaviour that nothing new depends on (§8.1). Both exceptions are
   intentional and neither generalises: they apply to *retired rule sets*, not to speculative
   generality.
+
+- **Most changes do not fork the version.** Only changes to what the world *does*. The runner
+  version is `MAJOR.MINOR`:
+
+  - **MAJOR is the rule set**, and a world pins its major forever. Cost tables, inheritance,
+    drive scoring, thresholds, anything that moves an outcome.
+  - **MINOR is behaviour-neutral improvement** — optimisation, diagnostics, I/O, rendering. A world
+    always runs the *newest* minor of its major, so a throughput win or a viewer fix reaches every
+    existing world for free. Without this split, versioning would freeze performance work along with
+    the rules, which is the opposite of the intent.
+
+- **"Behaviour-neutral" must be demonstrated, not asserted** (§8.5). Non-determinism (§2.2) makes
+  "it looks the same" untestable by eye, so there are two tiers:
+
+  1. **Same seed, identical output.** Cheap and sufficient — most refactors pass it outright.
+  2. **If that fails**, which vectorisation often causes by changing RNG draw order without changing
+     the distribution, the change must show *statistical equivalence* over replicates, using the
+     same distribution machinery competitions use (#41, #42). Failing that, it is a major.
+
+  "I am confident this optimisation preserves behaviour" is not evidence.
+
+- **A bug fix that changes outcomes is a major.** Uncomfortable, and correct: worlds grew under the
+  buggy behaviour and their equilibria depend on it, so a silent correction collapses them exactly
+  as any other rule change would. **The one exception is a fix restoring a violated invariant**,
+  which ships as a minor — invariants are not versioned (below), so restoring one is a repair rather
+  than a rule change, and a world violating an invariant is already broken.
 
 - **Versions have a lifecycle**, and its stages are not yet settled — at minimum a version is
   current (new worlds get it), then supported (existing worlds keep running), and eventually
