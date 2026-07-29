@@ -36,6 +36,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from core.behaviour.exertion import Exertion
 from core.ecology.service import Ecology
 from core.entities.store import EntityStore
 from core.genetics.service import Genetics
@@ -113,6 +114,9 @@ class Movement(DomainService):
     ecology: the owner of `energy` (#17). Every locomotion charge goes through `Ecology.spend`,
         because this service does not own that column and must not subtract from it directly
         (CLAUDE.md §2.3).
+    exertion: the owner of `exertion` (#107), told what each step took so that `Fatigue` has
+        something to read. Same relationship as `ecology` above and for the same reason — the bill
+        is handed over, never applied here.
     genetics: consulted for expressed phenotype only — this service never writes a gene. Speed and
         size are read through `expressed`, so a species that does not express speed does not move,
         exactly as it does not pay for speed.
@@ -130,6 +134,7 @@ class Movement(DomainService):
         store: EntityStore,
         registry: ColumnRegistry,
         ecology: Ecology,
+        exertion: Exertion,
         genetics: Genetics,
         terrain: Terrain,
         vocabulary: GeneVocabulary,
@@ -137,6 +142,7 @@ class Movement(DomainService):
     ) -> None:
         super().__init__(store, registry)
         self.ecology = ecology
+        self.exertion = exertion
         self.genetics = genetics
         self.terrain = terrain
         self.config = config
@@ -235,9 +241,12 @@ class Movement(DomainService):
         self.write("x", selection, new_x.astype(np.float32))
         self.write("y", selection, new_y.astype(np.float32))
         self.write("z", selection, new_z.astype(np.float32))
-        self.ecology.spend(
-            selection, self._cost(travelled, new_z - ground, size, pace).astype(np.float32)
-        )
+        # The bill and the record of effort are the same quantity read two ways: `Ecology` is
+        # charged the size-scaled cost, `Exertion` accumulates the per-size work, so a sprint up a
+        # ridge is both expensive and tiring while a stroll over the same ground is neither (#107).
+        work = self._work(travelled, new_z - ground, pace)
+        self.ecology.spend(selection, (size * work).astype(np.float32))
+        self.exertion.accumulate(selection, work)
 
     def _affordable_fraction(
         self,
@@ -265,7 +274,7 @@ class Movement(DomainService):
         had getting there, which is the honest outcome and not a case to smooth over.
         """
         landing_z = self.terrain.elevation_at(x + unit_x * intended, y + unit_y * intended)
-        full_cost = self._cost(intended, landing_z - ground, size, pace)
+        full_cost = size * self._work(intended, landing_z - ground, pace)
         # A zero-cost step is a zero-length one, or an animal whose species does not express size;
         # either way there is nothing it could fail to afford. The same guard appears twice because
         # the division is evaluated over the whole array before `where` selects, so the substitute
@@ -275,19 +284,23 @@ class Movement(DomainService):
         fraction = np.clip(self.ecology.energy(selection) / chargeable, 0.0, 1.0)
         return np.where(payable, fraction, 1.0)
 
-    def _cost(
-        self, distance: np.ndarray, elevation_change: np.ndarray, size: np.ndarray, pace: float
+    def _work(
+        self, distance: np.ndarray, elevation_change: np.ndarray, pace: float
     ) -> np.ndarray:
-        """(n,) float64, joules: what covering `distance` while rising `elevation_change` costs.
+        """(n,) float64: what covering `distance` while rising `elevation_change` takes, per unit
+        of body size.
 
-        Hauling the body over the ground, plus raising it against gravity — both scaled by size,
-        since a heavier animal pays more for either. Only the *gain* is charged: descent is
-        braking rather than lifting, so it costs its horizontal distance and no more, and that
-        asymmetry alone is what makes a ridge a barrier and a valley a corridor.
+        Hauling the body over the ground, plus raising it against gravity. Only the *gain* counts:
+        descent is braking rather than lifting, so it costs its horizontal distance and no more,
+        and that asymmetry alone is what makes a ridge a barrier and a valley a corridor.
 
         Pace enters the horizontal term and not the climb: the premium is for moving urgently, and
         an animal that sprints up a hill has already paid for the sprint.
+
+        **Size is deliberately not applied here.** Multiplied by size this is the energy bill, and
+        left as it is it is the exertion an animal feels — a heavier animal pays more fuel for the
+        same ground but is not thereby more tired, and #107 needs both readings of one quantity.
         """
         haul = self.config.transport_cost * distance * (1.0 + self.config.exertion_premium * pace)
         climb = self.config.climb_cost * np.maximum(elevation_change, 0.0)
-        return size * (haul + climb)
+        return haul + climb

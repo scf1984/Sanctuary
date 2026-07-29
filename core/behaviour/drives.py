@@ -8,17 +8,17 @@ which is what lets a new drive be added without touching anything here.
 **What a drive may read is deliberately narrow.** Each of these scores against state that exists
 today, so none of them is a placeholder waiting to become real (§8.2). Where the ecology a drive
 will eventually read has not been built, the docstring names the issue that will supply it and the
-term the drive gains then. Two of those are worth stating up front, because the names promise more
-than the current formulation delivers:
+term the drive gains then. One is left, and it is worth stating up front because the name promises
+more than the current formulation delivers:
 
 - **Thirst has no hydration reservoir.** No drinking mechanic is filed, so there is no pool to
   deplete and refill. What exists is the climate field, and heat load is the honest reading of it:
   an animal in hot ground wants water. When a hydration column arrives this becomes the ambient
   half of a two-term score rather than the whole of it.
-- **Fatigue is not exertion.** #25 landed movement, so effort *is* now spent — but it is spent
-  straight out of the energy pool and no column records how hard an animal worked, so there is
-  nothing here to read. Health deficit is what exists, and recovery is a real reason to rest.
-  Giving fatigue its exertion term needs an exertion column and is filed separately.
+
+Fatigue was the other, scoring health deficit alone while its name promised exertion. #107 gave it
+the column that was missing (`core.behaviour.exertion`), so it now reads both, and that is the
+shape thirst takes when its own missing half arrives.
 
 Fear is the exception to that pattern: its shape is settled in CLAUDE.md §2.5 rather than improvised
 here, precisely so that #24 adding sight and #97 adding wind are additions rather than rewrites.
@@ -38,6 +38,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from core.behaviour.exertion import Exertion
 from core.ecology.cues import Scent
 from core.ecology.plants import Plants
 from core.ecology.service import Ecology
@@ -406,31 +407,61 @@ class Fear:
 class FatigueConfig:
     """Per-world tuning for the fatigue drive.
 
-    weight: multiplier on the drive's 0-1 shape. The only parameter, because health is already a
-        0-to-1 fraction on the store and needs no scale of its own.
+    weight: multiplier on the drive's 0-1 shape.
+    exertion_saturation: accumulated work per unit of body size at which exhaustion alone is
+        reason enough to stop — the point where `Exertion`'s open-ended quantity becomes the
+        0-to-1 shape every drive competes in. Must be positive; at zero any movement at all would
+        pin fatigue at maximum and the drive would stop discriminating between a stroll and a
+        chase.
+
+        It is not derived from `MovementConfig`, even though what fills the column comes from
+        there, because the two answer different questions: that config says what a step *costs*,
+        this one says how much work is *too much*, and an animal bred for endurance is a world
+        where the second moved and the first did not.
     """
 
     weight: float
+    exertion_saturation: float
 
     def __post_init__(self) -> None:
         _check_weight(self.weight)
+        if self.exertion_saturation <= 0:
+            raise ValueError(
+                f"exertion_saturation must be positive, got {self.exertion_saturation}; "
+                "at zero any movement whatsoever pins fatigue at maximum"
+            )
 
 
 class Fatigue:
-    """Wanting to rest, scored on health deficit.
+    """Wanting to rest, from injury or from recent effort.
 
-    See the module docstring: exertion arrives with movement (#25), and until something spends
-    effort there is nothing to be tired from. Recovery is the part that exists — an injured animal
-    has a real reason to stop — and it competes against hunger and fear exactly as exertion will.
+    Two independent reasons to do one thing, so they compose the way CLAUDE.md §2.5 settled for
+    fear's perception channels — **noisy-OR**, not a sum or a maximum. An animal that is both hurt
+    and spent is more inclined to stop than one that is only either, the score stays inside [0, 1]
+    like every other drive, and a third reason to rest could be added later without inflating this
+    one past saturation and forcing every other drive's weight to be retuned. Reusing that
+    composition rather than inventing a second one is the point: the repository should not have two
+    answers to "how do independent urgencies combine".
+
+    Exertion is the term that was missing until #107. Health deficit alone made a creature that had
+    sprinted across a ridge indistinguishable from one that stood still all tick, so resting was
+    selected for only as recovery from injury — see `core.behaviour.exertion` for what the column
+    records and why it is not the energy pool.
     """
 
     name = "fatigue"
 
-    def __init__(self, store: EntityStore, config: FatigueConfig) -> None:
+    def __init__(self, store: EntityStore, exertion: Exertion, config: FatigueConfig) -> None:
         self.store = store
+        self.exertion = exertion
         self.config = config
 
     def score(self, selection: Selection) -> np.ndarray:
-        """(len(selection),) float32: weighted health deficit, zero at full health."""
-        deficit = 1.0 - self.store.health[selection.to_mask()]
-        return (self.config.weight * np.clip(deficit, 0.0, 1.0)).astype(np.float32)
+        """(len(selection),) float32: weighted urgency to rest, zero for a healthy idle animal."""
+        injury = np.clip(1.0 - self.store.health[selection.to_mask()], 0.0, 1.0)
+        spent = np.clip(
+            self.exertion.exerted(selection) / self.config.exertion_saturation, 0.0, 1.0
+        )
+        # Noisy-OR over the two reasons: neither alone can saturate the score, and both together
+        # exceed either — an injured animal that has also just been running wants to stop most.
+        return (self.config.weight * (1.0 - (1.0 - injury) * (1.0 - spent))).astype(np.float32)
