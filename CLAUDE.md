@@ -183,6 +183,64 @@ entities — no change to the table above is required.
   Boldness, sociality, and parental investment therefore evolve rather than being designed.
   Behaviour stays explainable ("it fled because fear outscored hunger"), which the intervention
   gameplay depends on.
+- **Fear is a noisy-OR over perception channels** — decided in #22, which owns it. A *channel* is
+  one sense, with its own physics, reporting a detection probability in `[0, 1]` per entity:
+
+  ```
+  p_c(i) = saturate( sense_gene_c(i) × Σ_s W[species(i), s] × exposure_c(i, s) )
+  fear(i) = weight × (1 − Π_c (1 − p_c(i)))
+  ```
+
+  Three parts, each with exactly one job. **`W`** is how dangerous species *s* is to species *t*,
+  authored once and shared by every channel — a wolf is equally dangerous smelled or seen, only
+  your access to it differs; its diagonal is cannibalism and is tuned freely. **`exposure_c`** is
+  how much of *s* that sense can reach, and is the only thing that differs between channels.
+  **`sense_gene_c`** is what the animal paid for the sense, so scent-awareness and sight range are
+  both charged upkeep and both buy something (§2.5's rule).
+
+  Noisy-OR rather than a sum or a max: it is the correct composition for independent evidence
+  (seeing *and* smelling a predator is worse than either alone), it stays bounded in `[0, 1]` like
+  every other drive score, and — the reason it is settled here rather than left open — **adding a
+  channel later cannot inflate existing scores past saturation**, so a new sense does not force a
+  retune of every other drive's weight.
+
+  **Channels are added, never restructured.** Nothing outside a channel knows how its probability
+  was computed, which is what keeps the sequencing of the sensing work free:
+
+  | channel | exposure | reach gate | owned by |
+  |---|---|---|---|
+  | scent | advected, diffused per-species field | scent-awareness gene | #22 |
+  | sight | pairwise, line-of-sight and FOV filtered | sight-range gene | #24 |
+
+  **Scent is a field and sight is pairwise for physical reasons, not performance ones.** Scent
+  diffuses and advects, so wind is a drift term inside the field update and the plume is
+  asymmetric for free — a predator approaching from downwind is genuinely stealthy, and nothing
+  pairwise expresses that without re-deriving plume geometry per pair. Sight is occluded and
+  directional, and a blurred field smears threat straight through a ridge, which is exactly what
+  #24 exists to prevent. That the cheap channel is also the one every animal uses every tick is a
+  consequence, not the motivation — though it is a load-bearing one: a per-observer nearest-threat
+  query over the whole population measured **6.3 s/tick at 100,000 entities** against a 1 s tick
+  (§2.1), which is what ruled the pairwise-only design out (#96).
+
+  **A keener nose detects from further away, it is not more frightened.** Concentration decays
+  monotonically from the source and detection is a threshold on concentration, so sensitivity and
+  range are the *same* parameter for a plume — one blur, no multi-scale bands. This is why the
+  scent gene may multiply a sampled field value where a sight gene may not: for sight it would
+  make a far-seeing animal merely more afraid of the same thing, which is the wrong selection
+  pressure. The detection threshold is what gives the gene teeth; without it every animal detects
+  everything faintly and the gene only scales panic.
+
+  **Speciation extends `W` by inheritance, never by authoring.** A daughter species takes its
+  parent's row *and* column, because at the moment of the split it is ecologically identical and
+  drift is what separates them afterwards — mirroring `SpeciesRegistry.derive`. Without this,
+  speciation would either crash fear on an unknown species id or stop to ask the player a
+  question, and §2.3's "speciation is a species-id write plus a new mask row" would stop being
+  true.
+
+  The per-species concentration field itself is **not** fear's property: it is a general facility
+  (`core.ecology.populations`) over the terrain grid, mirroring the plant field above, because
+  mate-finding (#20) and predators locating prey (#19) want exactly the same query. Fear is its
+  first reader, not its owner.
 - **Emergent speciation.** Genetic distance accumulates between isolated populations; past a
   threshold they can no longer interbreed and are tracked as a new species the player may name.
   This makes isolation — by fence or by terrain — the most rewarding intervention in the game.

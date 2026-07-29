@@ -1,4 +1,4 @@
-"""The authored drives: hunger, thirst, lust and fatigue (issue #22).
+"""The authored drives: hunger, thirst, fear, lust and fatigue (issue #22).
 
 Each is a vectorized function over the global arrays producing one score column, registered against
 `core.behaviour.service.Behaviour` rather than dispatched from it. They share no base class and no
@@ -18,6 +18,9 @@ than the current formulation delivers:
 - **Fatigue is not exertion.** Movement lands in #25, so nothing yet spends effort. Health deficit
   is what exists, and recovery is a real reason to rest.
 
+Fear is the exception to that pattern: its shape is settled in CLAUDE.md §2.5 rather than improvised
+here, precisely so that #24 adding sight and #97 adding wind are additions rather than rewrites.
+
 **Weights are config now and genes at #23.** Every config carries a `weight`, which is what makes
 five differently-shaped urgencies comparable at all — without it, "hunger 0.6 vs fear 0.6" would be
 a coincidence of formula rather than a decision. #23 replaces the scalar with a per-entity gene
@@ -33,7 +36,9 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from core.behaviour.threat import Threat
 from core.ecology.plants import Plants
+from core.ecology.populations import Populations
 from core.ecology.service import Ecology
 from core.entities.store import EntityStore
 from core.genetics.service import Genetics
@@ -247,6 +252,113 @@ class Lust:
         headroom = self.config.abundant_energy - self.config.breeding_energy
         surplus = (self.ecology.energy(selection) - self.config.breeding_energy) / headroom
         return (self.config.weight * np.where(mature, np.clip(surplus, 0.0, 1.0), 0.0)).astype(
+            np.float32
+        )
+
+
+@dataclass(frozen=True)
+class FearConfig:
+    """Per-world tuning for the fear drive.
+
+    weight: multiplier on the drive's 0-1 shape.
+    scent_gene: the gene whose expressed value is scent acuity. Named here rather than assumed,
+        as `MetabolismConfig.insulation_gene` is, because the vocabulary is per-world.
+    detection_threshold: concentration-times-acuity below which nothing is noticed at all. This is
+        what makes the scent gene buy *range* rather than volume — see the class docstring. Must
+        be positive: at zero every animal detects every trace from anywhere, the gene collapses to
+        a panic multiplier, and sight of the threshold's purpose is lost with it.
+    saturation: concentration-times-acuity at which detection is certain. Must exceed
+        `detection_threshold`; equal values would make the channel a step function, so every
+        animal on one side of a contour would be maximally terrified at once.
+    """
+
+    weight: float
+    scent_gene: str
+    detection_threshold: float
+    saturation: float
+
+    def __post_init__(self) -> None:
+        _check_weight(self.weight)
+        if self.detection_threshold <= 0:
+            raise ValueError(
+                f"detection_threshold must be positive, got {self.detection_threshold}; see the "
+                "config docstring — zero turns the scent gene into a panic multiplier"
+            )
+        if self.saturation <= self.detection_threshold:
+            raise ValueError(
+                "saturation must exceed detection_threshold, got "
+                f"{self.saturation} <= {self.detection_threshold}"
+            )
+
+
+class Fear:
+    """Wanting to be somewhere else, because something dangerous is near.
+
+    Fear is a **noisy-OR over perception channels** (CLAUDE.md §2.5). Each channel is one sense
+    with its own physics, reporting a detection probability in [0, 1]; fear is
+    ``weight × (1 − Π(1 − p))``. Today there is exactly one channel — scent — so the product
+    collapses to that single probability, and `_channels` is written as the explicit combination it
+    will remain rather than as a special case to be rewritten when #24 registers sight.
+
+    **Scent, specifically.** Exposure is the diffused per-species concentration at the animal's own
+    cell (`core.ecology.populations`), weighted by how dangerous each of those species is to *it*
+    (`core.behaviour.threat`). Cannibalism needs no special handling: it is the threat matrix's
+    diagonal.
+
+    **The scent gene buys range, not volume.** Concentration falls off monotonically from its
+    source and detection is a threshold on concentration, so a keener nose crossing that threshold
+    at a fainter trace is detecting the same animal from *further away* — sensitivity and range are
+    the same parameter for a plume. This is why acuity may multiply a sampled field value here
+    where a sight gene may not: for sight, the same construction would leave a far-seeing animal
+    merely more frightened of what it could already see, which is the wrong selection pressure.
+    """
+
+    name = "fear"
+
+    def __init__(
+        self,
+        store: EntityStore,
+        genetics: Genetics,
+        populations: Populations,
+        threat: Threat,
+        vocabulary: GeneVocabulary,
+        config: FearConfig,
+    ) -> None:
+        self.store = store
+        self.genetics = genetics
+        self.populations = populations
+        self.threat = threat
+        self.config = config
+        # Raises KeyError naming the vocabulary version if the gene does not exist.
+        self._scent_index = vocabulary.index_of(config.scent_gene)
+
+    def score(self, selection: Selection) -> np.ndarray:
+        """(len(selection),) float32: weighted probability that something dangerous was detected."""
+        detected = np.stack(self._channels(selection))
+        # Noisy-OR: independent senses corroborate without ever summing past certainty, which is
+        # what lets #24 add a channel without re-tuning every other drive's weight.
+        return (self.config.weight * (1.0 - np.prod(1.0 - detected, axis=0))).astype(np.float32)
+
+    def _channels(self, selection: Selection) -> list[np.ndarray]:
+        """Each perception channel's detection probability, (len(selection),) float32 in [0, 1].
+
+        #24 appends the sight channel here. Nothing outside a channel knows how its probability
+        was computed, so that addition changes no other line in this class.
+        """
+        return [self._scent(selection)]
+
+    def _scent(self, selection: Selection) -> np.ndarray:
+        """Detection probability from smell alone."""
+        mask = selection.to_mask()
+        # Concentration of every species where each animal stands, weighted by what that animal
+        # has to fear from each of them — one vectorized pass over a mixed-species population.
+        nearby = self.populations.sample(self.store.x[mask], self.store.y[mask])
+        danger = (nearby * self.threat.rows_for(self.store.species_id[mask])).sum(axis=1)
+
+        acuity = self.genetics.expressed(selection)[:, self._scent_index]
+        perceived = acuity * danger
+        span = self.config.saturation - self.config.detection_threshold
+        return np.clip((perceived - self.config.detection_threshold) / span, 0.0, 1.0).astype(
             np.float32
         )
 
