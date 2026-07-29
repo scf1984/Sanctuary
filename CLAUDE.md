@@ -72,6 +72,34 @@ core (§2.3). That assumption is now measured and confirmed:
 across 1,000–100,000 rows, with a 7-day offline catch-up resolving in ~108 seconds at 100,000
 entities — no change to the table above is required.
 
+**The order systems run within a tick is a rule, not an implementation detail.** Each system reads
+what the previous ones wrote, so the order moves outcomes and is therefore part of the MAJOR
+version (§2.8), frozen for the life of a world. It is declared explicitly and never inherited from
+import order or from whatever sequence a test happened to use. Settled order, owned by #115:
+
+| # | system | why here |
+|---|---|---|
+| 1 | plant growth | consumes nutrients returned last tick; a one-tick lag is invisible on a field |
+| 2 | cue field rebuild | must precede any sensing, or animals smell **last tick's** world |
+| 3 | drive scoring / option sampling | |
+| 4 | movement | acts on this tick's decision, not a stale one |
+| 5 | feeding | you eat where you arrived, not where you left |
+| 6 | metabolic upkeep | **after feeding**: an animal standing on a full meadow must not be killed by upkeep it could have paid. "Died on top of food" reads as a bug even when the arithmetic is right |
+| 7 | death and decomposition | starvation is only meaningful once the tick's upkeep is charged |
+| 8 | age increment | closes a whole tick of living, and runs **before** births — see below |
+| 9 | reproduction | **after death**, so rows freed this tick are immediately reusable and a world at capacity can still breed |
+| 10 | speciation | periodicity undecided; see #115 |
+
+Two rules the order exists to enforce, which outlive any particular sequence:
+
+- **A newborn does not act in the tick it is born.** A row allocated mid-tick is invisible to the
+  systems that already ran and visible to those that follow, so a newborn would be half-simulated —
+  sensing a world it never moved in, or moving on a decision nothing scored for it. Reproduction
+  therefore runs late, and an entity begins its first *whole* tick before anything asks what it
+  wants.
+- **`age` counts whole ticks lived**, which is why the increment precedes reproduction rather than
+  following it. Incrementing after birth would make a newborn one tick old having lived none.
+
 ### 2.2 Randomness and reproducibility
 
 - **The simulation is not deterministic.** Two identical states may evolve differently. This is a
