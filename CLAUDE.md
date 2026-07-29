@@ -201,8 +201,8 @@ Two rules the order exists to enforce, which outlive any particular sequence:
   cost = size × (transport_cost × distance × (1 + exertion_premium × pace) + climb_cost × gain)
   ```
 
-  **The premium is a per-metre multiplier on `pace`, not a flag naming the drive.** Pricing
-  distance alone would make a chase merely long; it is the per-metre term that makes it expensive.
+  **The premium is a per-world-unit multiplier on `pace`, not a flag naming the drive.** Pricing
+  distance alone would make a chase merely long; it is the per-unit term that makes it expensive.
   `pace` is a fraction of top speed supplied per call, so `core.behaviour.movement` knows nothing
   about what fleeing *is* — a drive that wants urgency passes a higher number, and #19's chase and
   #24's flight are priced without that module changing. A `MovementConfig` therefore declares
@@ -509,6 +509,33 @@ Two rules the order exists to enforce, which outlive any particular sequence:
 - **Heightmap terrain from the start.** Elevation drives movement cost, line-of-sight occlusion,
   downhill water flow and pooling, and temperature by altitude. Climate zones are *consequences of
   terrain*, not painted regions, and mountain ranges become natural isolation barriers.
+- **One length unit, and it is not a physical one** — decided in #112, which owned it. x, y, z,
+  elevation, water depth, cell size, speed, sight range and diffusion range are all *world units*.
+  Elevation was documented in metres while x and y were world units, which left
+  `climb_cost / transport_cost` — the ratio that decides whether a mountain range is a barrier at
+  all — resting on a conversion factor nothing declared and nothing checked. It read sensibly,
+  never raised, and was always wrong, exactly like the prototype's degree-valued sight angle
+  compared against a radian difference (§8.4).
+
+  The general rule, of which this is the first instance: **prefer floating units over grounding.**
+  The simulation does not need its lengths to be metres, its masses kilograms, or its energies
+  real joules. Grounding a unit invites Earth-calibrated constants that carry no meaning here and
+  cannot be tuned freely — `Climate.lapse_rate` defaulting to Earth's tropospheric value was the
+  first, and read against world units it cooled a peak by hundredths of a degree, quietly removing
+  altitude from climate. Only lengths are converted so far; energy is still denominated in joules
+  and is the obvious next instance (#123).
+
+  Two consequences worth stating, because they are what keep it fixed:
+
+  - **An absolute length gets no default; a ratio may.** `TerrainConfig.min_elevation` and
+    `max_elevation` are required, because relief only means something against a world extent the
+    caller chose — the range they replaced defaulted to a thousand cells' worth of climb and
+    nothing noticed. A default that is a *normalisation* (`cell_size = 1.0`, one cell is one world
+    unit) or a *reference point* (`sea_level_elevation = 0.0`) is fine; an arbitrary magnitude is
+    not.
+  - **A units mismatch cannot fail a test on its own**, since both sides are floats, so the check
+    is on prose: `tests/test_length_units.py` fails if anything under `core/` or `clients/` names
+    a physical length unit. It caught 17 declarations when it was written.
 - **Animals may leave the surface.** Flight and swimming depth are real mechanics, so positions
   carry a z coordinate and the spatial index is volumetric.
   > ⚠️ This is the most expensive decision in this document. It makes spatial indexing, sensing, and

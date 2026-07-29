@@ -13,7 +13,7 @@ def make_config(**overrides):
         octaves=5,
         persistence=0.5,
         min_elevation=0.0,
-        max_elevation=500.0,
+        max_elevation=32.0,  # a tenth of the 320-unit extent (#112)
     )
     params.update(overrides)
     return TerrainConfig(**params)
@@ -38,7 +38,7 @@ class TestTerrainConfig:
 
     def test_rejects_inverted_elevation_range(self):
         with pytest.raises(ValueError):
-            make_config(min_elevation=500.0, max_elevation=0.0)
+            make_config(min_elevation=32.0, max_elevation=0.0)
 
 
 class TestGeneration:
@@ -53,9 +53,9 @@ class TestGeneration:
         assert not np.array_equal(a.heights, b.heights)
 
     def test_relief_spans_configured_range(self):
-        terrain = Terrain.generate(make_config(min_elevation=100.0, max_elevation=900.0))
-        assert terrain.heights.min() == pytest.approx(100.0, abs=1e-3)
-        assert terrain.heights.max() == pytest.approx(900.0, abs=1e-3)
+        terrain = Terrain.generate(make_config(min_elevation=10.0, max_elevation=90.0))
+        assert terrain.heights.min() == pytest.approx(10.0, abs=1e-3)
+        assert terrain.heights.max() == pytest.approx(90.0, abs=1e-3)
 
     def test_relief_is_varied_not_flat(self):
         terrain = Terrain.generate(make_config())

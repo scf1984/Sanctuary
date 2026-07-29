@@ -14,7 +14,7 @@ def make_terrain(**overrides):
         octaves=5,
         persistence=0.5,
         min_elevation=0.0,
-        max_elevation=2000.0,
+        max_elevation=32.0,  # a tenth of the 320-unit extent (#112)
     )
     params.update(overrides)
     return Terrain.generate(TerrainConfig(**params))
@@ -27,6 +27,25 @@ def make_climate_config(terrain, **overrides):
 
 
 class TestClimateConfig:
+    def test_altitude_and_latitude_gradients_default_as_a_tuned_pair(self):
+        """The two default gradients are one tuning decision, not two constants (#112).
+
+        `lapse_rate` was Earth's tropospheric value, denominated per physical length unit; read
+        against elevation in world units it cooled a peak by hundredths of a degree, so altitude
+        stopped driving climate and §2.6's "climate zones are consequences of terrain" became
+        decoration. It is re-derived from the world's own geometry: a peak should be about as cold
+        as a pole, so ``lapse_rate * relief ~= latitude_gradient * half_extent``, and with relief
+        at a tenth of extent (`TerrainConfig.max_elevation`) that is a factor of five.
+
+        Pinned because the factor is what makes terrain matter. Moving either default alone
+        silently halves or doubles how much relief contributes to climate relative to latitude,
+        which is precisely §2.1's warning about constants that must be tuned as a table drifting
+        apart instead.
+        """
+        defaults = ClimateConfig(equator_y=0.0)
+
+        assert defaults.lapse_rate == pytest.approx(5.0 * defaults.latitude_gradient)
+
     def test_rejects_negative_latitude_gradient(self):
         with pytest.raises(ValueError):
             ClimateConfig(equator_y=0.0, latitude_gradient=-0.1)
@@ -39,7 +58,7 @@ class TestClimateConfig:
 class TestTemperatureField:
     def test_temperature_falls_with_altitude(self):
         # Flat latitude (all rows at the equator) isolates the altitude effect.
-        heights = np.array([[0.0, 1000.0, 2000.0]] * 3, dtype=np.float32)
+        heights = np.array([[0.0, 1.0, 2.0]] * 3, dtype=np.float32)
         terrain = Terrain(heights, cell_size=1.0)
         config = ClimateConfig(equator_y=terrain.world_height / 2, latitude_gradient=0.0)
         climate = Climate(terrain, config)
@@ -101,7 +120,7 @@ class TestZones:
 
     def test_distinct_zones_identifiable_in_generated_world(self):
         # A wide latitude span plus varied elevation should produce more than one named zone.
-        terrain = make_terrain(height=65, max_elevation=4000.0)
+        terrain = make_terrain(height=65, max_elevation=64.0)
         config = make_climate_config(terrain, equator_temperature=35.0, latitude_gradient=1.0)
         climate = Climate(terrain, config)
 
