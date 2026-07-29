@@ -14,10 +14,9 @@ from core.behaviour.drives import (
     ThirstConfig,
 )
 from core.behaviour.service import Behaviour
-from core.behaviour.threat import Threat
+from core.ecology.cues import CueField, CueFieldConfig, Scent, ScentGenes
 from core.ecology.metabolism import Metabolism, MetabolismConfig
 from core.ecology.plants import Plants, PlantsConfig
-from core.ecology.populations import Populations, PopulationsConfig
 from core.ecology.service import Ecology
 from core.entities.store import EntityStore
 from core.genetics.service import Genetics
@@ -29,10 +28,37 @@ from core.world.climate import Climate, ClimateConfig
 from core.world.terrain import Terrain
 from core.world.water import Water
 
-GENE_NAMES = ("size", "speed", "sight", "insulation", "scent")
+# Three cue channels rather than the eight CLAUDE.md §2.5 settles on: the algebra is identical and
+# a test that spells out eight signature components per creature stops being readable.
+CHANNELS = 3
+SIGNATURE_GENES = tuple(f"signature_{i}" for i in range(CHANNELS))
+AVERSION_GENES = tuple(f"aversion_{i}" for i in range(CHANNELS))
+GENE_NAMES = (
+    "size",
+    "speed",
+    "sight",
+    "insulation",
+    "scent_emission",
+    "scent_acuity",
+    *SIGNATURE_GENES,
+    *AVERSION_GENES,
+)
+SCENT_GENES = ScentGenes(emission_gene="scent_emission", signature_genes=SIGNATURE_GENES)
 
 METABOLISM_CONFIG = MetabolismConfig(
-    gene_costs={"size": 2.0, "speed": 3.0, "sight": 1.0, "insulation": 1.0, "scent": 0.5},
+    gene_costs={
+        "size": 2.0,
+        "speed": 3.0,
+        "sight": 1.0,
+        "insulation": 1.0,
+        # Emission is free pending #20: charging it would make silence both cheaper and safer,
+        # driving it to zero in every lineage (CLAUDE.md §2.5).
+        "scent_emission": 0.0,
+        "scent_acuity": 0.5,
+        # Signature and aversion are free: smelling of something and minding something cost
+        # nothing to carry. §2.5 requires every gene declare a cost, zero included.
+        **{name: 0.0 for name in (*SIGNATURE_GENES, *AVERSION_GENES)},
+    },
     basal_rate=1.0,
     thermoregulation_rate=0.5,
     neutral_temperature=20.0,
@@ -488,32 +514,35 @@ class TestDrivesCompeting:
         assert world.behaviour.driven_by("fatigue", selection) == selection
 
 
+
 FEAR_CONFIG = FearConfig(
-    weight=1.0, scent_gene="scent", detection_threshold=0.01, saturation=1.0
+    weight=1.0,
+    scent_acuity_gene="scent_acuity",
+    aversion_genes=AVERSION_GENES,
+    detection_threshold=0.01,
+    saturation=1.0,
 )
 
 
 class FearWorld(World):
-    """A World plus the population field and threat matrix the fear drive reads.
+    """A World plus the cue field and scent binder the fear drive reads.
 
-    Two species by default: 0 is prey, 1 is a predator. Prey fear predators, predators fear
-    nothing, and neither is a cannibal unless a test says so.
+    Nothing here distinguishes predator from prey by species. A "predator" is a creature whose
+    *signature* sits in channel 0, and a frightened creature is one whose *aversion* points there.
+    Both are ordinary genes, which is the whole point (CLAUDE.md §2.5).
     """
 
-    def __init__(self, weights=None, diffusion_range=3.0, **kwargs):
+    def __init__(self, diffusion_range=3.0, **kwargs):
         super().__init__(**kwargs)
-        self.predator_id = self.species.register(GENE_NAMES)
-        self.populations = Populations(
-            self.terrain, self.species, PopulationsConfig(diffusion_range=diffusion_range)
+        self.cue_field = CueField(
+            self.terrain, CHANNELS, CueFieldConfig(diffusion_range=diffusion_range)
         )
-        if weights is None:
-            weights = np.array([[0.0, 1.0], [0.0, 0.0]], dtype=np.float32)
-        self.threat = Threat(self.species, weights)
+        self.scent = Scent(
+            self.store, self.genetics, self.cue_field, self.vocabulary, SCENT_GENES
+        )
 
     def fear(self, config=FEAR_CONFIG):
-        return Fear(
-            self.store, self.genetics, self.populations, self.threat, self.vocabulary, config
-        )
+        return Fear(self.store, self.genetics, self.scent, self.vocabulary, config)
 
     def spawn_as(self, species_id, n, **columns):
         columns["species_id"] = np.full(n, species_id, dtype=np.int32)
@@ -522,175 +551,304 @@ class FearWorld(World):
         return Selection.from_indices(np.array(rows, dtype=np.int64), self.store.capacity)
 
 
+def dangerous(emission=1.0):
+    """Genes for a creature that smells of channel 0 and fears nothing."""
+    return {"scent_emission": emission, "signature_0": 1.0}
+
+
+def timid(acuity=50.0):
+    """Genes for a creature that fears channel 0 and broadcasts nothing."""
+    return {"scent_acuity": acuity, "aversion_0": 1.0}
+
+
 class TestFearScore:
-    def test_an_animal_alone_in_the_world_fears_nothing(self):
+    def test_a_creature_alone_in_the_world_fears_nothing(self):
         world = FearWorld(grid=21)
         prey = world.spawn_as(0, 1, x=np.float32([10.0]), y=np.float32([10.0]))
-        world.genetics.set_genes(prey, gene_rows({"scent": 1.0}))
-        world.populations.rebuild(world.store, prey)
+        world.genetics.set_genes(prey, gene_rows(timid()))
+        world.scent.rebuild(prey)
 
         assert world.fear().score(prey) == pytest.approx([0.0])
 
-    def test_a_nearby_predator_is_feared(self):
+    def test_a_nearby_source_of_a_feared_signature_is_feared(self):
         world = FearWorld(grid=21)
         prey = world.spawn_as(0, 1, x=np.float32([10.0]), y=np.float32([10.0]))
-        predator = world.spawn_as(1, 1, x=np.float32([11.0]), y=np.float32([10.0]))
-        world.genetics.set_genes(prey, gene_rows({"scent": 50.0}))
-        world.populations.rebuild(world.store, prey | predator)
+        predator = world.spawn_as(0, 1, x=np.float32([11.0]), y=np.float32([10.0]))
+        world.genetics.set_genes(prey, gene_rows(timid()))
+        world.genetics.set_genes(predator, gene_rows(dangerous()))
+        world.scent.rebuild(prey | predator)
 
         assert world.fear().score(prey)[0] > 0.0
 
-    def test_a_predator_does_not_fear_its_prey(self):
-        """The matrix is asymmetric on purpose, and fear must read it in the right direction."""
+    def test_fear_is_not_symmetric_and_needs_no_matrix_to_say_so(self):
+        """Prey fear predators far more than predators fear prey. With aversion genetic, that
+        asymmetry is just two creatures carrying different aversion vectors — there is no table
+        anywhere that could be accidentally symmetrized.
+        """
         world = FearWorld(grid=21)
         prey = world.spawn_as(0, 1, x=np.float32([10.0]), y=np.float32([10.0]))
-        predator = world.spawn_as(1, 1, x=np.float32([11.0]), y=np.float32([10.0]))
-        world.genetics.set_genes(prey | predator, gene_rows({"scent": 50.0}, {"scent": 50.0}))
-        world.populations.rebuild(world.store, prey | predator)
+        predator = world.spawn_as(0, 1, x=np.float32([11.0]), y=np.float32([10.0]))
+        world.genetics.set_genes(prey, gene_rows(timid()))
+        world.genetics.set_genes(predator, gene_rows(dangerous()))
+        world.scent.rebuild(prey | predator)
 
+        assert world.fear().score(prey)[0] > 0.0
         assert world.fear().score(predator) == pytest.approx([0.0])
 
-    def test_fear_falls_off_with_distance_from_the_threat(self):
+    def test_aversion_discriminates_between_signatures(self):
+        """The reason cue space has more than one dimension: fearing wolves must not mean fearing
+        every animal that happens to smell of something.
+        """
+        world = FearWorld(grid=21, capacity=16)
+        prey = world.spawn_as(0, 1, x=np.float32([10.0]), y=np.float32([10.0]))
+        harmless = world.spawn_as(0, 1, x=np.float32([11.0]), y=np.float32([10.0]))
+        world.genetics.set_genes(prey, gene_rows(timid()))
+        # Loud, but in a channel this creature does not care about.
+        world.genetics.set_genes(
+            harmless, gene_rows({"scent_emission": 10.0, "signature_1": 1.0})
+        )
+        world.scent.rebuild(prey | harmless)
+
+        assert world.fear().score(prey) == pytest.approx([0.0])
+
+    def test_fear_falls_off_with_distance_from_the_source(self):
         world = FearWorld(grid=41)
         near = world.spawn_as(0, 1, x=np.float32([21.0]), y=np.float32([20.0]))
         far = world.spawn_as(0, 1, x=np.float32([27.0]), y=np.float32([20.0]))
-        predator = world.spawn_as(1, 1, x=np.float32([20.0]), y=np.float32([20.0]))
+        predator = world.spawn_as(0, 1, x=np.float32([20.0]), y=np.float32([20.0]))
         prey = near | far
-        world.genetics.set_genes(prey, gene_rows({"scent": 50.0}, {"scent": 50.0}))
-        world.populations.rebuild(world.store, prey | predator)
+        world.genetics.set_genes(prey, gene_rows(timid(), timid()))
+        world.genetics.set_genes(predator, gene_rows(dangerous()))
+        world.scent.rebuild(prey | predator)
 
         scores = world.fear().score(prey)
 
         assert scores[0] > scores[1]
 
     def test_a_pack_is_more_frightening_than_a_lone_predator(self):
-        """Concentration, not nearest distance: several predators nearby are worse than one."""
-        lone = FearWorld(grid=41)
-        prey = lone.spawn_as(0, 1, x=np.float32([20.0]), y=np.float32([20.0]))
-        one = lone.spawn_as(1, 1, x=np.float32([23.0]), y=np.float32([20.0]))
-        lone.genetics.set_genes(prey, gene_rows({"scent": 20.0}))
-        lone.populations.rebuild(lone.store, prey | one)
-
-        pack = FearWorld(grid=41)
-        prey2 = pack.spawn_as(0, 1, x=np.float32([20.0]), y=np.float32([20.0]))
-        many = pack.spawn_as(1, 4, x=np.float32([23.0] * 4), y=np.float32([20.0] * 4))
-        pack.genetics.set_genes(prey2, gene_rows({"scent": 20.0}))
-        pack.populations.rebuild(pack.store, prey2 | many)
-
-        assert pack.fear().score(prey2)[0] > lone.fear().score(prey)[0]
-
-    def test_the_threat_weight_scales_how_frightening_a_species_is(self):
-        mild = FearWorld(grid=21, weights=np.array([[0.0, 0.2], [0.0, 0.0]], dtype=np.float32))
-        severe = FearWorld(grid=21, weights=np.array([[0.0, 1.0], [0.0, 0.0]], dtype=np.float32))
-
+        """Concentration, not nearest distance: several sources nearby are worse than one."""
         scores = []
-        for world in (mild, severe):
-            prey = world.spawn_as(0, 1, x=np.float32([10.0]), y=np.float32([10.0]))
-            predator = world.spawn_as(1, 1, x=np.float32([12.0]), y=np.float32([10.0]))
-            world.genetics.set_genes(prey, gene_rows({"scent": 20.0}))
-            world.populations.rebuild(world.store, prey | predator)
+        for pack_size in (1, 4):
+            world = FearWorld(grid=41, capacity=16)
+            prey = world.spawn_as(0, 1, x=np.float32([20.0]), y=np.float32([20.0]))
+            pack = world.spawn_as(
+                0,
+                pack_size,
+                x=np.float32([23.0] * pack_size),
+                y=np.float32([20.0] * pack_size),
+            )
+            world.genetics.set_genes(prey, gene_rows(timid(20.0)))
+            world.genetics.set_genes(pack, gene_rows(*[dangerous()] * pack_size))
+            world.scent.rebuild(prey | pack)
             scores.append(world.fear().score(prey)[0])
 
         assert scores[1] > scores[0]
 
+    def test_a_louder_predator_is_detected_from_further_away(self):
+        """Emission is under selection too: a stealthy predator is one whose lineage drove its
+        own broadcast down.
+        """
+        scores = []
+        for emission in (0.2, 5.0):
+            world = FearWorld(grid=41)
+            prey = world.spawn_as(0, 1, x=np.float32([26.0]), y=np.float32([20.0]))
+            predator = world.spawn_as(0, 1, x=np.float32([20.0]), y=np.float32([20.0]))
+            world.genetics.set_genes(prey, gene_rows(timid()))
+            world.genetics.set_genes(predator, gene_rows(dangerous(emission)))
+            world.scent.rebuild(prey | predator)
+            scores.append(world.fear().score(prey)[0])
+
+        assert scores[1] > scores[0]
+
+    def test_stronger_aversion_means_more_fear_of_the_same_thing(self):
+        world = FearWorld(grid=21, capacity=16)
+        timid_one = world.spawn_as(0, 1, x=np.float32([12.0]), y=np.float32([10.0]))
+        bold = world.spawn_as(0, 1, x=np.float32([12.0]), y=np.float32([11.0]))
+        predator = world.spawn_as(0, 1, x=np.float32([10.0]), y=np.float32([10.0]))
+        prey = timid_one | bold
+        world.genetics.set_genes(
+            prey,
+            gene_rows(
+                {"scent_acuity": 20.0, "aversion_0": 1.0},
+                {"scent_acuity": 20.0, "aversion_0": 0.1},
+            ),
+        )
+        world.genetics.set_genes(predator, gene_rows(dangerous()))
+        world.scent.rebuild(prey | predator)
+
+        scores = world.fear().score(prey)
+
+        assert scores[0] > scores[1]
+
     def test_weight_scales_the_whole_drive(self):
         world = FearWorld(grid=21)
         prey = world.spawn_as(0, 1, x=np.float32([10.0]), y=np.float32([10.0]))
-        predator = world.spawn_as(1, 1, x=np.float32([10.0]), y=np.float32([10.0]))
-        world.genetics.set_genes(prey, gene_rows({"scent": 1000.0}))
-        world.populations.rebuild(world.store, prey | predator)
+        predator = world.spawn_as(0, 1, x=np.float32([10.0]), y=np.float32([10.0]))
+        world.genetics.set_genes(prey, gene_rows(timid(1000.0)))
+        world.genetics.set_genes(predator, gene_rows(dangerous()))
+        world.scent.rebuild(prey | predator)
 
         loud = FearConfig(
-            weight=3.0, scent_gene="scent", detection_threshold=0.01, saturation=1.0
+            weight=3.0,
+            scent_acuity_gene="scent_acuity",
+            aversion_genes=AVERSION_GENES,
+            detection_threshold=0.01,
+            saturation=1.0,
         )
         assert world.fear(loud).score(prey) == pytest.approx(
             3.0 * world.fear().score(prey), rel=1e-5
         )
 
 
-class TestCannibalismInFear:
+class TestEmergentBehaviour:
+    """Behaviours nobody implemented, which fall out of signature and aversion being genes.
+
+    These are the return on the whole encoding (CLAUDE.md §2.5) — if any of them stops holding,
+    the cue space has been reduced to an authored threat table wearing different names.
+    """
+
     def test_a_cannibal_fears_its_own_kind(self):
-        """No special case anywhere: this is the threat matrix's diagonal (CLAUDE.md §2.5)."""
-        world = FearWorld(
-            grid=21, weights=np.array([[0.8, 0.0], [0.0, 0.0]], dtype=np.float32)
-        )
+        """No diagonal, no special case: a lineage whose aversion overlaps its own signature."""
+        world = FearWorld(grid=21)
         alone = world.spawn_as(0, 1, x=np.float32([10.0]), y=np.float32([10.0]))
         neighbour = world.spawn_as(0, 1, x=np.float32([11.0]), y=np.float32([10.0]))
         both = alone | neighbour
-        world.genetics.set_genes(both, gene_rows({"scent": 50.0}, {"scent": 50.0}))
-        world.populations.rebuild(world.store, both)
+        cannibal = {
+            "scent_emission": 1.0,
+            "signature_0": 1.0,
+            "scent_acuity": 50.0,
+            "aversion_0": 1.0,
+        }
+        world.genetics.set_genes(both, gene_rows(cannibal, cannibal))
+        world.scent.rebuild(both)
 
         assert world.fear().score(alone)[0] > 0.0
 
-    def test_a_non_cannibal_is_untroubled_by_its_own_kind(self):
-        world = FearWorld(
-            grid=21, weights=np.array([[0.0, 1.0], [0.0, 0.0]], dtype=np.float32)
-        )
+    def test_a_cannibal_standing_alone_is_not_afraid_of_itself(self):
+        """The self-exclusion this depends on. Without it, cannibalism would be indistinguishable
+        from a permanently panicking animal, and the emergent version could never be trusted.
+        """
+        world = FearWorld(grid=21)
         alone = world.spawn_as(0, 1, x=np.float32([10.0]), y=np.float32([10.0]))
-        neighbour = world.spawn_as(0, 1, x=np.float32([11.0]), y=np.float32([10.0]))
-        both = alone | neighbour
-        world.genetics.set_genes(both, gene_rows({"scent": 50.0}, {"scent": 50.0}))
-        world.populations.rebuild(world.store, both)
+        world.genetics.set_genes(
+            alone,
+            gene_rows(
+                {
+                    "scent_emission": 5.0,
+                    "signature_0": 1.0,
+                    "scent_acuity": 500.0,
+                    "aversion_0": 1.0,
+                }
+            ),
+        )
+        world.scent.rebuild(alone)
 
         assert world.fear().score(alone) == pytest.approx([0.0])
 
+    def test_a_mimic_is_avoided_without_being_dangerous(self):
+        """Batesian mimicry, unauthored: a harmless lineage whose signature has drifted toward a
+        feared one is feared, because nothing anywhere records which species is actually a threat.
+        """
+        world = FearWorld(grid=21)
+        prey = world.spawn_as(0, 1, x=np.float32([10.0]), y=np.float32([10.0]))
+        mimic = world.spawn_as(0, 1, x=np.float32([11.0]), y=np.float32([10.0]))
+        world.genetics.set_genes(prey, gene_rows(timid()))
+        world.genetics.set_genes(mimic, gene_rows(dangerous()))
+        world.scent.rebuild(prey | mimic)
 
-class TestScentGene:
+        assert world.fear().score(prey)[0] > 0.0
+
+    def test_a_predator_that_drifts_out_of_signature_stops_being_feared(self):
+        """The predator's half of the arms race: selection on its own signature makes it stealthy
+        without any change to what its prey inherited.
+        """
+        scores = []
+        for signature_gene in ("signature_0", "signature_2"):
+            world = FearWorld(grid=21)
+            prey = world.spawn_as(0, 1, x=np.float32([10.0]), y=np.float32([10.0]))
+            predator = world.spawn_as(0, 1, x=np.float32([11.0]), y=np.float32([10.0]))
+            world.genetics.set_genes(prey, gene_rows(timid()))
+            world.genetics.set_genes(
+                predator, gene_rows({"scent_emission": 1.0, signature_gene: 1.0})
+            )
+            world.scent.rebuild(prey | predator)
+            scores.append(world.fear().score(prey)[0])
+
+        assert scores[0] > 0.0
+        assert scores[1] == pytest.approx(0.0)
+
+    def test_speciation_costs_fear_nothing(self):
+        """A daughter species inherits signature and aversion like any other trait, and there is
+        no per-species table to extend — so CLAUDE.md §2.3's "speciation is a species-id write
+        plus a new mask row" stays literally true.
+        """
+        world = FearWorld(grid=21)
+        daughter = world.species.derive(world.species_id)
+        prey = world.spawn_as(daughter, 1, x=np.float32([10.0]), y=np.float32([10.0]))
+        predator = world.spawn_as(daughter, 1, x=np.float32([11.0]), y=np.float32([10.0]))
+        world.genetics.set_genes(prey, gene_rows(timid()))
+        world.genetics.set_genes(predator, gene_rows(dangerous()))
+        world.scent.rebuild(prey | predator)
+
+        assert world.fear().score(prey)[0] > 0.0
+
+
+class TestScentAcuity:
     def test_a_keener_nose_detects_the_same_threat_from_further_away(self):
         """CLAUDE.md §2.5: for a plume, sensitivity and range are the same parameter. The dull
-        animal must not merely be *less* afraid of a threat it detects — it must not detect it.
+        creature must not merely be *less* afraid — it must not detect the threat at all.
         """
-        world = FearWorld(grid=41)
+        world = FearWorld(grid=41, capacity=16)
         dull = world.spawn_as(0, 1, x=np.float32([28.0]), y=np.float32([20.0]))
         keen = world.spawn_as(0, 1, x=np.float32([28.0]), y=np.float32([21.0]))
-        predator = world.spawn_as(1, 1, x=np.float32([20.0]), y=np.float32([20.0]))
+        predator = world.spawn_as(0, 1, x=np.float32([20.0]), y=np.float32([20.0]))
         prey = dull | keen
-        world.genetics.set_genes(prey, gene_rows({"scent": 1.0}, {"scent": 500.0}))
-        world.populations.rebuild(world.store, prey | predator)
+        world.genetics.set_genes(prey, gene_rows(timid(1.0), timid(500.0)))
+        world.genetics.set_genes(predator, gene_rows(dangerous()))
+        world.scent.rebuild(prey | predator)
 
         scores = world.fear().score(prey)
 
         assert scores[0] == pytest.approx(0.0)
         assert scores[1] > 0.0
 
-    def test_an_unexpressed_scent_gene_leaves_an_animal_oblivious(self):
+    def test_an_unexpressed_aversion_gene_leaves_a_creature_fearless(self):
         """Expression, not genotype — the same rule that makes an unexpressed gene cost nothing
-        (#17). A species that does not smell pays nothing for a nose and gets no warning.
+        (#17). A species that does not express an aversion carries it, and can express it again
+        generations later, but pays nothing and gains nothing now.
         """
         world = FearWorld(grid=21)
-        noseless = world.species.register(("size",))
-        prey = world.spawn_as(noseless, 1, x=np.float32([10.0]), y=np.float32([10.0]))
-        predator = world.spawn_as(1, 1, x=np.float32([10.0]), y=np.float32([10.0]))
-        world.genetics.set_genes(prey, gene_rows({"scent": 500.0}))
-        # The new species needs a row and column; it fears predators exactly as species 0 does.
-        world.threat = Threat(
-            world.species,
-            np.array(
-                [[0.0, 1.0, 0.0], [0.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float32
-            ),
+        fearless = world.species.register(
+            ("size", "speed", "sight", "insulation", "scent_emission", "scent_acuity")
         )
-        world.populations.rebuild(world.store, prey | predator)
+        prey = world.spawn_as(fearless, 1, x=np.float32([10.0]), y=np.float32([10.0]))
+        predator = world.spawn_as(0, 1, x=np.float32([10.0]), y=np.float32([10.0]))
+        world.genetics.set_genes(prey, gene_rows(timid(500.0)))
+        world.genetics.set_genes(predator, gene_rows(dangerous()))
+        world.scent.rebuild(prey | predator)
 
         assert world.fear().score(prey) == pytest.approx([0.0])
 
     def test_detection_below_the_threshold_is_nothing_at_all(self):
-        """Without a threshold every animal detects every trace from anywhere and the gene
+        """Without a threshold every creature detects every trace from anywhere and acuity
         collapses into a panic multiplier.
         """
         world = FearWorld(grid=41)
         prey = world.spawn_as(0, 1, x=np.float32([32.0]), y=np.float32([20.0]))
-        predator = world.spawn_as(1, 1, x=np.float32([20.0]), y=np.float32([20.0]))
-        world.genetics.set_genes(prey, gene_rows({"scent": 1.0}))
-        world.populations.rebuild(world.store, prey | predator)
+        predator = world.spawn_as(0, 1, x=np.float32([20.0]), y=np.float32([20.0]))
+        world.genetics.set_genes(prey, gene_rows(timid(1.0)))
+        world.genetics.set_genes(predator, gene_rows(dangerous()))
+        world.scent.rebuild(prey | predator)
 
         assert world.fear().score(prey) == pytest.approx([0.0])
 
     def test_detection_saturates_at_certainty(self):
         world = FearWorld(grid=21, capacity=16)
         prey = world.spawn_as(0, 1, x=np.float32([10.0]), y=np.float32([10.0]))
-        predator = world.spawn_as(1, 8, x=np.float32([10.0] * 8), y=np.float32([10.0] * 8))
-        world.genetics.set_genes(prey, gene_rows({"scent": 10_000.0}))
-        world.populations.rebuild(world.store, prey | predator)
+        predator = world.spawn_as(0, 8, x=np.float32([10.0] * 8), y=np.float32([10.0] * 8))
+        world.genetics.set_genes(prey, gene_rows(timid(10_000.0)))
+        world.genetics.set_genes(predator, gene_rows(*[dangerous()] * 8))
+        world.scent.rebuild(prey | predator)
 
         assert world.fear().score(prey) == pytest.approx([1.0])
 
@@ -702,9 +860,10 @@ class TestNoisyOr:
         """
         world = FearWorld(grid=21)
         prey = world.spawn_as(0, 1, x=np.float32([10.0]), y=np.float32([10.0]))
-        predator = world.spawn_as(1, 1, x=np.float32([11.0]), y=np.float32([10.0]))
-        world.genetics.set_genes(prey, gene_rows({"scent": 30.0}))
-        world.populations.rebuild(world.store, prey | predator)
+        predator = world.spawn_as(0, 1, x=np.float32([11.0]), y=np.float32([10.0]))
+        world.genetics.set_genes(prey, gene_rows(timid(30.0)))
+        world.genetics.set_genes(predator, gene_rows(dangerous()))
+        world.scent.rebuild(prey | predator)
         fear = world.fear()
 
         assert fear.score(prey) == pytest.approx(fear._channels(prey)[0], rel=1e-6)
@@ -715,9 +874,10 @@ class TestNoisyOr:
         """
         world = FearWorld(grid=21)
         prey = world.spawn_as(0, 1, x=np.float32([10.0]), y=np.float32([10.0]))
-        predator = world.spawn_as(1, 1, x=np.float32([11.0]), y=np.float32([10.0]))
-        world.genetics.set_genes(prey, gene_rows({"scent": 30.0}))
-        world.populations.rebuild(world.store, prey | predator)
+        predator = world.spawn_as(0, 1, x=np.float32([11.0]), y=np.float32([10.0]))
+        world.genetics.set_genes(prey, gene_rows(timid(30.0)))
+        world.genetics.set_genes(predator, gene_rows(dangerous()))
+        world.scent.rebuild(prey | predator)
         fear = world.fear()
         scent_only = fear.score(prey)[0]
 
@@ -735,18 +895,42 @@ class TestFearConfig:
     def test_rejects_a_zero_detection_threshold(self):
         with pytest.raises(ValueError):
             FearConfig(
-                weight=1.0, scent_gene="scent", detection_threshold=0.0, saturation=1.0
+                weight=1.0,
+                scent_acuity_gene="scent_acuity",
+                aversion_genes=AVERSION_GENES,
+                detection_threshold=0.0,
+                saturation=1.0,
             )
 
     def test_rejects_saturation_at_or_below_the_threshold(self):
         with pytest.raises(ValueError):
             FearConfig(
-                weight=1.0, scent_gene="scent", detection_threshold=0.5, saturation=0.5
+                weight=1.0,
+                scent_acuity_gene="scent_acuity",
+                aversion_genes=AVERSION_GENES,
+                detection_threshold=0.5,
+                saturation=0.5,
             )
+
+    def test_rejects_an_aversion_vector_that_does_not_match_the_cue_field(self):
+        """Aversion and signature index the same space. A mismatch would silently weight channel
+        k by aversion k+1, which no test would catch by accident.
+        """
+        world = FearWorld(grid=21)
+        mismatched = FearConfig(
+            weight=1.0,
+            scent_acuity_gene="scent_acuity",
+            aversion_genes=AVERSION_GENES[:1],
+            detection_threshold=0.01,
+            saturation=1.0,
+        )
+
+        with pytest.raises(ValueError):
+            world.fear(mismatched)
 
 
 class TestAllFiveDrivesCompeting:
-    """#22's "done when": the full authored set resolves synthetic animals to different actions
+    """#22's "done when": the full authored set resolves synthetic creatures to different actions
     from their state alone, and the reason is recoverable afterwards.
     """
 
@@ -776,9 +960,9 @@ class TestAllFiveDrivesCompeting:
         )
         world.behaviour.register(Fatigue(world.store, FatigueConfig(weight=1.0)))
 
-    def test_a_hungry_animal_next_to_a_predator_flees_instead_of_feeding(self):
-        """Fear outscoring hunger in an animal that is *also* hungry is the case the whole utility
-        contest exists for — a fixed priority order could not express it.
+    def test_a_hungry_creature_next_to_a_predator_flees_instead_of_feeding(self):
+        """Fear outscoring hunger in a creature that is *also* hungry is the case the whole
+        utility contest exists for — a fixed priority order could not express it.
 
         Deliberately hungry rather than starving: at zero energy hunger saturates at exactly the
         same 1.0 fear does, and the tie falls to registration order. That is correct behaviour for
@@ -794,21 +978,20 @@ class TestAllFiveDrivesCompeting:
             energy=np.float32([30.0]),
             health=np.float32([1.0]),
         )
-        predator = world.spawn_as(1, 3, x=np.float32([10.0] * 3), y=np.float32([10.0] * 3))
-        world.genetics.set_genes(prey, gene_rows({"scent": 500.0}))
-        world.populations.rebuild(world.store, prey | predator)
+        predator = world.spawn_as(0, 3, x=np.float32([10.0] * 3), y=np.float32([10.0] * 3))
+        world.genetics.set_genes(prey, gene_rows(timid(500.0)))
+        world.genetics.set_genes(predator, gene_rows(*[dangerous()] * 3))
+        world.scent.rebuild(prey | predator)
         self.register_all(world)
 
         world.behaviour.score(prey)
 
-        assert world.behaviour.drive_names == (
-            "hunger", "thirst", "fear", "lust", "fatigue",
-        )
+        assert world.behaviour.drive_names == ("hunger", "thirst", "fear", "lust", "fatigue")
         assert world.behaviour.driven_by("fear", prey) == prey
         breakdown = world.behaviour.breakdown(prey)
         assert breakdown["fear"][0] > breakdown["hunger"][0]
 
-    def test_the_same_animal_feeds_once_the_predator_is_gone(self):
+    def test_the_same_creature_feeds_once_the_predator_is_gone(self):
         """Same genes, same energy, same everything but the threat — so the change in action is
         attributable to the world rather than to the animal.
         """
@@ -821,8 +1004,8 @@ class TestAllFiveDrivesCompeting:
             energy=np.float32([30.0]),
             health=np.float32([1.0]),
         )
-        world.genetics.set_genes(prey, gene_rows({"scent": 500.0}))
-        world.populations.rebuild(world.store, prey)
+        world.genetics.set_genes(prey, gene_rows(timid(500.0)))
+        world.scent.rebuild(prey)
         self.register_all(world)
 
         world.behaviour.score(prey)

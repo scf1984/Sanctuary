@@ -187,16 +187,65 @@ entities — no change to the table above is required.
   one sense, with its own physics, reporting a detection probability in `[0, 1]` per entity:
 
   ```
-  p_c(i) = saturate( sense_gene_c(i) × Σ_s W[species(i), s] × exposure_c(i, s) )
+  perceived_k(i) = Σ_modalities acuity_m(i) × Σ_j emission_m(j) × signature_k(j) × transmission_m(i, j)
+  p_c(i)  = saturate( Σ_k aversion_k(i) × perceived_k(i) )
   fear(i) = weight × (1 − Π_c (1 − p_c(i)))
   ```
 
-  Three parts, each with exactly one job. **`W`** is how dangerous species *s* is to species *t*,
-  authored once and shared by every channel — a wolf is equally dangerous smelled or seen, only
-  your access to it differs; its diagonal is cannibalism and is tuned freely. **`exposure_c`** is
-  how much of *s* that sense can reach, and is the only thing that differs between channels.
-  **`sense_gene_c`** is what the animal paid for the sense, so scent-awareness and sight range are
-  both charged upkeep and both buy something (§2.5's rule).
+  **Nothing fears a species. Everything fears a signature.** Each creature carries a position in a
+  fixed *d*-dimensional **cue space** — what it smells and looks like — and, separately, an
+  **aversion** vector over that same space saying what frightens it. Both are ordinary continuous
+  genes, so both are inherited with mutation and both are under selection.
+
+  This is forced, not chosen. A gene "fear of species 47" cannot exist: species are created at
+  runtime by speciation, gene columns are fixed at a vocabulary version, and a per-species gene
+  would mean a schema migration on every split (§2.3). Making fear heritable therefore *requires*
+  factoring danger through a fixed-width cue space. An earlier draft of this section used an
+  authored species×species threat matrix; it was wrong for exactly this reason and was removed
+  before it shipped.
+
+  **What this buys, unauthored.** A co-evolutionary arms race — prey evolve aversion pointed at
+  whatever signature predators emit, predators evolve signatures that drift away from it. Batesian
+  mimicry — a harmless lineage whose signature drifts toward a feared one is avoided for free.
+  Cannibalism — you smell like yourself, so a lineage whose aversion points at its own signature
+  fears its own kind, and can evolve into and out of that. None of these is a mechanic anyone
+  implements; they are consequences of the encoding.
+
+  **Modalities differ only in `transmission`.** Scent diffuses (a field); sight is occluded and
+  range-limited (pairwise). `acuity_m` is what the animal paid to detect on that modality and
+  `emission_m` is how loudly it broadcasts on it, so both ends of every perception are genetic.
+
+  **d = 8.** Enough headroom that two unrelated lineages drifting into the same signature reads as
+  evolved mimicry rather than as an accident of a cramped space. Widening is additive and versioned
+  (§2.3), so this is a floor; narrowing is not possible.
+
+  **An animal does not perceive itself.** Its own deposit is subtracted from what it samples, which
+  is exact rather than approximate because a separable normalized blur's diagonal factorizes per
+  axis. Without it, any lineage whose aversion overlapped its own signature — every cannibal —
+  would be permanently terrified while standing alone in an empty world.
+
+  Reserved gene block, so that one vocabulary migration covers the mechanics that need it rather
+  than three:
+
+  | genes | meaning | cost |
+  |---|---|---|
+  | `signature_0..7` | position in cue space — what I smell and look like | 0 |
+  | `aversion_0..7` | direction in cue space — what frightens me | 0 |
+  | `scent_emission` | broadcast strength on the scent modality | see below |
+  | `scent_acuity`, `sight_acuity` | detection sensitivity per modality | positive |
+  | `camouflage` | damps visual conspicuousness | **positive**, per the insulation rule above |
+  | `sex_allocation`, `selfing_rate` | reproduction, continuously (#20) | #20's to set |
+
+  **Camouflage is environment-dependent**: visual conspicuousness is `size × (1 − camouflage ×
+  match(local terrain))`, so the same allele is excellent on scree and useless on grass, and
+  climate zones select for different camouflage without a designer — the same argument metabolism
+  makes for insulation.
+
+  **Scent emission has no cost line above because charging it would be a trap.** Low emission is
+  already a survival benefit, so a positive cost would make silence both cheaper *and* safer and
+  drive emission to zero in every lineage. Its counterweight has to be a benefit that scales with
+  emission — being findable by mates — which is #20's to supply. Until then emission is authored
+  per world and not under selection, and this is a known gap rather than a settled answer.
 
   Noisy-OR rather than a sum or a max: it is the correct composition for independent evidence
   (seeing *and* smelling a predator is worse than either alone), it stays bounded in `[0, 1]` like
@@ -207,10 +256,10 @@ entities — no change to the table above is required.
   **Channels are added, never restructured.** Nothing outside a channel knows how its probability
   was computed, which is what keeps the sequencing of the sensing work free:
 
-  | channel | exposure | reach gate | owned by |
+  | channel | transmission | acuity gate | owned by |
   |---|---|---|---|
-  | scent | advected, diffused per-species field | scent-awareness gene | #22 |
-  | sight | pairwise, line-of-sight and FOV filtered | sight-range gene | #24 |
+  | scent | advected, diffused per-cue-channel field | `scent_acuity` | #22 |
+  | sight | pairwise, line-of-sight and FOV filtered | `sight_acuity` | #24 |
 
   **Scent is a field and sight is pairwise for physical reasons, not performance ones.** Scent
   diffuses and advects, so wind is a drift term inside the field update and the plume is
@@ -230,17 +279,15 @@ entities — no change to the table above is required.
   pressure. The detection threshold is what gives the gene teeth; without it every animal detects
   everything faintly and the gene only scales panic.
 
-  **Speciation extends `W` by inheritance, never by authoring.** A daughter species takes its
-  parent's row *and* column, because at the moment of the split it is ecologically identical and
-  drift is what separates them afterwards — mirroring `SpeciesRegistry.derive`. Without this,
-  speciation would either crash fear on an unknown species id or stop to ask the player a
-  question, and §2.3's "speciation is a species-id write plus a new mask row" would stop being
-  true.
+  **Speciation costs fear nothing at all.** A daughter species inherits its parents' signature and
+  aversion genes like any other trait, and the cue field has no per-species structure to extend, so
+  there is no table to grow and no id to look up. This is the encoding paying for itself: §2.3's
+  "speciation is a species-id write plus a new mask row" stays literally true.
 
-  The per-species concentration field itself is **not** fear's property: it is a general facility
-  (`core.ecology.populations`) over the terrain grid, mirroring the plant field above, because
-  mate-finding (#20) and predators locating prey (#19) want exactly the same query. Fear is its
-  first reader, not its owner.
+  The cue field itself is **not** fear's property: it is a general facility (`core.ecology.cues`)
+  over the terrain grid, mirroring the plant field above. Predators locating prey (#19) and animals
+  locating mates (#20) are the *same* query with a different vector — attraction toward a signature
+  instead of away from one — so fear is its first reader, not its owner.
 - **Emergent speciation.** Genetic distance accumulates between isolated populations; past a
   threshold they can no longer interbreed and are tracked as a new species the player may name.
   This makes isolation — by fence or by terrain — the most rewarding intervention in the game.
@@ -376,7 +423,16 @@ Rules:
 
 Not yet decided. Do not assume answers — ask.
 
-- Seasons and weather as drivers — migration, hibernation, breeding seasonality.
+- Seasons and weather as drivers — migration, hibernation, breeding seasonality. Wind is a
+  consequence of this rather than a separate question, and scent-on-wind (#97) waits on it.
+- **What seeds a founder population's genes**, specifically its aversion vectors (§2.5). If fear is
+  purely genetic and founders start random, nothing knows what to fear until selection teaches it,
+  and selection teaches it by killing enough prey to shift the distribution. For a slow-breeding
+  species the population may crash before the lesson lands, and the result looks like a bug rather
+  than like evolution. Options span seeding founders with aversion already pointed at the
+  signatures present, seeding at random and accepting a violent first few generations as the
+  premise, and a per-world switch. Nothing is decided; the mechanic in §2.5 is unaffected either
+  way, since this is an initial condition and not a rule.
 - The concrete intervention catalogue and what each costs.
 - Precise metric definitions (species count vs. Shannon index vs. within-species genetic diversity).
 - Competition format: replicate count, duration, termination condition, what is measured.

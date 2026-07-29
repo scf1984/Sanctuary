@@ -36,9 +36,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from core.behaviour.threat import Threat
+from core.ecology.cues import Scent
 from core.ecology.plants import Plants
-from core.ecology.populations import Populations
 from core.ecology.service import Ecology
 from core.entities.store import EntityStore
 from core.genetics.service import Genetics
@@ -261,24 +260,32 @@ class FearConfig:
     """Per-world tuning for the fear drive.
 
     weight: multiplier on the drive's 0-1 shape.
-    scent_gene: the gene whose expressed value is scent acuity. Named here rather than assumed,
-        as `MetabolismConfig.insulation_gene` is, because the vocabulary is per-world.
-    detection_threshold: concentration-times-acuity below which nothing is noticed at all. This is
-        what makes the scent gene buy *range* rather than volume — see the class docstring. Must
-        be positive: at zero every animal detects every trace from anywhere, the gene collapses to
-        a panic multiplier, and sight of the threshold's purpose is lost with it.
-    saturation: concentration-times-acuity at which detection is certain. Must exceed
-        `detection_threshold`; equal values would make the channel a step function, so every
-        animal on one side of a contour would be maximally terrified at once.
+    scent_acuity_gene: the gene whose expressed value is scent detection sensitivity. Named here
+        rather than assumed, as `MetabolismConfig.insulation_gene` is, because the vocabulary is
+        per-world.
+    aversion_genes: the genes holding this creature's aversion vector over cue space, in channel
+        order. Must be exactly as long as the cue field has channels — a mismatch would silently
+        weight channel *k* by aversion *k+1*, which is not an error any test would catch by
+        accident.
+    detection_threshold: perceived danger below which nothing is noticed at all. This is what
+        makes acuity buy *range* rather than volume — see the class docstring. Must be positive:
+        at zero every creature detects every trace from anywhere, and the gene collapses into a
+        panic multiplier.
+    saturation: perceived danger at which detection is certain. Must exceed `detection_threshold`;
+        equal values would make the channel a step function, so every animal on one side of a
+        contour would be maximally terrified at once.
     """
 
     weight: float
-    scent_gene: str
+    scent_acuity_gene: str
+    aversion_genes: tuple[str, ...]
     detection_threshold: float
     saturation: float
 
     def __post_init__(self) -> None:
         _check_weight(self.weight)
+        if not self.aversion_genes:
+            raise ValueError("aversion_genes must name at least one gene")
         if self.detection_threshold <= 0:
             raise ValueError(
                 f"detection_threshold must be positive, got {self.detection_threshold}; see the "
@@ -300,17 +307,23 @@ class Fear:
     collapses to that single probability, and `_channels` is written as the explicit combination it
     will remain rather than as a special case to be rewritten when #24 registers sight.
 
-    **Scent, specifically.** Exposure is the diffused per-species concentration at the animal's own
-    cell (`core.ecology.populations`), weighted by how dangerous each of those species is to *it*
-    (`core.behaviour.threat`). Cannibalism needs no special handling: it is the threat matrix's
-    diagonal.
+    **Nothing here fears a species.** Danger is the dot product of the creature's own *aversion*
+    vector with the cue concentration it can smell (`core.ecology.cues`) — both ends genetic, both
+    heritable, both under selection. There is no threat table to author and none to extend when the
+    world speciates, because there is nothing per-species anywhere in this drive.
 
-    **The scent gene buys range, not volume.** Concentration falls off monotonically from its
-    source and detection is a threshold on concentration, so a keener nose crossing that threshold
-    at a fainter trace is detecting the same animal from *further away* — sensitivity and range are
-    the same parameter for a plume. This is why acuity may multiply a sampled field value here
-    where a sight gene may not: for sight, the same construction would leave a far-seeing animal
-    merely more frightened of what it could already see, which is the wrong selection pressure.
+    That is what makes the interesting behaviour emergent rather than implemented. Prey evolve
+    aversion pointed at whatever signature predators emit; predators evolve signatures that drift
+    away from it; a harmless lineage whose signature drifts toward a feared one is avoided for free.
+    **Cannibalism is a lineage whose aversion overlaps its own signature** — no diagonal, no special
+    case, and it can evolve on and off (CLAUDE.md §2.5).
+
+    **Acuity buys range, not volume.** Concentration falls off monotonically from its source and
+    detection is a threshold on concentration, so a keener nose crossing that threshold at a fainter
+    trace is detecting the same creature from *further away* — sensitivity and range are the same
+    parameter for a plume. This is why acuity may multiply a sampled field value here where a sight
+    gene may not: for sight, the same construction would leave a far-seeing animal merely more
+    frightened of what it could already see, which is the wrong selection pressure.
     """
 
     name = "fear"
@@ -319,18 +332,24 @@ class Fear:
         self,
         store: EntityStore,
         genetics: Genetics,
-        populations: Populations,
-        threat: Threat,
+        scent: Scent,
         vocabulary: GeneVocabulary,
         config: FearConfig,
     ) -> None:
+        if len(config.aversion_genes) != scent.field.n_channels:
+            raise ValueError(
+                f"aversion_genes names {len(config.aversion_genes)} genes but the cue field has "
+                f"{scent.field.n_channels} channels; they index the same space and must match"
+            )
         self.store = store
         self.genetics = genetics
-        self.populations = populations
-        self.threat = threat
+        self.scent = scent
         self.config = config
-        # Raises KeyError naming the vocabulary version if the gene does not exist.
-        self._scent_index = vocabulary.index_of(config.scent_gene)
+        # Raise KeyError naming the vocabulary version if any gene does not exist.
+        self._acuity_index = vocabulary.index_of(config.scent_acuity_gene)
+        self._aversion_indices = np.array(
+            [vocabulary.index_of(name) for name in config.aversion_genes], dtype=np.int64
+        )
 
     def score(self, selection: Selection) -> np.ndarray:
         """(len(selection),) float32: weighted probability that something dangerous was detected."""
@@ -349,14 +368,12 @@ class Fear:
 
     def _scent(self, selection: Selection) -> np.ndarray:
         """Detection probability from smell alone."""
-        mask = selection.to_mask()
-        # Concentration of every species where each animal stands, weighted by what that animal
-        # has to fear from each of them — one vectorized pass over a mixed-species population.
-        nearby = self.populations.sample(self.store.x[mask], self.store.y[mask])
-        danger = (nearby * self.threat.rows_for(self.store.species_id[mask])).sum(axis=1)
-
-        acuity = self.genetics.expressed(selection)[:, self._scent_index]
-        perceived = acuity * danger
+        expressed = self.genetics.expressed(selection)
+        # How much of each cue channel is in the air here, against how much this particular
+        # creature minds that channel — one vectorized pass, and the only place danger is defined.
+        smelled = self.scent.perceive(selection)
+        danger = (expressed[:, self._aversion_indices] * smelled).sum(axis=1)
+        perceived = expressed[:, self._acuity_index] * danger
         span = self.config.saturation - self.config.detection_threshold
         return np.clip((perceived - self.config.detection_threshold) / span, 0.0, 1.0).astype(
             np.float32
