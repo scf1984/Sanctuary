@@ -3,8 +3,10 @@ issue #17).
 
 Owns the `energy` column on the shared entity store — the single pool every trait charges against.
 This module only ever *removes* energy. Income is somebody else's: sunlight into plants (#18) and
-transfers through feeding (#19). Keeping the drain here and the income there is what makes the
-closed loop of §2.5 auditable at all, and it is why `drain()` is the only method that writes.
+transfers through feeding (#19). Keeping every withdrawal here and the income there is what makes
+the closed loop of §2.5 auditable at all, and it is why `spend()` is the only method that writes:
+metabolic upkeep goes through it, and so does the locomotion bill `core.behaviour.movement` (#25)
+hands over, since a service that does not own `energy` cannot subtract from it itself.
 
 Death is not here either. An entity whose pool reaches zero is *starving*, exposed as a Selection
 for #21 to turn into carcasses and decomposition. Splitting it this way keeps the two decisions —
@@ -72,17 +74,37 @@ class Ecology(DomainService):
     def drain(self, selection: Selection) -> None:
         """Charge one tick of upkeep to `selection`, flooring the pool at zero.
 
+        `selection` is the caller's choice of who metabolises; pass the live entities. Nothing
+        here filters, because a tick loop draining anything other than the living is a bug in the
+        loop, not a condition to absorb silently (§8.7).
+        """
+        self.spend(selection, self.upkeep(selection))
+
+    def spend(self, selection: Selection, joules: np.ndarray) -> None:
+        """Charge `joules` to `selection`'s pools, flooring each at zero.
+
         The floor is what makes the pool a hard budget rather than a debt (CLAUDE.md §2.5): an
         entity can be emptied, never overdrawn, which is the invariant #7 asserts every tick. The
         shortfall is not carried forward — an animal that could not pay is already starving, and
         how badly it failed to pay changes nothing downstream.
 
-        `selection` is the caller's choice of who metabolises; pass the live entities. Nothing
-        here filters, because a tick loop draining anything other than the living is a bug in the
-        loop, not a condition to absorb silently (§8.7).
+        Upkeep is not the only draw on the pool. §2.5's "effort is charged, not just distance"
+        makes locomotion a second one (`core.behaviour.movement`, #25), and this service owns
+        `energy`, so a mover cannot write the column itself and hands the bill here instead.
+        Exposed as a general charge rather than as a `charge_movement` method because nothing
+        about a floored subtraction is specific to what the energy went on, and #19's chase and
+        #20's gestation are the same operation again.
+
+        Raises ValueError for a negative charge: energy entering the world is #18's sunlight and
+        #19's feeding, never a cost with its sign flipped, and §2.5's closed loop has no other
+        income (§8.7).
         """
-        remaining = np.maximum(self.energy(selection) - self.upkeep(selection), 0.0)
-        self.write("energy", selection, remaining)
+        joules = np.asarray(joules, dtype=np.float32)
+        if np.any(joules < 0.0):
+            raise ValueError(
+                "spend() charges energy and cannot be negative; income belongs to #18 and #19"
+            )
+        self.write("energy", selection, np.maximum(self.energy(selection) - joules, 0.0))
 
     def starving(self, selection: Selection) -> Selection:
         """The entities in `selection` whose pool has run out — energy at or below zero.

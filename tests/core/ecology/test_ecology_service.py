@@ -207,6 +207,51 @@ class TestDrain:
         assert (ecology.energy(selection) <= before).all()
 
 
+class TestSpend:
+    """Upkeep is not the only draw on the pool: locomotion charges through here too (#25), because
+    this service owns `energy` and a mover cannot subtract from the column itself.
+    """
+
+    def _one_entity(self, energy):
+        store, _, species, _, ecology = make_world()
+        species_id = species.register(GENE_NAMES)
+        ids = store.allocate(
+            1,
+            energy=np.array([energy], dtype=np.float32),
+            species_id=np.array([species_id], dtype=np.int32),
+        )
+        return ecology, selection_for(store, ids)
+
+    def test_it_subtracts_the_charge(self):
+        ecology, selection = self._one_entity(100.0)
+
+        ecology.spend(selection, np.array([30.0], dtype=np.float32))
+
+        assert ecology.energy(selection) == pytest.approx([70.0])
+
+    def test_it_floors_at_zero_rather_than_running_a_debt(self):
+        """The same hard-budget rule `drain` obeys, asserted on the general charge because that is
+        now where the floor lives (CLAUDE.md §2.5).
+        """
+        ecology, selection = self._one_entity(10.0)
+
+        ecology.spend(selection, np.array([25.0], dtype=np.float32))
+
+        assert ecology.energy(selection) == pytest.approx([0.0])
+
+    def test_a_negative_charge_is_rejected_rather_than_becoming_income(self):
+        """Energy enters the world as sunlight (#18) and through feeding (#19). A cost with its
+        sign flipped would be a third, unaudited income and would break §2.5's closed loop with
+        nothing to flag it (§8.7).
+        """
+        ecology, selection = self._one_entity(100.0)
+
+        with pytest.raises(ValueError, match="cannot be negative"):
+            ecology.spend(selection, np.array([-5.0], dtype=np.float32))
+
+        assert ecology.energy(selection) == pytest.approx([100.0])
+
+
 class TestStarving:
     def test_selects_the_entities_whose_pool_has_run_out(self):
         store, _, species, _, ecology = make_world()
