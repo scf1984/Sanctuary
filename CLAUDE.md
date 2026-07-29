@@ -153,6 +153,20 @@ entities — no change to the table above is required.
   gene added without one would silently become a free trait, which defeats the whole budget. Any
   gene that *reduces* upkeep — insulation damping thermoregulation cost is the first — must itself
   charge a positive cost, or it is unbounded free benefit and runs away in every climate.
+
+  **The clamp in `inherit_genes` is a numerical backstop, not the mechanism that bounds traits.**
+  Energy and selection are the mechanism: a trait that drifts upward costs more upkeep, so its
+  bearer starves sooner and leaves fewer offspring, and the equilibrium sits wherever marginal
+  benefit meets marginal cost. The rule this implies is sharper than the cost table alone:
+  **every gene needs either an energy cost or a selective consequence.** A gene with neither is a
+  free random walk. Exactly one class deliberately is — cue signature (below) has no cost and
+  nothing selecting on it, and that neutral drift is a molecular clock, which is precisely what
+  makes two isolated populations recognisably different.
+
+  **Effort is charged, not just distance.** Fleeing and chasing both cost energy at a premium over
+  walking, and hiding costs energy to suppress scent. This is what makes hunger close off options
+  rather than merely reading high: a starving animal can neither run nor hide, a predator pays for
+  every chase it loses, and prey pay for every escape. Owned by #25.
 - **Closed nutrient loop.** Energy enters only as sunlight driving plant growth. Carcasses decompose
   and return nutrients to soil. Without closure, populations either explode or flatline.
   **Plants are a field, not entities** — decided in #18, which owned the choice. Growth is a
@@ -291,6 +305,16 @@ entities — no change to the table above is required.
   | `scent_acuity`, `sight_acuity` | detection sensitivity per modality | positive |
   | `camouflage` | damps visual conspicuousness | **positive**, per the insulation rule above |
   | `sex_allocation`, `selfing_rate` | reproduction, continuously (#20) | #20's to set |
+  | `maturity_age` | ticks before an animal seeks a mate at all | 0 — late maturity is already paid for in generations forgone |
+  | `life_expectancy` | ticks before senescence begins | **needs an explicit trade-off** — see below |
+  | `commitment` | how doggedly a drive holds a target across ticks (#100) | 0 — selection on what the persistence achieves |
+
+  `maturity_age` and `life_expectancy` were config constants when the drive system was built
+  (`LustConfig.maturity_age`); both are properly genes, so life history evolves rather than being
+  tuned. **`life_expectancy` is the one gene above that does not bound itself.** Living longer is
+  pure benefit with no cost attached, so it would run away — it needs the classic life-history
+  trade-off, longevity bought against fecundity, and which form that takes is #20's and #21's to
+  settle. Left free it violates the rule below.
 
   **Camouflage is environment-dependent**: visual conspicuousness is `size × (1 − camouflage ×
   match(local terrain))`, so the same allele is excellent on scree and useless on grass, and
@@ -377,6 +401,45 @@ entities — no change to the table above is required.
   species by a single action), terraforming, introducing species, and standing policies.
 - Metrics — biodiversity, population trends, inter-species interaction — are a secondary surface,
   suitable for a dashboard client or a phone widget.
+
+### 2.8 Rule versions
+
+- **Every world stores the runner version it was created under, and always runs under *that
+  version's rules*.** Not "old worlds under new logic." A rule change forks the runner; it never
+  retroactively rewrites what an existing world is.
+
+  This is not conservatism about file formats. A world's populations *are* an equilibrium reached
+  under one particular metabolic cost table, one inheritance rule, one set of drive weights. Swap
+  any of those underneath a running world and the equilibrium is no longer an equilibrium —
+  populations crash, and the player watches an ecosystem they were stewarding collapse for reasons
+  invisible to them and attributable to nothing they did. Since the simulation is non-deterministic
+  (§2.2) the world cannot be regenerated, and §3.2 already establishes that the snapshot is the only
+  copy in existence. A rules upgrade applied in place is therefore an unrecoverable, unattributable
+  loss of weeks of play.
+
+  It also protects content: starting states are evolved rather than authored (§2.5, #101), so a
+  shipped starting state is bound to the rule set it was grown under as much as to a gene
+  vocabulary version.
+
+- **Version the whole runner, never individual rules.** One version is one coherent rule set. Rules
+  interact — inheritance against the metabolic table against drive weights — so per-rule versioning
+  would multiply into combinations nobody has ever run and no test covers.
+
+- **A version's behaviour is frozen and pinned by tests** for as long as that version is supported.
+  This is the one place in this repository where old code is kept deliberately rather than deleted
+  (§8.2), and where a test asserts behaviour that nothing new depends on (§8.1). Both exceptions are
+  intentional and neither generalises: they apply to *retired rule sets*, not to speculative
+  generality.
+
+- **Versions have a lifecycle**, and its stages are not yet settled — at minimum a version is
+  current (new worlds get it), then supported (existing worlds keep running), and eventually
+  something happens at the end. What that end is — frozen forever, migrated with the player's
+  consent, or read-only — is an open question (§5).
+
+- **Invariants are not versioned.** Energy is never created, nutrients are conserved, no entity
+  leaves the world bounds (§6). These hold in *every* version, and a version that violates one is a
+  bug rather than a variant. The line is: a version may change what the world *does*, never what is
+  physically possible in it.
 
 ---
 
@@ -481,6 +544,10 @@ Not yet decided. Do not assume answers — ask.
 
 - Seasons and weather as drivers — migration, hibernation, breeding seasonality. Wind is a
   consequence of this rather than a separate question, and scent-on-wind (#97) waits on it.
+- **The end of a rule version's lifecycle** (§2.8). A version is current, then supported; what
+  happens after is undecided — frozen and runnable forever, migrated only with the player's
+  explicit consent, or read-only. This decides how long old rule sets and their pinning tests must
+  be carried, so it is a cost question as much as a design one.
 - The concrete intervention catalogue and what each costs, and **what generates the player's
   intervention currency** — settled only in the negative so far: not plain time-ticks. Whatever
   generates it is what the game rewards, so it is a design decision rather than a number. Candidates
