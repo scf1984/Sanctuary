@@ -153,6 +153,20 @@ entities — no change to the table above is required.
   gene added without one would silently become a free trait, which defeats the whole budget. Any
   gene that *reduces* upkeep — insulation damping thermoregulation cost is the first — must itself
   charge a positive cost, or it is unbounded free benefit and runs away in every climate.
+
+  **The clamp in `inherit_genes` is a numerical backstop, not the mechanism that bounds traits.**
+  Energy and selection are the mechanism: a trait that drifts upward costs more upkeep, so its
+  bearer starves sooner and leaves fewer offspring, and the equilibrium sits wherever marginal
+  benefit meets marginal cost. The rule this implies is sharper than the cost table alone:
+  **every gene needs either an energy cost or a selective consequence.** A gene with neither is a
+  free random walk. Exactly one class deliberately is — cue signature (below) has no cost and
+  nothing selecting on it, and that neutral drift is a molecular clock, which is precisely what
+  makes two isolated populations recognisably different.
+
+  **Effort is charged, not just distance.** Fleeing and chasing both cost energy at a premium over
+  walking, and hiding costs energy to suppress scent. This is what makes hunger close off options
+  rather than merely reading high: a starving animal can neither run nor hide, a predator pays for
+  every chase it loses, and prey pay for every escape. Owned by #25.
 - **Closed nutrient loop.** Energy enters only as sunlight driving plant growth. Carcasses decompose
   and return nutrients to soil. Without closure, populations either explode or flatline.
   **Plants are a field, not entities** — decided in #18, which owned the choice. Growth is a
@@ -183,6 +197,212 @@ entities — no change to the table above is required.
   Boldness, sociality, and parental investment therefore evolve rather than being designed.
   Behaviour stays explainable ("it fled because fear outscored hunger"), which the intervention
   gameplay depends on.
+- **Fear is a noisy-OR over perception channels** — decided in #22, which owns it. A *channel* is
+  one sense, with its own physics, reporting a detection probability in `[0, 1]` per entity:
+
+  ```
+  perceived_k(i) = Σ_modalities acuity_m(i) × Σ_j emission_m(j) × signature_k(j) × transmission_m(i, j)
+  p_c(i)  = saturate( Σ_k aversion_k(i) × perceived_k(i) )
+  fear(i) = weight × (1 − Π_c (1 − p_c(i)))
+  ```
+
+  **Nothing fears a species. Everything fears a signature.** Each creature carries a position in a
+  fixed *d*-dimensional **cue space** — what it smells and looks like — and, separately, an
+  **aversion** vector over that same space saying what frightens it. Both are ordinary continuous
+  genes, so both are inherited with mutation and both are under selection.
+
+  This is forced, not chosen. A gene "fear of species 47" cannot exist: species are created at
+  runtime by speciation, gene columns are fixed at a vocabulary version, and a per-species gene
+  would mean a schema migration on every split (§2.3). Making fear heritable therefore *requires*
+  factoring danger through a fixed-width cue space. An earlier draft of this section used an
+  authored species×species threat matrix; it was wrong for exactly this reason and was removed
+  before it shipped.
+
+  **What this buys, unauthored.** A co-evolutionary arms race — prey evolve aversion pointed at
+  whatever signature predators emit, predators evolve signatures that drift away from it. Batesian
+  mimicry — a harmless lineage whose signature drifts toward a feared one is avoided for free.
+  Cannibalism — you smell like yourself, so a lineage whose aversion points at its own signature
+  fears its own kind, and can evolve into and out of that. None of these is a mechanic anyone
+  implements; they are consequences of the encoding.
+
+  **Modalities differ only in `transmission`.** Scent diffuses (a field); sight is occluded and
+  range-limited (pairwise). `acuity_m` is what the animal paid to detect on that modality and
+  `emission_m` is how loudly it broadcasts on it, so both ends of every perception are genetic.
+
+  **d = 8.** Cue space works like colour: three numbers describe every colour there is, including
+  ones never mixed before, and a new colour never needs a fourth channel. Likewise a slot never
+  means "wolf" — slot 3 means nothing on its own. Species are *points*, so their number is
+  unbounded; the dimension count only decides how many kinds of thing can coexist **without being
+  confused**. Eight leaves enough headroom that two unrelated lineages drifting onto the same point
+  reads as evolved mimicry rather than as an accident of a cramped space. Widening is additive and
+  versioned (§2.3), so this is a floor; narrowing is not possible.
+
+  **Slots are how many smells exist; directions are how many opinions a creature has about one.**
+  Each aversion direction produces exactly one number — a dot product against the air — and one
+  number answers one question. A creature therefore carries **two aversion directions**, because a
+  single one can only point at one region of cue space: aimed between two unrelated threats it also
+  fires at everything *between* them, harmless creatures included. Each `(direction × sense)` pair
+  is one channel of the noisy-OR above, so this needs no new machinery and #24's sight widens the
+  same product.
+
+  **Nothing anywhere lists which species interacts with which.** There is no threat table, no
+  predator/prey mask, no compatibility matrix. Every interaction is a number:
+
+  | question | answered by |
+  |---|---|
+  | Do I fear you? | aversion direction · air |
+  | Do I want to mate with you? | *my own signature* · air — free, no genes, and it tracks speciation automatically |
+  | **Can** we produce offspring? | genetic distance (#16) |
+  | Do I want to eat you? | #19's to decide — it may not use smell at all |
+  | Can I digest you once caught? | diet genes, which are not cue genes |
+
+  Note the split on the last two: finding food and being able to use it are different questions, and
+  a creature can be drawn to something it cannot digest. The species *expression mask* of §2.3 is
+  unrelated to all of this — it governs which genes a species switches on, never who interacts with
+  whom.
+
+  **How a lineage comes to fear the right thing.** It does not learn, and nothing registers
+  anything. Creatures whose aversion happens to point where a predator's signature sits notice it
+  and survive; those pointing elsewhere are eaten. After enough generations the population's
+  aversion tracks the predator — and when the predator's signature drifts, the tracking either
+  follows or that lineage pays. A newly split species is feared correctly from the instant of the
+  split, because both halves inherit the parent's signature.
+
+  **Smell is blunt, and must be.** The air holds a *blend* — a wolf and a rabbit nearby arrive as
+  one mixed reading, not two. Only a linear readout composes correctly on a blend, because the
+  response to a sum is the sum of the responses; template-matching against a mixture would report a
+  third thing that is not there. So a creature fears a *region* of cue space rather than a species,
+  which is exactly what makes mimicry free. Sight (#24) perceives individuals rather than a blend
+  and is therefore not under this constraint.
+
+  **Founders are evolved, never authored** — decided alongside the above, and it is what makes the
+  whole encoding honest. A new world does not begin from hand-written creatures: worlds are
+  generated headless from naive founders, run long, and most collapse; the ones that stabilise are
+  kept and shipped as starting states (#101). Hand-seeding aversion vectors would mean writing down
+  that rabbits fear wolves, which is authoring the outcome rather than the physics. Evolving them
+  offline means selection decides before the player ever arrives, by exactly the mechanism that
+  keeps deciding during play.
+
+  Two consequences follow. **Snapshots become content, not merely saves** — §3.2 already treats a
+  snapshot as the only copy of a world in existence, and now some are also shipped starting
+  material. And **the gene vocabulary becomes far more expensive to widen**, because a starting
+  state is bound to a vocabulary version, so a migration moves shipped content and not just player
+  saves. Settle the vocabulary before generating starting states.
+
+  **An animal does not perceive itself.** Its own deposit is subtracted from what it samples, which
+  is exact rather than approximate because a separable normalized blur's diagonal factorizes per
+  axis. Without it, any lineage whose aversion overlapped its own signature — every cannibal —
+  would be permanently terrified while standing alone in an empty world.
+
+  Reserved gene block, so that one vocabulary migration covers the mechanics that need it rather
+  than three:
+
+  | genes | meaning | cost |
+  |---|---|---|
+  | `signature_0..7` | position in cue space — what I smell and look like | 0 |
+  | `aversion0_0..7`, `aversion1_0..7` | two directions in cue space — what frightens me | 0 |
+  | `scent_emission` | broadcast strength on the scent modality | see below |
+  | `scent_acuity`, `sight_acuity` | detection sensitivity per modality | positive |
+  | `camouflage` | damps visual conspicuousness | **positive**, per the insulation rule above |
+  | `sex_allocation`, `selfing_rate` | reproduction, continuously (#20) | #20's to set |
+  | `maturity_age` | ticks before an animal seeks a mate at all | 0 — late maturity is already paid for in generations forgone |
+  | `senescence_resistance` | damps how fast performance traits degrade with age | **positive**, per the insulation rule |
+  | `commitment` | how doggedly a drive holds a target across ticks (#100) | 0 — selection on what the persistence achieves |
+
+  **Senescence is degradation, not a timer.** There is no `life_expectancy` gene and no death clock.
+  Instead, *performance* traits decay with age — speed, sight and scent acuity — while identity
+  traits (cue signature) and capacity traits (size) do not. An old animal is slower, so it catches
+  less and escapes less, and it eventually cannot cover its own upkeep. **Death then falls out of
+  starvation and predation, mechanisms that already exist**, rather than from an age check; #21
+  needs no separate mortality rule for old age, and `Ecology.starving` is already the path.
+
+  A lifespan gene was considered and rejected: living longer is pure benefit, so it runs away and
+  every lineage evolves toward immortality. `senescence_resistance` inverts that into something the
+  budget already knows how to bound — it *reduces* degradation and therefore must charge positive
+  upkeep, exactly as insulation must. Biologically this is right too: bodily maintenance and repair
+  are metabolically expensive. The equilibrium is then set by the environment rather than by a
+  designer — high-predation worlds favour breed-fast-die-young, safe ones favour the long-lived —
+  which is real life-history theory falling out of the energy budget.
+
+  Degradation applies **at expression time**, alongside the species mask in `Genetics.expressed`, so
+  it costs no column and no extra pass. Note the consistent consequence: since upkeep is charged
+  from the expressed phenotype, an atrophied trait also costs less to maintain.
+
+  **Decay is strictly positive and never reaches zero, and the formula guarantees that rather than
+  a clamp doing so:**
+
+  ```
+  rate  = base_decay / (1 + senescence_resistance)     base_decay > 0, validated in config
+  decay = exp(−rate × age)                             always in (0, 1]
+  ```
+
+  The `1 +` denominator is the shape insulation already uses against thermoregulation, for the same
+  reason: a gene that only ever *reduces* something must have diminishing returns, or it buys its
+  way out of the mechanism entirely — here, into immortality. `senescence_resistance` is read as a
+  magnitude so the denominator is never below 1, and the exponential approaches zero without
+  reaching it, so an old animal becomes negligibly slow rather than literally motionless and can
+  never rejuvenate. Enforcing this in the *calculation* rather than by clamping the gene is
+  deliberate: genes drift freely and the clamp is only a numerical backstop (above), so the formula
+  has to be what holds the property. It is then asserted in the invariant harness (§6), which is
+  exactly what §8.2 asks for when something genuinely cannot occur.
+
+  This makes §2.1's "herbivore lifespan ≈ 1 sim-year" an **outcome to tune the degradation rate
+  toward**, not a constant to set. `maturity_age` was a config constant when the drive system was
+  built (`LustConfig.maturity_age`) and is properly a gene, so age at first reproduction — one of
+  the most strongly selected life-history traits there is — evolves rather than being chosen.
+
+  **Camouflage is environment-dependent**: visual conspicuousness is `size × (1 − camouflage ×
+  match(local terrain))`, so the same allele is excellent on scree and useless on grass, and
+  climate zones select for different camouflage without a designer — the same argument metabolism
+  makes for insulation.
+
+  **Scent emission has no cost line above because charging it would be a trap.** Low emission is
+  already a survival benefit, so a positive cost would make silence both cheaper *and* safer and
+  drive emission to zero in every lineage. Its counterweight has to be a benefit that scales with
+  emission — being findable by mates — which is #20's to supply. Until then emission is authored
+  per world and not under selection, and this is a known gap rather than a settled answer.
+
+  Noisy-OR rather than a sum or a max: it is the correct composition for independent evidence
+  (seeing *and* smelling a predator is worse than either alone), it stays bounded in `[0, 1]` like
+  every other drive score, and — the reason it is settled here rather than left open — **adding a
+  channel later cannot inflate existing scores past saturation**, so a new sense does not force a
+  retune of every other drive's weight.
+
+  **Channels are added, never restructured.** Nothing outside a channel knows how its probability
+  was computed, which is what keeps the sequencing of the sensing work free:
+
+  | channel | transmission | acuity gate | owned by |
+  |---|---|---|---|
+  | scent | advected, diffused per-cue-channel field | `scent_acuity` | #22 |
+  | sight | pairwise, line-of-sight and FOV filtered | `sight_acuity` | #24 |
+
+  **Scent is a field and sight is pairwise for physical reasons, not performance ones.** Scent
+  diffuses and advects, so wind is a drift term inside the field update and the plume is
+  asymmetric for free — a predator approaching from downwind is genuinely stealthy, and nothing
+  pairwise expresses that without re-deriving plume geometry per pair. Sight is occluded and
+  directional, and a blurred field smears threat straight through a ridge, which is exactly what
+  #24 exists to prevent. That the cheap channel is also the one every animal uses every tick is a
+  consequence, not the motivation — though it is a load-bearing one: a per-observer nearest-threat
+  query over the whole population measured **6.3 s/tick at 100,000 entities** against a 1 s tick
+  (§2.1), which is what ruled the pairwise-only design out (#96).
+
+  **A keener nose detects from further away, it is not more frightened.** Concentration decays
+  monotonically from the source and detection is a threshold on concentration, so sensitivity and
+  range are the *same* parameter for a plume — one blur, no multi-scale bands. This is why the
+  scent gene may multiply a sampled field value where a sight gene may not: for sight it would
+  make a far-seeing animal merely more afraid of the same thing, which is the wrong selection
+  pressure. The detection threshold is what gives the gene teeth; without it every animal detects
+  everything faintly and the gene only scales panic.
+
+  **Speciation costs fear nothing at all.** A daughter species inherits its parents' signature and
+  aversion genes like any other trait, and the cue field has no per-species structure to extend, so
+  there is no table to grow and no id to look up. This is the encoding paying for itself: §2.3's
+  "speciation is a species-id write plus a new mask row" stays literally true.
+
+  The cue field itself is **not** fear's property: it is a general facility (`core.ecology.cues`)
+  over the terrain grid, mirroring the plant field above. Predators locating prey (#19) and animals
+  locating mates (#20) are the *same* query with a different vector — attraction toward a signature
+  instead of away from one — so fear is its first reader, not its owner.
 - **Emergent speciation.** Genetic distance accumulates between isolated populations; past a
   threshold they can no longer interbreed and are tracked as a new species the player may name.
   This makes isolation — by fence or by terrain — the most rewarding intervention in the game.
@@ -216,6 +436,71 @@ entities — no change to the table above is required.
   species by a single action), terraforming, introducing species, and standing policies.
 - Metrics — biodiversity, population trends, inter-species interaction — are a secondary surface,
   suitable for a dashboard client or a phone widget.
+
+### 2.8 Rule versions
+
+- **Every world stores the runner version it was created under, and always runs under *that
+  version's rules*.** Not "old worlds under new logic." A rule change forks the runner; it never
+  retroactively rewrites what an existing world is.
+
+  This is not conservatism about file formats. A world's populations *are* an equilibrium reached
+  under one particular metabolic cost table, one inheritance rule, one set of drive weights. Swap
+  any of those underneath a running world and the equilibrium is no longer an equilibrium —
+  populations crash, and the player watches an ecosystem they were stewarding collapse for reasons
+  invisible to them and attributable to nothing they did. Since the simulation is non-deterministic
+  (§2.2) the world cannot be regenerated, and §3.2 already establishes that the snapshot is the only
+  copy in existence. A rules upgrade applied in place is therefore an unrecoverable, unattributable
+  loss of weeks of play.
+
+  It also protects content: starting states are evolved rather than authored (§2.5, #101), so a
+  shipped starting state is bound to the rule set it was grown under as much as to a gene
+  vocabulary version.
+
+- **Version the whole runner, never individual rules.** One version is one coherent rule set. Rules
+  interact — inheritance against the metabolic table against drive weights — so per-rule versioning
+  would multiply into combinations nobody has ever run and no test covers.
+
+- **A version's behaviour is frozen and pinned by tests** for as long as that version is supported.
+  This is the one place in this repository where old code is kept deliberately rather than deleted
+  (§8.2), and where a test asserts behaviour that nothing new depends on (§8.1). Both exceptions are
+  intentional and neither generalises: they apply to *retired rule sets*, not to speculative
+  generality.
+
+- **Most changes do not fork the version.** Only changes to what the world *does*. The runner
+  version is `MAJOR.MINOR`:
+
+  - **MAJOR is the rule set**, and a world pins its major forever. Cost tables, inheritance,
+    drive scoring, thresholds, anything that moves an outcome.
+  - **MINOR is behaviour-neutral improvement** — optimisation, diagnostics, I/O, rendering. A world
+    always runs the *newest* minor of its major, so a throughput win or a viewer fix reaches every
+    existing world for free. Without this split, versioning would freeze performance work along with
+    the rules, which is the opposite of the intent.
+
+- **"Behaviour-neutral" must be demonstrated, not asserted** (§8.5). Non-determinism (§2.2) makes
+  "it looks the same" untestable by eye, so there are two tiers:
+
+  1. **Same seed, identical output.** Cheap and sufficient — most refactors pass it outright.
+  2. **If that fails**, which vectorisation often causes by changing RNG draw order without changing
+     the distribution, the change must show *statistical equivalence* over replicates, using the
+     same distribution machinery competitions use (#41, #42). Failing that, it is a major.
+
+  "I am confident this optimisation preserves behaviour" is not evidence.
+
+- **A bug fix that changes outcomes is a major.** Uncomfortable, and correct: worlds grew under the
+  buggy behaviour and their equilibria depend on it, so a silent correction collapses them exactly
+  as any other rule change would. **The one exception is a fix restoring a violated invariant**,
+  which ships as a minor — invariants are not versioned (below), so restoring one is a repair rather
+  than a rule change, and a world violating an invariant is already broken.
+
+- **Versions have a lifecycle**, and its stages are not yet settled — at minimum a version is
+  current (new worlds get it), then supported (existing worlds keep running), and eventually
+  something happens at the end. What that end is — frozen forever, migrated with the player's
+  consent, or read-only — is an open question (§5).
+
+- **Invariants are not versioned.** Energy is never created, nutrients are conserved, no entity
+  leaves the world bounds (§6). These hold in *every* version, and a version that violates one is a
+  bug rather than a variant. The line is: a version may change what the world *does*, never what is
+  physically possible in it.
 
 ---
 
@@ -318,8 +603,17 @@ Rules:
 
 Not yet decided. Do not assume answers — ask.
 
-- Seasons and weather as drivers — migration, hibernation, breeding seasonality.
-- The concrete intervention catalogue and what each costs.
+- Seasons and weather as drivers — migration, hibernation, breeding seasonality. Wind is a
+  consequence of this rather than a separate question, and scent-on-wind (#97) waits on it.
+- **The end of a rule version's lifecycle** (§2.8). A version is current, then supported; what
+  happens after is undecided — frozen and runnable forever, migrated only with the player's
+  explicit consent, or read-only. This decides how long old rule sets and their pinning tests must
+  be carried, so it is a cost question as much as a design one.
+- The concrete intervention catalogue and what each costs, and **what generates the player's
+  intervention currency** — settled only in the negative so far: not plain time-ticks. Whatever
+  generates it is what the game rewards, so it is a design decision rather than a number. Candidates
+  and their consequences are recorded on #26. Any income defined on ecosystem state waits on the
+  metric definitions below.
 - Precise metric definitions (species count vs. Shannon index vs. within-species genetic diversity).
 - Competition format: replicate count, duration, termination condition, what is measured.
 - Whether the player names species on speciation, and how lineage is displayed. The mechanic
@@ -338,7 +632,9 @@ Non-determinism rules out golden-output tests. Use instead:
 
 - **Invariants**, asserted every tick in debug builds: energy is never created, populations are
   never negative, no entity leaves the world bounds, no entity occupies a free-list row, total
-  nutrients are conserved across the loop.
+  nutrients are conserved across the loop, and senescence decay stays within `(0, 1]` (§2.5).
+  **Invariants are never versioned** (§2.8): they hold under every rule set, so they are also the
+  line between a fix that ships in place and one that forks the rules.
   **An invariant is not confined to entities** — decided in #91. A check returns `None` when it
   holds and a `Violation` when it does not, describing the breach in its own terms, because the
   original contract returned offending *row indices* and the nutrient pool lives on the plant
