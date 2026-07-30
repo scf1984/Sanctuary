@@ -61,9 +61,12 @@ def module_rows(coverage_data: dict) -> list[tuple[str, int, float]]:
     """
     rows = [
         (
-            # coverage.json keys are OS-native paths; posix form so a failure reads the same on
-            # Windows and on the Linux runner.
-            Path(name).as_posix(),
+            # coverage.json keys are OS-native paths, so a Windows report says
+            # `core\world\tick.py`. Normalised by hand rather than through `Path.as_posix()`,
+            # which does nothing here: on the Linux runner a backslash is an ordinary filename
+            # character, not a separator, so `Path` sees one path segment and returns it
+            # unchanged. The check is only meaningful on the platform that cannot exercise it.
+            name.replace("\\", "/"),
             summary["num_statements"],
             summary["percent_covered"],
         )
