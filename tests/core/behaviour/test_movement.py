@@ -73,6 +73,23 @@ def ramp_heights(gain_per_unit):
     return np.broadcast_to(x * gain_per_unit, (GRID, GRID)).astype(np.float32)
 
 
+def ravine_heights(depth, floor_x, wall_width):
+    """Flat ground with a V-shaped ravine: elevation dips to -depth at `floor_x` and climbs back.
+
+    The shape #113 exists for. A step that starts and ends on the rim has **zero net elevation
+    change**, so pricing it from its endpoints alone charges nothing for the climb out — while an
+    animal that walked it did every world unit of that climb.
+    """
+    x = np.arange(GRID, dtype=np.float32) * CELL_SIZE
+    dip = np.clip(1.0 - np.abs(x - floor_x) / wall_width, 0.0, 1.0)
+    return np.broadcast_to(-depth * dip, (GRID, GRID)).astype(np.float32)
+
+
+def ridge_heights(height, crest_x, width):
+    """The mirror of `ravine_heights`: a hump cresting at `crest_x`."""
+    return -ravine_heights(height, crest_x, width)
+
+
 class World:
     """A store plus the services movement needs, wired the way a real world would wire them."""
 
@@ -465,3 +482,134 @@ class TestAStepOntoTheWorldEdge:
         x, y, _z = world.position(walker)
         assert 0.0 <= x[0] <= world.terrain.world_width
         assert 0.0 <= y[0] <= world.terrain.world_height
+
+
+class TestAStepIsPricedAlongItsWholePath:
+    """Issue #113: a step is charged for every cell it crosses, not for its two endpoints.
+
+    Endpoint sampling nets a descent against a climb, so terrain between the ends is invisible and
+    an animal crosses it for free. That matters more than it sounds: impassable ground is expressed
+    *entirely* through its cost, so a barrier the cost function never sees is not a barrier at all.
+    """
+
+    def _cost_of_one_step(self, world, walker, target_x, target_y, pace):
+        before = world.energy(walker).copy()
+        world.step_toward(walker, target_x, target_y, pace)
+        return float(before[0] - world.energy(walker)[0])
+
+    def test_crossing_a_ravine_is_charged_for_the_climb_out(self):
+        """The defect, stated directly. Rim to rim is zero net elevation change, so the old rule
+        charged the flat rate for a step that descended into a gorge and climbed out of it."""
+        world = World(ravine_heights(depth=6.0, floor_x=20.0, wall_width=6.0))
+        crosser = world.place(14.0, 20.0, speed=12.0)
+        flat_world = World(flat_heights())
+        flat_walker = flat_world.place(14.0, 20.0, speed=12.0)
+
+        across = self._cost_of_one_step(world, crosser, 26.0, 20.0, pace=1.0)
+        level = self._cost_of_one_step(flat_world, flat_walker, 26.0, 20.0, pace=1.0)
+
+        assert across > level, (
+            "a rim-to-rim crossing cost the same as flat ground: the ravine between the "
+            "endpoints was never seen"
+        )
+
+    def test_crossing_a_ridge_is_charged_for_the_ascent(self):
+        world = World(ridge_heights(height=6.0, crest_x=20.0, width=6.0))
+        crosser = world.place(14.0, 20.0, speed=12.0)
+        flat_world = World(flat_heights())
+        flat_walker = flat_world.place(14.0, 20.0, speed=12.0)
+
+        over = self._cost_of_one_step(world, crosser, 26.0, 20.0, pace=1.0)
+        level = self._cost_of_one_step(flat_world, flat_walker, 26.0, 20.0, pace=1.0)
+
+        assert over > level
+
+    def test_a_step_costs_what_the_same_ground_covered_in_pieces_costs(self):
+        """The property the whole issue reduces to: **path cost is additive under subdivision**.
+
+        One long step over broken ground must cost what the same ground costs walked in short
+        steps, because it is the same journey. Endpoint sampling breaks this — the pieces each see
+        their own local relief while the whole sees only its ends — and that failure is what lets an
+        animal cross a ravine for free by taking one big stride.
+        """
+        heights = ravine_heights(depth=5.0, floor_x=20.0, wall_width=5.0)
+        one_world = World(heights)
+        strider = one_world.place(14.0, 20.0, speed=12.0)
+        one_world.step_toward(strider, 26.0, 20.0, pace=1.0)
+        long_step = float(1e6 - one_world.energy(strider)[0])
+
+        many_world = World(heights)
+        walker = many_world.place(14.0, 20.0, speed=1.0)
+        for _ in range(12):
+            many_world.step_toward(walker, 26.0, 20.0, pace=1.0)
+        short_steps = float(1e6 - many_world.energy(walker)[0])
+
+        assert long_step == pytest.approx(short_steps, rel=0.02)
+
+    def test_a_diagonal_crossing_sees_the_ground_it_crosses(self):
+        """Diagonals cross more cells than either axis alone, so the enumeration has to visit
+        crossings on both."""
+        world = World(ravine_heights(depth=5.0, floor_x=20.0, wall_width=5.0))
+        crosser = world.place(14.0, 14.0, speed=20.0)
+        flat_world = World(flat_heights())
+        flat_walker = flat_world.place(14.0, 14.0, speed=20.0)
+
+        across = self._cost_of_one_step(world, crosser, 26.0, 26.0, pace=1.0)
+        level = self._cost_of_one_step(flat_world, flat_walker, 26.0, 26.0, pace=1.0)
+
+        assert across > level
+
+    def test_flat_ground_still_costs_exactly_its_distance(self):
+        """The haul term must not be double counted by being accumulated per cell: summing a
+        linear cost over sub-segments is the same number, and a regression here would show up as
+        every animal in every world paying more to walk."""
+        world = World(flat_heights())
+        walker = world.place(10.0, 10.0, speed=7.0)
+
+        cost = self._cost_of_one_step(world, walker, 17.0, 10.0, pace=1.0)
+
+        expected = 1.0 * MOVEMENT_CONFIG.transport_cost * 7.0 * (
+            1.0 + MOVEMENT_CONFIG.exertion_premium * 1.0
+        )
+        assert cost == pytest.approx(expected, rel=1e-6)
+
+    def test_a_step_inside_one_cell_is_unchanged(self):
+        """No crossing to enumerate: the answer must be the plain endpoint arithmetic it always was."""
+        world = World(ramp_heights(gain_per_unit=2.0))
+        walker = world.place(10.2, 10.0, speed=0.5)
+
+        cost = self._cost_of_one_step(world, walker, 10.7, 10.0, pace=1.0)
+
+        distance = 0.5
+        climb = 2.0 * distance
+        expected = 1.0 * (
+            MOVEMENT_CONFIG.transport_cost
+            * distance
+            * (1.0 + MOVEMENT_CONFIG.exertion_premium)
+            + MOVEMENT_CONFIG.climb_cost * climb
+        )
+        assert cost == pytest.approx(expected, rel=1e-6)
+
+    def test_an_animal_runs_out_where_the_climb_starts_not_beyond_it(self):
+        """The affordability gate wants the integral too: with a cumulative cost along the path,
+        "where did it run out" is well defined, and an animal with barely enough energy stops at
+        the foot of a wall rather than partway up it in proportion to a flat average."""
+        world = World(ridge_heights(height=8.0, crest_x=24.0, width=4.0))
+        # Enough for the flat approach and a little of the climb, nowhere near enough for the crest.
+        walker = world.place(14.0, 20.0, speed=20.0, energy=6.0)
+
+        world.step_toward(walker, 34.0, 20.0, pace=1.0)
+        x, _, _ = world.position(walker)
+
+        assert 14.0 < float(x[0]) < 24.0
+        assert world.energy(walker)[0] == pytest.approx(0.0, abs=1e-6)
+
+    def test_no_step_is_charged_more_than_the_pool_holds(self):
+        world = World(ravine_heights(depth=9.0, floor_x=20.0, wall_width=4.0))
+        walkers = world.place(
+            np.full(16, 12.0), np.linspace(8.0, 30.0, 16), speed=16.0, energy=3.0
+        )
+
+        world.step_toward(walkers, 28.0, 20.0, pace=1.0)
+
+        assert (world.energy(walkers) >= 0.0).all()
