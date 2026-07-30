@@ -225,13 +225,37 @@ class TestHungerScore:
         assert hunger.urgency(selection) == pytest.approx([3.0])
 
 
-class TestForageTarget:
-    """The rule #93 settles: a heading read off the plant field's diffused gradient.
+EAST, WEST, NULL = 0, 1, 2
 
-    Targets are *directions* now, not chosen cells, so these assert which way a grazer sets off
-    rather than which patch it picked. That is not a weaker claim — it is the claim the mechanism
-    actually makes, and the one it replaced (an argmax over candidate patches) could only ever
-    discount distance, never the ground in between.
+
+def options_at(world, selection, reach=2.0):
+    """(x, y) for an east option, a west option and the null option, each (n, 3) float64.
+
+    `Behaviour` samples candidate positions once per entity and hands the same pair to every drive
+    (#114), so a drive test that builds them itself is exercising the real contract rather than a
+    stand-in for one. Clipped into the world exactly as `candidate_positions` clips them, because a
+    heading near the edge points out of it and the fields a drive samples raise outside their bounds.
+    """
+    mask = selection.to_mask()
+    x = world.store.x[mask].astype(np.float64)[:, None]
+    y = world.store.y[mask].astype(np.float64)[:, None]
+    offsets = np.array([reach, -reach, 0.0])
+    return (
+        np.clip(x + offsets, 0.0, world.terrain.world_width),
+        np.clip(y + np.zeros(3), 0.0, world.terrain.world_height),
+    )
+
+
+class TestHungerAppeal:
+    """The rule #93 settles, asked of each candidate option rather than of a gradient (#114).
+
+    `appeal` reads the diffused plant field at the point each option would take the animal toward,
+    so these assert which of two opposed options a grazer rates higher. That is the same claim the
+    gradient made — which way is better from here — asked at the resolution the option set has, and
+    it is still a claim no argmax over candidate patches could make, since a distance discount
+    alone cannot see the ground in between.
+
+    Every test here offers three options: east, west, and staying put, in that column order.
     """
 
     def _hunger(self, world, config=None):
@@ -244,15 +268,12 @@ class TestForageTarget:
             config or HUNGER_CONFIG,
         )
 
-    def _heading(self, world, selection, index=0):
-        target_x, target_y = self._hunger(world).forage_target(selection)
-        mask = selection.to_mask()
-        return (
-            float(target_x[index] - world.store.x[mask][index]),
-            float(target_y[index] - world.store.y[mask][index]),
-        )
+    def _appeal(self, world, selection, reach=2.0, config=None):
+        """(n, 3) appeal for an east option, a west option and the null option, at `reach` units."""
+        x, y = options_at(world, selection, reach)
+        return self._hunger(world, config).appeal(selection, x, y)
 
-    def test_a_grazer_sets_off_toward_the_only_food_there_is(self):
+    def test_a_grazer_rates_the_option_toward_the_only_food_there_is_highest(self):
         world = World()
         selection = world.spawn(
             1, x=np.array([4.0], dtype=np.float32), y=np.array([4.0], dtype=np.float32)
@@ -261,10 +282,10 @@ class TestForageTarget:
         world.plants.biomass[:] = 0.0
         world.plants.biomass[4, 6] = 50.0
 
-        east, north = self._heading(world, selection)
+        appeal = self._appeal(world, selection)
 
-        assert east > 0.0
-        assert north == pytest.approx(0.0, abs=1e-6)
+        assert appeal[0, EAST] > appeal[0, WEST]
+        assert appeal[0, EAST] > appeal[0, NULL]
 
     def test_a_near_patch_beats_a_richer_far_one(self):
         """Keeping grazers local is what strips ground bare before they move on, which is the local
@@ -280,14 +301,14 @@ class TestForageTarget:
         world.plants.biomass[4, 3] = 10.0  # 1 unit west
         world.plants.biomass[4, 8] = 25.0  # 4 units east, 2.5x the standing crop
 
-        east, _ = self._heading(world, selection)
+        appeal = self._appeal(world, selection)
 
-        assert east < 0.0
+        assert appeal[0, WEST] > appeal[0, EAST]
 
     def test_a_wider_ranging_field_sends_a_grazer_to_the_richer_patch(self):
         """The same two patches in a world whose forage field carries further: the richer one now
         outweighs the discount. This is `forage_reluctance`'s old job, done by the field's range."""
-        world = World(forage_range=20.0)
+        world = World(forage_range=4.0)
         selection = world.spawn(
             1, x=np.array([4.0], dtype=np.float32), y=np.array([4.0], dtype=np.float32)
         )
@@ -296,13 +317,22 @@ class TestForageTarget:
         world.plants.biomass[4, 3] = 10.0
         world.plants.biomass[4, 8] = 25.0
 
-        east, _ = self._heading(world, selection)
+        appeal = self._appeal(world, selection)
 
-        assert east > 0.0
+        assert appeal[0, EAST] > appeal[0, WEST]
 
     def test_food_behind_a_ridge_loses_to_food_on_open_ground(self):
         """What the discrete contract could not express (#93): two equal meadows, equally distant,
-        one across a climb. Sight range alone cannot tell them apart — the cost of the walk can."""
+        one across a climb. Sight range alone cannot tell them apart — the cost of the walk can.
+
+        Probed at one world unit rather than at the two the rest of this class uses, because the
+        crest is two units east and a candidate landing *on or beyond* a barrier reads the far
+        side's abundance without paying for the climb to it. That is the same failure #113 fixed
+        for movement — a stride priced by its endpoints nets a descent against a climb — and it is
+        filed as #169 rather than papered over here. The field itself is correct: along this row it
+        reads 0.946 one unit west of the animal against 0.819 one unit east, so the mechanism #93
+        settled still points away from the ridge.
+        """
         heights = np.zeros((9, 9), dtype=np.float32)
         heights[:, 6] = 40.0
         world = World(heights=heights, climb_penalty=1.0)
@@ -314,9 +344,9 @@ class TestForageTarget:
         world.plants.biomass[4, 2] = 40.0  # open ground, 2 west
         world.plants.biomass[4, 8] = 40.0  # 2 east of the ridge, the same distance away
 
-        east, _ = self._heading(world, selection)
+        appeal = self._appeal(world, selection, reach=1.0)
 
-        assert east < 0.0, "the grazer set off at the meadow behind the ridge"
+        assert appeal[0, WEST] > appeal[0, EAST], "the grazer preferred the meadow behind the ridge"
 
     def test_sight_gates_what_a_forager_notices(self):
         """Perception a forager could not pay for would leave sight range charged by the metabolic
@@ -333,12 +363,20 @@ class TestForageTarget:
         world.plants.biomass[:] = 0.0
         world.plants.biomass[4, 7] = 50.0
 
-        target_x, target_y = self._hunger(world).forage_target(selection)
+        appeal = self._appeal(world, selection)
 
-        assert (target_x[0], target_y[0]) == (pytest.approx(4.0), pytest.approx(4.0))
-        assert target_x[1] > 4.0
+        assert appeal[0] == pytest.approx(np.zeros(3))
+        assert appeal[1, EAST] > appeal[1, WEST]
 
-    def test_an_animal_that_can_detect_no_food_stays_where_it_is(self):
+    def test_an_animal_that_can_detect_no_food_is_indifferent_to_every_option(self):
+        """All zeros, not a flat non-zero preference — the distinction #114 turns on.
+
+        A drive contributing zero to every option drops out of the sum entirely, so the null option
+        is free to win on fatigue alone and the animal rests. A flat *non-zero* appeal would instead
+        add a constant to every candidate and to the null option alike, which changes no ranking but
+        also never lets hunger stop steering. That the two look alike in a single-drive contest is
+        exactly why this asserts the values rather than the choice.
+        """
         world = World()
         selection = world.spawn(
             1, x=np.array([4.0], dtype=np.float32), y=np.array([4.0], dtype=np.float32)
@@ -346,9 +384,7 @@ class TestForageTarget:
         world.genetics.set_genes(selection, gene_rows({"sight": 3.0}))
         world.plants.biomass[:] = 0.0
 
-        target_x, target_y = self._hunger(world).forage_target(selection)
-
-        assert (target_x, target_y) == (pytest.approx([4.0]), pytest.approx([4.0]))
+        assert self._appeal(world, selection) == pytest.approx(np.zeros((1, 3)))
 
     def test_an_unexpressed_sight_gene_leaves_a_forager_grazing_underfoot(self):
         """Expression, not genotype, is what a forager sees with — the same rule that makes an
@@ -367,20 +403,37 @@ class TestForageTarget:
         world.plants.biomass[:] = 0.0
         world.plants.biomass[4, 8] = 90.0
 
-        target_x, target_y = self._hunger(world).forage_target(selection)
+        assert self._appeal(world, selection) == pytest.approx(np.zeros((1, 3)))
 
-        assert (target_x, target_y) == (pytest.approx([4.0]), pytest.approx([4.0]))
+    def test_appeal_is_normalised_to_the_animals_own_best_option(self):
+        """Every drive's appeal is summed against every other's, so they must share a scale.
 
-    def test_a_forager_on_the_world_edge_gets_a_usable_heading(self):
-        """The corner is where a gradient read by central differences would run off the grid, and
-        `Movement._landing` guarantees animals land exactly on the boundary — so this is a position
-        that certainly occurs, not an edge case.
+        Normalising by the animal's own best option is what puts hunger on the same [0, 1] range
+        fatigue and fear already occupy, without any drive knowing what the others return.
+        """
+        world = World()
+        selection = world.spawn(
+            1, x=np.array([4.0], dtype=np.float32), y=np.array([4.0], dtype=np.float32)
+        )
+        world.genetics.set_genes(selection, gene_rows({"sight": 3.0}))
+        world.plants.biomass[:] = 0.0
+        world.plants.biomass[4, 6] = 50.0
 
-        It asserts only that the answer is finite and points into the world. It deliberately does
-        *not* assert that a cornered forager sets off toward nearby food: within about one diffusion
-        range of the boundary the field reads rich, because a walk starting at a corner is confined
-        and revisits nearby source more often than an interior walk does. That is recorded as a
-        known limitation of the operator rather than papered over here.
+        appeal = self._appeal(world, selection)
+
+        assert appeal.max() == pytest.approx(1.0)
+        assert (appeal >= 0.0).all()
+
+    def test_a_forager_on_the_world_edge_is_answered_without_running_off_the_grid(self):
+        """`Movement._landing` guarantees animals land exactly on the boundary, so this is a
+        position that certainly occurs rather than an edge case, and a candidate heading outward
+        from it is clipped back onto the boundary by `Behaviour.candidate_positions`.
+
+        It asserts only that the answer is finite and in range. It deliberately does *not* assert
+        that a cornered forager prefers nearby food: within about one diffusion range of the
+        boundary the field reads rich, because a walk starting at a corner is confined and revisits
+        nearby source more often than an interior walk does. That is recorded as a known limitation
+        of the operator rather than papered over here.
         """
         world = World(forage_range=1.0)
         selection = world.spawn(
@@ -390,10 +443,10 @@ class TestForageTarget:
         world.plants.biomass[:] = 0.0
         world.plants.biomass[0, 2] = 20.0
 
-        target_x, target_y = self._hunger(world).forage_target(selection)
+        appeal = self._appeal(world, selection)
 
-        assert np.isfinite(target_x).all() and np.isfinite(target_y).all()
-        assert target_x[0] >= 0.0 and target_y[0] >= 0.0
+        assert np.isfinite(appeal).all()
+        assert ((appeal >= 0.0) & (appeal <= 1.0)).all()
 
     def test_every_forager_is_answered_in_one_call(self):
         world = World(capacity=16)
@@ -406,10 +459,10 @@ class TestForageTarget:
         world.plants.biomass[:] = 0.0
         world.plants.biomass[:, 7] = 30.0
 
-        target_x, _ = self._hunger(world).forage_target(selection)
+        appeal = self._appeal(world, selection)
 
-        assert target_x.shape == (6,)
-        assert (target_x > 4.0).all()
+        assert appeal.shape == (6, 3)
+        assert (appeal[:, EAST] > appeal[:, WEST]).all()
 
 
 class TestThirst:
@@ -449,6 +502,31 @@ class TestThirst:
     def test_saturation_must_exceed_onset(self):
         with pytest.raises(ValueError):
             ThirstConfig(weight=1.0, onset_temperature=30.0, saturation_temperature=30.0)
+
+    def test_thirst_rates_every_option_alike_because_nothing_can_find_water(self):
+        """A drive with no perception is *indifferent*, which is the whole of #126's fix.
+
+        Before #114 a thirsty animal in a world with no drinking mechanic won the argmax and then
+        stood still, and nothing said so — the first assembled world had all forty founders wanting
+        water and not one moved for the entire run. Now thirst still registers its appetite in the
+        breakdown, but a flat appeal shifts no ranking, so whichever drive *can* perceive something
+        decides. #156 replaces this with a reading of `Water.depth` at each candidate.
+        """
+        world = World(temperature=30.0)
+        selection = world.spawn(2, x=np.float32([4.0, 4.0]), y=np.float32([4.0, 4.0]))
+        thirst = Thirst(
+            world.store,
+            world.climate,
+            ThirstConfig(weight=1.0, onset_temperature=20.0, saturation_temperature=40.0),
+        )
+        x, y = options_at(world, selection)
+
+        appeal = thirst.appeal(selection, x, y)
+
+        assert appeal.shape == (2, 3)
+        assert appeal == pytest.approx(np.ones((2, 3)))
+        # Thirsty — so the flatness is a statement about direction, not about the appetite.
+        assert thirst.urgency(selection) == pytest.approx([0.5, 0.5])
 
 
 class TestLust:
@@ -501,6 +579,25 @@ class TestLust:
             [0.0, 1.0]
         )
 
+    def test_lust_rates_every_option_alike_because_nothing_can_find_a_mate(self):
+        """§2.5 settles that finding a mate is the cue field read with the searcher's own signature
+        as the vector, but there is no mating mechanic to act on it (#20). Flat until then — see
+        `test_thirst_rates_every_option_alike_because_nothing_can_find_water` for why that is the
+        correct degenerate case rather than a stub (§8.2).
+        """
+        world = World()
+        selection = world.spawn(1, energy=np.float32([70.0]))
+        world.store.age[selection.to_indices()] = 200
+        lust = Lust(
+            world.store,
+            world.ecology,
+            LustConfig(weight=1.0, maturity_age=100, breeding_energy=20.0, abundant_energy=70.0),
+        )
+        x, y = options_at(world, selection)
+
+        assert lust.appeal(selection, x, y) == pytest.approx(np.ones((1, 3)))
+        assert lust.urgency(selection) == pytest.approx([1.0])
+
 
 class TestFatigue:
     def test_fatigue_is_the_health_deficit(self):
@@ -516,11 +613,67 @@ class TestFatigue:
         with pytest.raises(ValueError):
             FatigueConfig(weight=-1.0, exertion_saturation=1.0)
 
+    def test_fatigue_puts_all_of_its_appeal_on_the_null_option(self):
+        """Rest needs no mode, no flag and no state column — it is an option in the same contest.
+
+        The null option is the last column by construction (`Behaviour.candidate_positions`), and
+        an animal that picks it proposes no displacement, so `Movement.step` prices a step of zero
+        and it pays nothing. That is what makes exertion recover (#107) with nothing anywhere
+        branching on "is resting".
+        """
+        world = World()
+        selection = world.spawn(2, health=np.float32([0.5, 1.0]))
+        fatigue = Fatigue(
+            world.store, world.exertion, FatigueConfig(weight=1.0, exertion_saturation=1.0)
+        )
+        x, y = options_at(world, selection)
+
+        appeal = fatigue.appeal(selection, x, y)
+
+        assert appeal[:, NULL] == pytest.approx([1.0, 1.0])
+        assert appeal[:, :NULL] == pytest.approx(np.zeros((2, 2)))
+
+
+# Cold enough that sampling is effectively the argmax: exp(-4) is about 0.018, so a utility gap of
+# 0.3 becomes 16 in scaled units and swamps the Gumbel noise the softmax adds. Temperature is a gene
+# precisely so a world can hold both this animal and an exploratory one (#114).
+DECISIVE = {"sight": 5.0, "choice_temperature": -4.0}
+
+
+def register_four(world):
+    """Hunger, thirst, lust and fatigue against one world, at equal weight."""
+    world.behaviour.register(
+        Hunger(
+            world.store, world.ecology, world.genetics, world.plants, world.genes, HUNGER_CONFIG
+        )
+    )
+    world.behaviour.register(
+        Thirst(
+            world.store,
+            world.climate,
+            ThirstConfig(weight=1.0, onset_temperature=25.0, saturation_temperature=40.0),
+        )
+    )
+    world.behaviour.register(
+        Lust(
+            world.store,
+            world.ecology,
+            LustConfig(weight=1.0, maturity_age=100, breeding_energy=20.0, abundant_energy=70.0),
+        )
+    )
+    world.behaviour.register(
+        Fatigue(world.store, world.exertion, FatigueConfig(weight=1.0, exertion_saturation=1.0))
+    )
+
 
 class TestDrivesCompeting:
     def test_a_starving_animal_forages_and_a_fed_injured_one_rests(self):
-        """The whole point of #22 on a synthetic population: the same registered set of drives
-        resolves two animals to different actions from their state alone.
+        """The whole point of #22 on a synthetic population, now readable as an *action*: the same
+        registered set of drives resolves two animals to different behaviour from their state alone.
+
+        Under #22 this could only be asserted as "which drive won". It is now asserted as what the
+        animals actually do — one heads for the meadow, the other stays put — which is the claim
+        that was always meant and that a winning-drive column could only stand in for.
         """
         world = World()
         selection = world.spawn(
@@ -531,40 +684,28 @@ class TestDrivesCompeting:
             y=np.array([4.0, 4.0], dtype=np.float32),
         )
         world.store.age[selection.to_indices()] = 0
-        world.behaviour.register(
-            Hunger(
-                world.store, world.ecology, world.genetics, world.plants, world.genes,
-                HUNGER_CONFIG,
-            )
-        )
-        world.behaviour.register(
-            Thirst(
-                world.store,
-                world.climate,
-                ThirstConfig(weight=1.0, onset_temperature=25.0, saturation_temperature=40.0),
-            )
-        )
-        world.behaviour.register(
-            Lust(
-                world.store,
-                world.ecology,
-                LustConfig(
-                    weight=1.0, maturity_age=100, breeding_energy=20.0, abundant_energy=70.0
-                ),
-            )
-        )
-        world.behaviour.register(Fatigue(world.store, world.exertion, FatigueConfig(weight=1.0, exertion_saturation=1.0)))
+        world.genetics.set_genes(selection, gene_rows(DECISIVE, DECISIVE))
+        world.plants.biomass[:] = 0.0
+        world.plants.biomass[4, 7] = 80.0
+        register_four(world)
 
-        world.behaviour.urgency(selection)
+        world.behaviour.choose(selection, np.random.default_rng(0))
 
-        starving = Selection.from_indices(selection.to_indices()[:1], world.store.capacity)
-        injured = Selection.from_indices(selection.to_indices()[1:], world.store.capacity)
-        assert world.behaviour.driven_by("hunger", selection) == starving
-        assert world.behaviour.driven_by("fatigue", selection) == injured
+        moving = world.store.choice_moving[selection.to_indices()]
+        assert moving[0], "the starving animal did not set off for the only meadow in the world"
+        assert not moving[1], "the fed, injured animal did not rest"
+        # And it went the right way: the meadow is due east, so the heading is within a quadrant
+        # of it. The jitter means the exact angle is not reproducible, which is the point of it.
+        assert np.cos(world.store.choice_heading[selection.to_indices()][0]) > 0.0
 
-    def test_the_breakdown_explains_the_winner(self):
-        """"It rested because fatigue outscored hunger" has to be recoverable from the store, not
+    def test_the_breakdown_explains_the_chosen_option(self):
+        """"It rested because fatigue outweighed hunger" has to be recoverable from the store, not
         told as a story about it (CLAUDE.md §2.5, §3.3).
+
+        The breakdown is each drive's contribution *to the option actually taken*, which is strictly
+        more than #22's winner name: hunger reads 0 here not because the animal is fed — it is not,
+        it wants food at 0.2 — but because there is nothing edible in any direction, so hunger has
+        nothing to say about where to go. A winning-drive column could not express the difference.
         """
         world = World()
         selection = world.spawn(
@@ -572,6 +713,8 @@ class TestDrivesCompeting:
             energy=np.array([80.0], dtype=np.float32),
             health=np.array([0.1], dtype=np.float32),
         )
+        world.genetics.set_genes(selection, gene_rows(DECISIVE))
+        world.plants.biomass[:] = 0.0
         world.behaviour.register(
             Hunger(
                 world.store, world.ecology, world.genetics, world.plants, world.genes,
@@ -580,12 +723,12 @@ class TestDrivesCompeting:
         )
         world.behaviour.register(Fatigue(world.store, world.exertion, FatigueConfig(weight=1.0, exertion_saturation=1.0)))
 
-        world.behaviour.urgency(selection)
+        world.behaviour.choose(selection, np.random.default_rng(0))
         breakdown = world.behaviour.breakdown(selection)
 
-        assert breakdown["hunger"] == pytest.approx([0.2])
+        assert not world.store.choice_moving[selection.to_indices()][0]
         assert breakdown["fatigue"] == pytest.approx([0.9])
-        assert world.behaviour.driven_by("fatigue", selection) == selection
+        assert breakdown["hunger"] == pytest.approx([0.0])
 
 
 
@@ -1035,15 +1178,7 @@ class TestAllFiveDrivesCompeting:
         )
         world.behaviour.register(Fatigue(world.store, world.exertion, FatigueConfig(weight=1.0, exertion_saturation=1.0)))
 
-    def test_a_hungry_creature_next_to_a_predator_flees_instead_of_feeding(self):
-        """Fear outscoring hunger in a creature that is *also* hungry is the case the whole
-        utility contest exists for — a fixed priority order could not express it.
-
-        Deliberately hungry rather than starving: at zero energy hunger saturates at exactly the
-        same 1.0 fear does, and the tie falls to registration order. That is correct behaviour for
-        equal weights, not a defect — it is the tuning table's job to decide whether a starving
-        animal risks a predator, which is what makes these weights genes in #23.
-        """
+    def _terrified_and_hungry(self, with_predator):
         world = FearWorld(grid=21, capacity=16)
         prey = world.spawn_as(
             0,
@@ -1053,39 +1188,66 @@ class TestAllFiveDrivesCompeting:
             energy=np.float32([30.0]),
             health=np.float32([1.0]),
         )
-        predator = world.spawn_as(0, 3, x=np.float32([10.0] * 3), y=np.float32([10.0] * 3))
-        world.genetics.set_genes(prey, gene_rows(timid(500.0)))
-        world.genetics.set_genes(predator, gene_rows(*[dangerous()] * 3))
-        world.scent.rebuild(prey | predator)
+        genes = dict(timid(500.0))
+        genes.update(DECISIVE)
+        world.genetics.set_genes(prey, gene_rows(genes))
+        smellers = prey
+        if with_predator:
+            predator = world.spawn_as(0, 3, x=np.float32([10.0] * 3), y=np.float32([10.0] * 3))
+            world.genetics.set_genes(predator, gene_rows(*[dangerous()] * 3))
+            smellers = prey | predator
+        world.scent.rebuild(smellers)
+        world.plants.biomass[:] = 0.0
+        world.plants.biomass[10, 14] = 80.0  # the only meadow, due east
         self.register_all(world)
+        return world, prey
 
-        world.behaviour.urgency(prey)
+    def test_a_hungry_creature_next_to_a_predator_is_more_afraid_than_hungry(self):
+        """Fear outweighing hunger in a creature that is *also* hungry is the case the whole
+        utility contest exists for — a fixed priority order could not express it.
+
+        What it can no longer be asserted as is "it fled": fear has no direction yet, because
+        reading the cue field at a candidate needs `sample_excluding_self` generalised to arbitrary
+        points (see `Fear.appeal`). So the contest is visible in the breakdown rather than in the
+        heading, and it is the breakdown that #114 makes the load-bearing surface.
+        """
+        world, prey = self._terrified_and_hungry(with_predator=True)
+
+        world.behaviour.choose(prey, np.random.default_rng(0))
 
         assert world.behaviour.drive_names == ("hunger", "thirst", "fear", "lust", "fatigue")
-        assert world.behaviour.driven_by("fear", prey) == prey
         breakdown = world.behaviour.breakdown(prey)
         assert breakdown["fear"][0] > breakdown["hunger"][0]
 
-    def test_the_same_creature_feeds_once_the_predator_is_gone(self):
-        """Same genes, same energy, same everything but the threat — so the change in action is
-        attributable to the world rather than to the animal.
+    def test_terror_no_longer_freezes_an_animal_that_can_see_food(self):
+        """The defect #114 exists to remove (#126), asserted directly.
+
+        Under #22 fear won the argmax, movement acted only for hunger, and a frightened animal
+        therefore stood still — a drive without a mechanic behind it could paralyse one that had
+        one. Now fear contributes to every option equally, so it cannot shift a ranking: the same
+        terrified animal still walks to the meadow it can see. Nothing about fear changed to make
+        this true; it falls out of scoring options rather than entities.
         """
-        world = FearWorld(grid=21, capacity=16)
-        prey = world.spawn_as(
-            0,
-            1,
-            x=np.float32([10.0]),
-            y=np.float32([10.0]),
-            energy=np.float32([30.0]),
-            health=np.float32([1.0]),
-        )
-        world.genetics.set_genes(prey, gene_rows(timid(500.0)))
-        world.scent.rebuild(prey)
-        self.register_all(world)
+        world, prey = self._terrified_and_hungry(with_predator=True)
 
-        world.behaviour.urgency(prey)
+        world.behaviour.choose(prey, np.random.default_rng(0))
 
-        assert world.behaviour.driven_by("hunger", prey) == prey
+        row = prey.to_indices()[0]
+        assert world.behaviour.breakdown(prey)["fear"][0] > 0.0, "the prey was not actually afraid"
+        assert world.store.choice_moving[row]
+        assert np.cos(world.store.choice_heading[row]) > 0.0
+
+    def test_the_same_creature_is_unafraid_once_the_predator_is_gone(self):
+        """Same genes, same energy, same everything but the threat — so the change is attributable
+        to the world rather than to the animal.
+        """
+        world, prey = self._terrified_and_hungry(with_predator=False)
+
+        world.behaviour.choose(prey, np.random.default_rng(0))
+
+        breakdown = world.behaviour.breakdown(prey)
+        assert breakdown["fear"] == pytest.approx([0.0])
+        assert breakdown["hunger"][0] > 0.0
 
 
 class TestTwoAversionDirections:

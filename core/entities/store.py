@@ -165,9 +165,10 @@ class EntityStore:
         """Allocate ``n`` new rows from the free list and return their stable ids.
 
         Every column defaults to its zero value except ``alive`` (True), ``age`` (0),
-        ``exertion`` (0) and ``choice_heading`` (0) — the last three reset explicitly rather than
-        relying on the row being clean, since a reused row still holds its predecessor's years, its
-        tiredness and the direction it was last walking, and a newborn has none of them (#114). Pass
+        ``exertion`` (0), ``choice_heading`` (0) and ``choice_moving`` (False) — the last four reset
+        explicitly rather than relying on the row being clean, since a reused row still holds its
+        predecessor's years, its tiredness and the direction it was last walking, and a newborn has
+        none of them (#114). Pass
         column-name keyword arguments of length ``n`` to seed specific columns in the same
         vectorized write — e.g. ``allocate(3, x=..., energy=...)`` — since the ids this call
         returns are the only supported way to address these rows again.

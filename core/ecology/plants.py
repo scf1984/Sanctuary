@@ -34,7 +34,7 @@ import numpy as np
 
 from core.world.climate import Climate
 from core.world.diffusion import CostAwareDiffusion, DiffusionConfig
-from core.world.terrain import Terrain, bilinear_sample
+from core.world.terrain import Terrain
 from core.world.water import Water
 
 
@@ -296,33 +296,6 @@ class Plants:
         """
         rows, cols = self._cell_indices(x, y)
         return field[rows, cols]
-
-    def forage_gradient(
-        self, field: np.ndarray, x: np.ndarray, y: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Which way food lies, and how strongly, for foragers at ``(x, y)``.
-
-        field: a `forage_field()` result. Passed in rather than rebuilt per call, because one tick
-            has one field and every forager reads the same one — building it per drive query would
-            pay for the diffusion once per caller.
-        returns (gx, gy, strength): the two gradient components, and the field's own value where
-            each forager stands, all ``(n,)`` float64.
-
-        **It ranks nothing and gates nothing.** Whether the reading is strong enough to notice is a
-        question about the animal — its sight phenotype against a detection threshold — and belongs
-        to the drive that asks (§2.5, the same split scent already uses). The field knows nothing of
-        genes, which is exactly why this returns a strength instead of a yes.
-        """
-        x = np.asarray(x, dtype=np.float64)
-        y = np.asarray(y, dtype=np.float64)
-        if x.shape != y.shape:
-            raise ValueError("x and y must be the same length")
-        gradient_x, gradient_y = self.forage_diffusion.gradient_at(field, x, y)
-        strength = bilinear_sample(
-            field, x, y, self.terrain.cell_size, self.terrain.world_width,
-            self.terrain.world_height,
-        )
-        return gradient_x, gradient_y, strength
 
     def total_nutrients(self) -> float:
         """Every nutrient unit the world contains: in soil, bound in biomass, or grazed away.
