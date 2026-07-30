@@ -51,7 +51,9 @@ def make_world(initial_capacity=8, temperature=20.0):
         terrain,
         ClimateConfig(equator_y=0.0, equator_temperature=temperature, latitude_gradient=0.0),
     )
-    metabolism = Metabolism(GeneVocabulary(GENE_NAMES), METABOLISM_CONFIG)
+    metabolism = Metabolism(
+        GeneVocabulary(GENE_NAMES), METABOLISM_CONFIG, GENETICS_CONFIG.expression_modes
+    )
     ecology = Ecology(store, registry, genetics, climate, metabolism)
     return store, registry, species, genetics, ecology
 
@@ -129,7 +131,9 @@ class TestUpkeepFromExpressedGenes:
             registry,
             genetics,
             climate,
-            Metabolism(GeneVocabulary(GENE_NAMES), METABOLISM_CONFIG),
+            Metabolism(
+                GeneVocabulary(GENE_NAMES), METABOLISM_CONFIG, GENETICS_CONFIG.expression_modes
+            ),
         )
         species_id = species.register(GENE_NAMES)
         ids = store.allocate(

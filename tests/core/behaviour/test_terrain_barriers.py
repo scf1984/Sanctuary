@@ -106,7 +106,7 @@ class World:
             self.registry,
             self.genetics,
             self.climate,
-            Metabolism(self.vocabulary, METABOLISM_CONFIG),
+            Metabolism(self.vocabulary, METABOLISM_CONFIG, GENETICS_CONFIG.expression_modes),
         )
         self.exertion = Exertion(self.store, self.registry, ExertionConfig(recovery_rate=0.5))
         self.movement = Movement(

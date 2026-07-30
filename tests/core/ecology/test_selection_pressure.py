@@ -68,7 +68,11 @@ def make_world(capacity=1024, equator_temperature=20.0, latitude_gradient=0.0):
         ),
     )
     ecology = Ecology(
-        store, registry, genetics, climate, Metabolism(vocabulary, METABOLISM_CONFIG)
+        store,
+        registry,
+        genetics,
+        climate,
+        Metabolism(vocabulary, METABOLISM_CONFIG, GENETICS_CONFIG.expression_modes),
     )
     return store, species, genetics, ecology
 
