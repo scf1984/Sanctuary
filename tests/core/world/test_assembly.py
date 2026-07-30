@@ -59,21 +59,20 @@ GENE_NAMES = (
     *AVERSION_GENES[1],
     "mutability",
     "choice_temperature",
+    "commitment",
 )
 # Cue space is signed — a signature is a position in it, an aversion a direction through it — and
 # everything else here is a quantity that cannot go negative (#104).
 CUE_GENES = (*SIGNATURE_GENES, *AVERSION_GENES[0], *AVERSION_GENES[1])
+# The genes §2.5 costs at zero: their counterweight is a selective consequence rather than upkeep.
+FREE_GENES = (*CUE_GENES, "mutability", "choice_temperature", "commitment")
 
 GENE_REGISTRY = gene_registry(
     GENE_NAMES,
-    # Every quantity charges the same token rate; the cue block and mutability are free, per
-    # §2.5's reserved table. A cost on a `SIGNED` gene is now rejected outright by the registry
-    # (#136), so this fixture can no longer express the defect it once made reachable.
-    {
-        name: 0.01
-        for name in GENE_NAMES
-        if name not in CUE_GENES and name != "mutability"
-    },
+    # Every other quantity charges the same token rate. A cost on a `SIGNED` gene is now rejected
+    # outright by the registry (#136), so this fixture can no longer express the defect it once
+    # made reachable.
+    {name: 0.01 for name in GENE_NAMES if name not in FREE_GENES},
 )
 
 GRID = 24
@@ -154,7 +153,7 @@ def world_config(**overrides):
             # One diffusion range: the distance over which the forage field carries information,
             # so it is the furthest a candidate reading can vouch for.
             look_ahead=4.0,
-            change_aversion=0.15,
+            commitment_gene="commitment",
             choice_temperature_gene="choice_temperature",
         ),
         scent_genes=ScentGenes(
@@ -177,6 +176,7 @@ def world_config(**overrides):
             # else (docs/spikes/speciation-drift.md).
             "mutability": (0.01, 0.03),
             "choice_temperature": (-0.3, 0.3),
+            "commitment": (0.05, 0.25),
         },
         n_founders=40,
         founder_energy=180.0,

@@ -142,6 +142,18 @@ _GENES = (
         ),
     ),
     GeneSpec(
+        name="commitment",
+        cost=0.0,
+        expression_mode=ExpressionMode.MAGNITUDE,
+        unit=Unit.DIMENSIONLESS,
+        description=(
+            "How doggedly a bearing is held across ticks: the bonus a candidate earns for "
+            "continuing last tick's heading, and so half the width of the band a competing drive "
+            "must clear to turn the animal. Read as a magnitude, because a negative bonus would "
+            "reward reversing. Free: dithering and tunnel vision are each their own price (#100)."
+        ),
+    ),
+    GeneSpec(
         name="mutability",
         cost=0.0,
         expression_mode=ExpressionMode.MAGNITUDE,
@@ -231,7 +243,7 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
             # One diffusion range: the distance over which the forage field carries information,
             # so it is the furthest a candidate reading can vouch for.
             look_ahead=4.0,
-            change_aversion=0.15,
+            commitment_gene="commitment",
             choice_temperature_gene="choice_temperature",
         ),
         scent_genes=ScentGenes(emission_gene="scent_emission", signature_genes=_SIGNATURE_GENES),
@@ -251,6 +263,11 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
             # rather than fixed so founders vary in evolvability like anything else
             # (docs/spikes/speciation-drift.md).
             "mutability": (0.01, 0.03),
+            # Around the 0.15 this was as a constant, which is a band of 0.3 against drive
+            # utilities that reach 1 — enough to hold a bearing through indifferent ground and not
+            # enough to hold one against an appetite. Drawn rather than fixed, so founders differ
+            # in doggedness and selection has something to act on from the first generation.
+            "commitment": (0.05, 0.25),
             # Around zero, so `exp` puts founding temperatures around 1 — the scale at which a
             # utility difference of one is a decisive preference rather than a faint one.
             "choice_temperature": (-0.3, 0.3),

@@ -94,3 +94,14 @@ N=8, `choose()` is 362 ms — 36% of the tick, and the largest single system, bu
   second field-reading drive would pay the full 110 ms again — see #170.
 - The field cost is a property of the diffusion, not of this issue, and it is where any real
   optimisation of the tick should start.
+
+## Re-running this after #100
+
+#100 made the change-aversion constant the `commitment` gene, so the harness gained a sixth gene
+and `choose()` now reads the phenotype block once for two genes instead of once for one. The tables
+above were **not** re-measured: an A/B of `choose()` at n=100,000, N=8, alternating between the two
+trees three times each on one machine, put the best-case call at 359.2 ms before and 361.9 ms after
+— under 1%, against a `forage_field()` control that itself swung 111–163 ms across the same runs.
+The machine that produced those A/B numbers was running roughly 30% slower overall than the one
+these tables came from, which is why absolute figures from a re-run will not match; compare within
+a run, not across.
