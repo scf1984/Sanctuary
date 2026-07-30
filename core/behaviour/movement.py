@@ -233,17 +233,24 @@ class Movement(DomainService):
         # the target, whichever comes first.
         intended = np.minimum(reach, distance)
         ground = self.terrain.elevation_at(x, y)
-        afford = self._affordable_fraction(
-            selection, x, y, unit_x, unit_y, intended, ground, size, pace
-        )
-        travelled = intended * afford
 
-        # Snapping instead of integrating the last fraction keeps an entity that reaches the edge
-        # of the world exactly on it: `Terrain.elevation_at` rejects a position past the boundary,
-        # and float error on `x + unit * distance` is enough to land there.
-        arrives = travelled >= distance
-        new_x = np.where(arrives, target_x, x + unit_x * travelled)
-        new_y = np.where(arrives, target_y, y + unit_y * travelled)
+        # Priced against where the whole step *would* land, so the bill covers the hill it would
+        # have climbed. The fraction is a linear read of a cost that is not quite linear —
+        # shortening a step changes where it ends and therefore how much of the hill it climbed —
+        # and the actual charge below re-prices the distance actually travelled against the
+        # elevation actually reached, so what is spent is always the true cost of the move that
+        # happened. An entity that still overpays on a concave slope is floored at zero by
+        # `Ecology.spend`: it spent everything it had getting there, which is honest.
+        intended_x, intended_y = self._landing(
+            x, y, unit_x, unit_y, intended, distance, target_x, target_y
+        )
+        intended_z = self.terrain.elevation_at(intended_x, intended_y)
+        full_cost = size * self._work(intended, intended_z - ground, pace)
+        travelled = intended * self._affordable_fraction(selection, full_cost)
+
+        new_x, new_y = self._landing(
+            x, y, unit_x, unit_y, travelled, distance, target_x, target_y
+        )
         new_z = self.terrain.elevation_at(new_x, new_y)
 
         self.write("x", selection, new_x.astype(np.float32))
@@ -256,33 +263,43 @@ class Movement(DomainService):
         self.ecology.spend(selection, (size * work).astype(np.float32))
         self.exertion.accumulate(selection, work)
 
-    def _affordable_fraction(
+    def _landing(
         self,
-        selection: Selection,
         x: np.ndarray,
         y: np.ndarray,
         unit_x: np.ndarray,
         unit_y: np.ndarray,
-        intended: np.ndarray,
-        ground: np.ndarray,
-        size: np.ndarray,
-        pace: float,
-    ) -> np.ndarray:
-        """(n,) float64 in [0, 1]: how much of the intended step each entity can pay for.
+        travel: np.ndarray,
+        distance: np.ndarray,
+        target_x: np.ndarray,
+        target_y: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Where a step of `travel` from ``(x, y)`` ends, snapped to the target on arrival.
 
-        This is the gate that makes hunger close off options (§2.5). The bill for the whole step is
-        priced first, and an animal that cannot cover it travels the fraction it can — so an empty
-        pool pins a creature in place, and a nearly empty one shuffles.
+        Snapping instead of integrating the last fraction keeps an entity that reaches the edge of
+        the world exactly on it: `Terrain.elevation_at` rejects a position past the boundary, and
+        float error on ``x + unit * distance`` is enough to land there — measured at 255 of 200,000
+        random diagonal steps onto an edge.
 
-        The fraction is a linear read of a cost that is not quite linear: shortening a step changes
-        where it ends, and therefore how much of the hill it climbed. `step` re-prices the distance
-        actually travelled against the elevation actually reached, so the charge is always the true
-        cost of the move that happened; this only decides how far to go. An entity that still
-        overpays on a concave slope is floored at zero by `Ecology.spend` — it spent everything it
-        had getting there, which is the honest outcome and not a case to smooth over.
+        **Shared by the pricing pass and the move itself**, which is the whole point of it existing
+        (#128). The two computed the landing point separately and only the move snapped, so a
+        forager whose chosen patch sat on the world boundary raised out of the middle of a tick —
+        rarely enough to look like a flake and often enough to kill a populated world in three
+        ticks. One rule cannot disagree with itself.
         """
-        landing_z = self.terrain.elevation_at(x + unit_x * intended, y + unit_y * intended)
-        full_cost = size * self._work(intended, landing_z - ground, pace)
+        arrives = travel >= distance
+        return (
+            np.where(arrives, target_x, x + unit_x * travel),
+            np.where(arrives, target_y, y + unit_y * travel),
+        )
+
+    def _affordable_fraction(self, selection: Selection, full_cost: np.ndarray) -> np.ndarray:
+        """(n,) float64 in [0, 1]: how much of a step costing `full_cost` each entity can pay for.
+
+        This is the gate that makes hunger close off options (§2.5): an animal that cannot cover the
+        bill travels the fraction it can, so an empty pool pins a creature in place and a nearly
+        empty one shuffles.
+        """
         # A zero-cost step is a zero-length one, or an animal whose species does not express size;
         # either way there is nothing it could fail to afford. The same guard appears twice because
         # the division is evaluated over the whole array before `where` selects, so the substitute
