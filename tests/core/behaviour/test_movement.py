@@ -3,7 +3,7 @@
 
 The contract here is checkable in advance, so these were written before the implementation
 (CLAUDE.md §8.1). What is *not* test-driven is what the coefficients should be — that is ecological
-tuning — so nothing below asserts a joule figure. Every assertion is either a geometric identity
+tuning — so nothing below asserts an energy figure. Every assertion is either a geometric identity
 (where a step lands) or a direction (uphill costs more than downhill, sprinting costs more per
 world unit than walking).
 """

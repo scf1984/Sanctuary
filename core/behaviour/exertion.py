@@ -18,13 +18,13 @@ stored, because neither candidate works:
   ticks would report one straight line — and §2.4 requires that batching ticks differently must not
   change what the world does.
 
-**Work per unit of body size, not joules.** The bill movement pays is ``size × (haul + climb)``;
-what accumulates here is the parenthesised half. Exertion is then a statement about how hard *this*
-animal worked rather than how much fuel it burned, so one saturation constant means the same thing
-to a mouse and to an elephant. Raw joules would make a large animal permanently exhausted by an
-ordinary walk and would leave `FatigueConfig.exertion_saturation` quietly meaning a different
-tiredness per body size — the same class of trap as a coefficient whose unit depends on something
-undeclared (#112).
+**Work per unit of body size, not the energy bill.** The bill movement pays is
+``size × (haul + climb)``; what accumulates here is the parenthesised half. Exertion is then a
+statement about how hard *this* animal worked rather than how much fuel it burned, so one saturation
+constant means the same thing to a mouse and to an elephant. Accumulating the size-scaled bill
+instead would make a large animal permanently exhausted by an ordinary walk and would leave
+`FatigueConfig.exertion_saturation` quietly meaning a different tiredness per body size — the same
+class of trap as a coefficient whose unit depends on something undeclared (#112).
 
 **It sheds geometrically and is never charged for.** Recovery costs nothing beyond the upkeep an
 animal pays to exist: resting is the *absence* of expenditure, and charging for it would make

@@ -58,15 +58,15 @@ class MovementConfig:
     size_gene: the gene whose expressed value scales every cost term below. A bigger body is more
         expensive to haul over the same ground and up the same hill, which is the counterweight
         that stops size running away on the benefits it buys elsewhere.
-    transport_cost: joules per world unit travelled, per unit of expressed size, at zero pace.
+    transport_cost: energy units per world unit travelled, per unit of expressed size, at zero pace.
         Must be positive: at zero, distance is free and nothing stops an animal crossing the world
         every tick, which removes the cost half of §2.5's hard budget for the one trait that
         spends the most.
     exertion_premium: extra fraction of `transport_cost` charged at full pace, so a world unit at
         pace ``p`` costs ``transport_cost × (1 + exertion_premium × p)``. Must be non-negative —
         negative would make sprinting cheaper per unit than walking, inverting §2.5.
-    climb_cost: joules per **world unit** of elevation *gained*, per unit of expressed size — the
-        same length unit `transport_cost` is denominated in (#112), so ``climb_cost /
+    climb_cost: energy units per **world unit** of elevation *gained*, per unit of expressed size —
+        the same length unit `transport_cost` is denominated in (#112), so ``climb_cost /
         transport_cost`` is a real statement: how many world units of flat ground cost what one
         world unit of climb does. Elevation used to be documented in a physical length unit while
         x and y were in world units, which left that ratio resting on a conversion factor nothing

@@ -60,7 +60,7 @@ class HungerConfig:
     """Per-world tuning for the hunger drive.
 
     weight: multiplier on the drive's 0-1 shape, comparable against every other drive's weight.
-    satiation_energy: joules. The pool level at or above which an animal wants no food at all.
+    satiation_energy: energy units. The pool level at or above which an animal wants no food at all.
         Hunger rises linearly as the pool falls below it, reaching `weight` at an empty pool, so
         this is also what decides how early in a decline feeding starts outranking everything else.
     forage_reluctance: world units. How far an animal will walk for food, in the distance discount
@@ -211,10 +211,10 @@ class LustConfig:
     weight: multiplier on the drive's 0-1 shape.
     maturity_age: ticks. Below this an animal does not seek a mate at any energy level — the tick
         counter is the only clock (CLAUDE.md §2.1), so this is in ticks and never in real time.
-    breeding_energy: joules. The pool level below which reproduction is not attempted at all.
+    breeding_energy: energy units. The pool level below which reproduction is not attempted at all.
         Gestation charges upkeep like any other trait (§2.5), so an animal that cannot afford it
         must not want it, or selection would favour breeding itself to death.
-    abundant_energy: joules at which lust saturates. Must exceed `breeding_energy`.
+    abundant_energy: energy units at which lust saturates. Must exceed `breeding_energy`.
     """
 
     weight: float
