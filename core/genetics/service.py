@@ -20,8 +20,8 @@ import numpy as np
 from core.entities.store import EntityStore
 from core.genetics.expression import ExpressionTable, GeneticsConfig
 from core.genetics.inheritance import inherit_genes
+from core.genetics.registry import GeneRegistry
 from core.genetics.species import SpeciesRegistry
-from core.genetics.vocabulary import GeneVocabulary
 from core.selection import Selection
 from core.services import ColumnRegistry, DomainService
 
@@ -32,10 +32,10 @@ class Genetics(DomainService):
     species: the SpeciesRegistry whose ids are valid values for the store's `species_id` column.
         Shared with whatever else in a world needs to resolve species masks — not owned by this
         service (CLAUDE.md §4: no singletons, pass context explicitly).
-    expression: the vocabulary's expression modes and mutability column, resolved once
+    expression: the registry's expression modes and mutability column, resolved once
         (`core.genetics.expression`). Built here rather than passed in because it is derived data,
         and a second copy resolved against a different vocabulary is exactly the disagreement #111
-        exists to make impossible.
+        made impossible — the modes now come from the same `GeneSpec` table the costs do.
     """
 
     owns = ("genes", "species_id")
@@ -49,13 +49,13 @@ class Genetics(DomainService):
         store: EntityStore,
         registry: ColumnRegistry,
         species: SpeciesRegistry,
-        vocabulary: GeneVocabulary,
+        genes: GeneRegistry,
         config: GeneticsConfig,
     ) -> None:
         super().__init__(store, registry)
         self.species = species
         self.config = config
-        self.expression = ExpressionTable(vocabulary, config)
+        self.expression = ExpressionTable(genes, config)
 
     def genes(self, selection: Selection) -> np.ndarray:
         """(len(selection), n_genes) float32: raw gene values, expressed or not."""

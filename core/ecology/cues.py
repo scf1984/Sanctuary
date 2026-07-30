@@ -32,7 +32,7 @@ import numpy as np
 
 from core.entities.store import EntityStore
 from core.genetics.service import Genetics
-from core.genetics.vocabulary import GeneVocabulary
+from core.genetics.registry import GeneRegistry, Unit
 from core.selection import Selection
 from core.world.terrain import Terrain
 
@@ -225,21 +225,23 @@ class Scent:
         store: EntityStore,
         genetics: Genetics,
         field: CueField,
-        vocabulary: GeneVocabulary,
-        genes: ScentGenes,
+        genes: GeneRegistry,
+        scent: ScentGenes,
     ) -> None:
-        if len(genes.signature_genes) != field.n_channels:
+        if len(scent.signature_genes) != field.n_channels:
             raise ValueError(
-                f"signature_genes names {len(genes.signature_genes)} genes but the cue field has "
+                f"signature_genes names {len(scent.signature_genes)} genes but the cue field has "
                 f"{field.n_channels} channels; they index the same space and must match"
             )
         self.store = store
         self.genetics = genetics
         self.field = field
-        # Raise KeyError naming the vocabulary version if any gene does not exist.
-        self._emission_index = vocabulary.index_of(genes.emission_gene)
+        # Raise KeyError naming the vocabulary version if any gene does not exist. Broadcast
+        # strength and a position in cue space are both bare numbers.
+        self._emission_index = genes.index_of(scent.emission_gene, unit=Unit.DIMENSIONLESS)
         self._signature_indices = np.array(
-            [vocabulary.index_of(name) for name in genes.signature_genes], dtype=np.int64
+            [genes.index_of(name, unit=Unit.DIMENSIONLESS) for name in scent.signature_genes],
+            dtype=np.int64,
         )
 
     def rebuild(self, population: Selection) -> None:

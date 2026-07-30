@@ -44,7 +44,7 @@ from core.ecology.plants import Plants
 from core.ecology.service import Ecology
 from core.entities.store import EntityStore
 from core.genetics.service import Genetics
-from core.genetics.vocabulary import GeneVocabulary
+from core.genetics.registry import GeneRegistry, Unit
 from core.selection import Selection
 from core.world.climate import Climate
 
@@ -113,7 +113,7 @@ class Hunger:
         ecology: Ecology,
         genetics: Genetics,
         plants: Plants,
-        vocabulary: GeneVocabulary,
+        genes: GeneRegistry,
         config: HungerConfig,
     ) -> None:
         self.store = store
@@ -121,8 +121,9 @@ class Hunger:
         self.genetics = genetics
         self.plants = plants
         self.config = config
-        # Raises KeyError naming the vocabulary version if the gene does not exist.
-        self._sight_index = vocabulary.index_of(config.sight_gene)
+        # Raises KeyError naming the vocabulary version if the gene does not exist. Acuity
+        # scales what is sampled from a field rather than a radius (#93), so it is dimensionless.
+        self._sight_index = genes.index_of(config.sight_gene, unit=Unit.DIMENSIONLESS)
 
     def score(self, selection: Selection) -> np.ndarray:
         """(len(selection),) float32: how far the pool has fallen below satiation, weighted."""
@@ -368,7 +369,7 @@ class Fear:
         store: EntityStore,
         genetics: Genetics,
         scent: Scent,
-        vocabulary: GeneVocabulary,
+        genes: GeneRegistry,
         config: FearConfig,
     ) -> None:
         mismatched = [
@@ -383,12 +384,17 @@ class Fear:
         self.genetics = genetics
         self.scent = scent
         self.config = config
-        # Raise KeyError naming the vocabulary version if any gene does not exist.
-        self._acuity_index = vocabulary.index_of(config.scent_acuity_gene)
+        # Raise KeyError naming the vocabulary version if any gene does not exist. Acuity
+        # scales a sampled concentration and an aversion is a direction in cue space; neither
+        # carries a dimension.
+        self._acuity_index = genes.index_of(config.scent_acuity_gene, unit=Unit.DIMENSIONLESS)
         # (n_directions, n_channels): one row of gene columns per aversion direction, so scoring
         # every direction is one matrix product rather than a loop over genes.
         self._aversion_indices = np.array(
-            [[vocabulary.index_of(name) for name in block] for block in config.aversion_genes],
+            [
+                [genes.index_of(name, unit=Unit.DIMENSIONLESS) for name in block]
+                for block in config.aversion_genes
+            ],
             dtype=np.int64,
         )
 

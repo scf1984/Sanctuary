@@ -23,15 +23,16 @@ from core.ecology.plants import Plants, PlantsConfig
 from core.world.diffusion import DiffusionConfig
 from core.ecology.service import Ecology
 from core.entities.store import EntityStore
-from core.genetics.expression import ExpressionMode, GeneticsConfig
+from core.genetics.expression import GeneticsConfig
 from core.genetics.service import Genetics
 from core.genetics.species import SpeciesRegistry
-from core.genetics.vocabulary import GeneVocabulary
 from core.selection import Selection
 from core.services import ColumnRegistry
 from core.world.climate import Climate, ClimateConfig
 from core.world.terrain import Terrain
 from core.world.water import Water
+
+from tests.support.genes import gene_registry
 
 # Three cue channels rather than the eight CLAUDE.md §2.5 settles on: the algebra is identical and
 # a test that spells out eight signature components per creature stops being readable.
@@ -52,37 +53,18 @@ GENE_NAMES = (
     *FLAT_AVERSION,
     "mutability",
 )
+GENE_REGISTRY = gene_registry(GENE_NAMES, {"size": 2.0, "speed": 3.0, "sight": 1.0, "insulation": 1.0, "scent_acuity": 0.5})
 SCENT_GENES = ScentGenes(emission_gene="scent_emission", signature_genes=SIGNATURE_GENES)
 
 # Cue space is signed: a signature is a position in it and an aversion is a direction through it, so
 # the sign is information in both (#104). Everything else here is a quantity.
 CUE_GENES = (*SIGNATURE_GENES, *FLAT_AVERSION)
 GENETICS_CONFIG = GeneticsConfig(
-    expression_modes={
-        name: ExpressionMode.SIGNED if name in CUE_GENES else ExpressionMode.MAGNITUDE
-        for name in GENE_NAMES
-    },
     mutability_gene="mutability",
     drift_margin=2.0,
 )
 
 METABOLISM_CONFIG = MetabolismConfig(
-    gene_costs={
-        "size": 2.0,
-        "speed": 3.0,
-        "sight": 1.0,
-        "insulation": 1.0,
-        # Emission is free pending #20: charging it would make silence both cheaper and safer,
-        # driving it to zero in every lineage (CLAUDE.md §2.5).
-        "scent_emission": 0.0,
-        "scent_acuity": 0.5,
-        # Signature and aversion are free: smelling of something and minding something cost
-        # nothing to carry. §2.5 requires every gene declare a cost, zero included.
-        **{name: 0.0 for name in CUE_GENES},
-        # Mutability charges nothing: high mutability already pays for itself in unfit offspring, so
-        # a stable world selects it down without an energy price (#104).
-        "mutability": 0.0,
-    },
     basal_rate=1.0,
     thermoregulation_rate=0.5,
     neutral_temperature=20.0,
@@ -132,10 +114,10 @@ class World:
     ):
         self.store = EntityStore(initial_capacity=capacity, n_drives=5, n_genes=len(GENE_NAMES))
         self.columns = ColumnRegistry()
-        self.vocabulary = GeneVocabulary(GENE_NAMES)
-        self.species = SpeciesRegistry(self.vocabulary)
+        self.genes = GENE_REGISTRY
+        self.species = SpeciesRegistry(self.genes.vocabulary)
         self.genetics = Genetics(
-            self.store, self.columns, self.species, self.vocabulary, GENETICS_CONFIG
+            self.store, self.columns, self.species, self.genes, GENETICS_CONFIG
         )
         if heights is None:
             heights = np.zeros((grid, grid), dtype=np.float32)
@@ -168,7 +150,7 @@ class World:
             self.columns,
             self.genetics,
             self.climate,
-            Metabolism(self.vocabulary, METABOLISM_CONFIG, GENETICS_CONFIG.expression_modes),
+            Metabolism(self.genes, METABOLISM_CONFIG),
         )
         self.behaviour = Behaviour(self.store, self.columns)
         # Fatigue reads exertion as well as health (#107). These tests exercise the health term and
@@ -198,7 +180,7 @@ class TestHungerScore:
         world = World()
         selection = world.spawn(3, energy=np.array([100.0, 50.0, 0.0], dtype=np.float32))
         hunger = Hunger(
-            world.store, world.ecology, world.genetics, world.plants, world.vocabulary,
+            world.store, world.ecology, world.genetics, world.plants, world.genes,
             HUNGER_CONFIG,
         )
 
@@ -211,7 +193,7 @@ class TestHungerScore:
         world = World()
         selection = world.spawn(1, energy=np.array([500.0], dtype=np.float32))
         hunger = Hunger(
-            world.store, world.ecology, world.genetics, world.plants, world.vocabulary,
+            world.store, world.ecology, world.genetics, world.plants, world.genes,
             HUNGER_CONFIG,
         )
 
@@ -224,7 +206,7 @@ class TestHungerScore:
             weight=3.0, satiation_energy=100.0, detection_threshold=1.0, sight_gene="sight"
         )
         hunger = Hunger(
-            world.store, world.ecology, world.genetics, world.plants, world.vocabulary, config
+            world.store, world.ecology, world.genetics, world.plants, world.genes, config
         )
 
         assert hunger.score(selection) == pytest.approx([3.0])
@@ -245,7 +227,7 @@ class TestForageTarget:
             world.ecology,
             world.genetics,
             world.plants,
-            world.vocabulary,
+            world.genes,
             config or HUNGER_CONFIG,
         )
 
@@ -538,7 +520,7 @@ class TestDrivesCompeting:
         world.store.age[selection.to_indices()] = 0
         world.behaviour.register(
             Hunger(
-                world.store, world.ecology, world.genetics, world.plants, world.vocabulary,
+                world.store, world.ecology, world.genetics, world.plants, world.genes,
                 HUNGER_CONFIG,
             )
         )
@@ -579,7 +561,7 @@ class TestDrivesCompeting:
         )
         world.behaviour.register(
             Hunger(
-                world.store, world.ecology, world.genetics, world.plants, world.vocabulary,
+                world.store, world.ecology, world.genetics, world.plants, world.genes,
                 HUNGER_CONFIG,
             )
         )
@@ -617,11 +599,11 @@ class FearWorld(World):
             self.terrain, CHANNELS, CueFieldConfig(diffusion_range=diffusion_range)
         )
         self.scent = Scent(
-            self.store, self.genetics, self.cue_field, self.vocabulary, SCENT_GENES
+            self.store, self.genetics, self.cue_field, self.genes, SCENT_GENES
         )
 
     def fear(self, config=FEAR_CONFIG):
-        return Fear(self.store, self.genetics, self.scent, self.vocabulary, config)
+        return Fear(self.store, self.genetics, self.scent, self.genes, config)
 
     def spawn_as(self, species_id, n, **columns):
         columns["species_id"] = np.full(n, species_id, dtype=np.int32)
@@ -1017,7 +999,7 @@ class TestAllFiveDrivesCompeting:
     def register_all(self, world):
         world.behaviour.register(
             Hunger(
-                world.store, world.ecology, world.genetics, world.plants, world.vocabulary,
+                world.store, world.ecology, world.genetics, world.plants, world.genes,
                 HUNGER_CONFIG,
             )
         )

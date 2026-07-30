@@ -8,20 +8,17 @@ declaration, and the point of the module is that nothing in `core/` decides it.
 import numpy as np
 import pytest
 
-from core.genetics.expression import ExpressionMode, ExpressionTable, GeneticsConfig
-from core.genetics.vocabulary import GeneVocabulary
+from core.genetics.expression import ExpressionTable, GeneticsConfig
+from core.genetics.registry import ExpressionMode, GeneRegistry, GeneSpec, Unit
 
+from tests.support.genes import gene_registry
 
 GENE_NAMES = ("size", "signature_0", "mutability")
+GENE_REGISTRY = gene_registry(GENE_NAMES)
 
 
 def config(**overrides):
     params = dict(
-        expression_modes={
-            "size": ExpressionMode.MAGNITUDE,
-            "signature_0": ExpressionMode.SIGNED,
-            "mutability": ExpressionMode.MAGNITUDE,
-        },
         mutability_gene="mutability",
         drift_margin=2.0,
     )
@@ -39,43 +36,46 @@ class TestConfigValidation:
             config(drift_margin=-1.0)
 
 
-class TestEveryGeneMustDeclareAMode:
-    """The same rule `MetabolismConfig` applies to costs, for a sharper reason: a gene with no
-    declared reading would be taken as signed by default, and a signed `size` is a body with
-    negative mass that also earns its own upkeep back (#136)."""
-
-    def test_a_gene_with_no_declared_mode_is_rejected(self):
-        modes = dict(config().expression_modes)
-        del modes["size"]
-
-        with pytest.raises(ValueError, match="size"):
-            ExpressionTable(GeneVocabulary(GENE_NAMES), config(expression_modes=modes))
-
-    def test_a_mode_declared_for_a_gene_outside_the_vocabulary_is_rejected(self):
-        modes = dict(config().expression_modes)
-        modes["gills"] = ExpressionMode.MAGNITUDE
-
-        with pytest.raises(ValueError, match="gills"):
-            ExpressionTable(GeneVocabulary(GENE_NAMES), config(expression_modes=modes))
+class TestTheMutabilityGeneMustBeUsable:
+    """A gene can no longer *omit* a mode — `GeneSpec` carries one, so the two completeness checks
+    that used to live here are gone rather than moved (#111). What remains is what the registry
+    cannot know: which gene this world nominates as its spread floor, and whether that choice is
+    coherent."""
 
     def test_a_mutability_gene_outside_the_vocabulary_is_rejected(self):
         with pytest.raises(KeyError, match="evolvability"):
-            ExpressionTable(
-                GeneVocabulary(GENE_NAMES), config(mutability_gene="evolvability")
-            )
+            ExpressionTable(GENE_REGISTRY, config(mutability_gene="evolvability"))
 
     def test_a_signed_mutability_gene_is_rejected(self):
         """It is the width of a draw, so what a negative value would mean is a negative scale."""
-        modes = dict(config().expression_modes)
-        modes["mutability"] = ExpressionMode.SIGNED
+        signed_mutability = GeneRegistry(
+            (
+                GeneSpec("size", 0.0, ExpressionMode.MAGNITUDE, Unit.DIMENSIONLESS, "body scale"),
+                GeneSpec(
+                    "mutability", 0.0, ExpressionMode.SIGNED, Unit.DIMENSIONLESS, "spread floor"
+                ),
+            )
+        )
 
         with pytest.raises(ValueError, match="magnitude"):
-            ExpressionTable(GeneVocabulary(GENE_NAMES), config(expression_modes=modes))
+            ExpressionTable(signed_mutability, config())
+
+    def test_a_mutability_gene_declared_in_the_wrong_unit_is_rejected(self):
+        """The spread of a distribution is a bare number; a length there is a different quantity."""
+        length_mutability = GeneRegistry(
+            (
+                GeneSpec("size", 0.0, ExpressionMode.MAGNITUDE, Unit.DIMENSIONLESS, "body scale"),
+                GeneSpec("mutability", 0.0, ExpressionMode.MAGNITUDE, Unit.LENGTH, "spread floor"),
+            )
+        )
+
+        with pytest.raises(ValueError, match="declared in length"):
+            ExpressionTable(length_mutability, config())
 
 
 class TestPhenotype:
     def table(self):
-        return ExpressionTable(GeneVocabulary(GENE_NAMES), config())
+        return ExpressionTable(GENE_REGISTRY, config())
 
     def test_a_magnitude_gene_folds_across_zero(self):
         raw = np.array([[-2.0, 0.0, 0.0]], dtype=np.float32)
@@ -113,11 +113,11 @@ class TestPhenotype:
 
 class TestResolvedColumns:
     def test_the_mutability_column_is_resolved_by_name(self):
-        table = ExpressionTable(GeneVocabulary(GENE_NAMES), config())
+        table = ExpressionTable(GENE_REGISTRY, config())
 
         assert table.mutability_index == GENE_NAMES.index("mutability")
 
     def test_magnitude_columns_are_a_mask_in_vocabulary_order(self):
-        table = ExpressionTable(GeneVocabulary(GENE_NAMES), config())
+        table = ExpressionTable(GENE_REGISTRY, config())
 
         assert table.magnitude_columns.tolist() == [True, False, True]

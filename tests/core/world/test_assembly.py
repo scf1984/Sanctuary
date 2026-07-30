@@ -24,7 +24,7 @@ from core.behaviour.movement import MovementConfig
 from core.ecology.cues import CueFieldConfig, ScentGenes
 from core.ecology.metabolism import MetabolismConfig
 from core.ecology.plants import PlantsConfig
-from core.genetics.expression import ExpressionMode, GeneticsConfig
+from core.genetics.expression import GeneticsConfig
 from core.world.diffusion import DiffusionConfig
 from core.selection import Selection
 from core.world.assembly import (
@@ -37,6 +37,8 @@ from core.world.assembly import (
 )
 from core.world.climate import ClimateConfig
 from core.world.terrain import TerrainConfig
+
+from tests.support.genes import gene_registry
 
 # Eight cue channels, per CLAUDE.md §2.5 — the settled floor, not a number this test picked.
 SIGNATURE_GENES = tuple(f"signature_{i}" for i in range(8))
@@ -59,6 +61,18 @@ GENE_NAMES = (
 # Cue space is signed — a signature is a position in it, an aversion a direction through it — and
 # everything else here is a quantity that cannot go negative (#104).
 CUE_GENES = (*SIGNATURE_GENES, *AVERSION_GENES[0], *AVERSION_GENES[1])
+
+GENE_REGISTRY = gene_registry(
+    GENE_NAMES,
+    # Every quantity charges the same token rate; the cue block and mutability are free, per
+    # §2.5's reserved table. A cost on a `SIGNED` gene is now rejected outright by the registry
+    # (#136), so this fixture can no longer express the defect it once made reachable.
+    {
+        name: 0.01
+        for name in GENE_NAMES
+        if name not in CUE_GENES and name != "mutability"
+    },
+)
 
 GRID = 24
 CELL_SIZE = 1.0
@@ -92,27 +106,12 @@ def world_config(**overrides):
         ),
         cue_field=CueFieldConfig(diffusion_range=3.0),
         metabolism=MetabolismConfig(
-            gene_costs={
-                **{name: 0.01 for name in GENE_NAMES},
-                # Mutability charges nothing: high mutability already pays for itself in unfit
-                # offspring, so a stable world selects it down with no energy price (#104).
-                "mutability": 0.0,
-                # Cue genes cost nothing, per §2.5's reserved block — and a world may no longer
-                # say otherwise. They are read `SIGNED`, so a cost on one would subtract from
-                # upkeep for half the founders rather than adding to it (#136). This fixture said
-                # 0.01 for every gene and was the reason that defect was reachable at all.
-                **{name: 0.0 for name in CUE_GENES},
-            },
             basal_rate=0.05,
             thermoregulation_rate=0.01,
             neutral_temperature=20.0,
             insulation_gene="insulation",
         ),
         genetics=GeneticsConfig(
-            expression_modes={
-                name: ExpressionMode.SIGNED if name in CUE_GENES else ExpressionMode.MAGNITUDE
-                for name in GENE_NAMES
-            },
             mutability_gene="mutability",
             drift_margin=2.0,
         ),
@@ -148,7 +147,7 @@ def world_config(**overrides):
         scent_genes=ScentGenes(
             emission_gene="scent_emission", signature_genes=SIGNATURE_GENES
         ),
-        gene_names=GENE_NAMES,
+        genes=GENE_REGISTRY.specs,
         founder_gene_ranges={
             "size": (0.8, 1.2),
             "speed": (1.0, 3.0),

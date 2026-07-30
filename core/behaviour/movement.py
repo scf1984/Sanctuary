@@ -41,7 +41,7 @@ from core.behaviour.exertion import Exertion
 from core.ecology.service import Ecology
 from core.entities.store import EntityStore
 from core.genetics.service import Genetics
-from core.genetics.vocabulary import GeneVocabulary
+from core.genetics.registry import GeneRegistry, Unit
 from core.selection import Selection
 from core.services import ColumnRegistry, DomainService
 from core.world.terrain import Terrain
@@ -145,7 +145,7 @@ class Movement(DomainService):
         exertion: Exertion,
         genetics: Genetics,
         terrain: Terrain,
-        vocabulary: GeneVocabulary,
+        genes: GeneRegistry,
         config: MovementConfig,
     ) -> None:
         super().__init__(store, registry)
@@ -154,9 +154,12 @@ class Movement(DomainService):
         self.genetics = genetics
         self.terrain = terrain
         self.config = config
-        # Raise KeyError naming the vocabulary version if either gene does not exist.
-        self._speed_index = vocabulary.index_of(config.speed_gene)
-        self._size_index = vocabulary.index_of(config.size_gene)
+        # Raise KeyError naming the vocabulary version if either gene does not exist, and
+        # ValueError if one is declared in a dimension this module would misread (#111). Top speed
+        # is world units per tick and the tick is unitless, so speed is a length; size is a bare
+        # scaling factor on every cost term.
+        self._speed_index = genes.index_of(config.speed_gene, unit=Unit.LENGTH)
+        self._size_index = genes.index_of(config.size_gene, unit=Unit.DIMENSIONLESS)
 
     def top_speed(self, selection: Selection) -> np.ndarray:
         """(len(selection),) float64, world units per tick: the furthest each entity could travel

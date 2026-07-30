@@ -16,14 +16,15 @@ from core.behaviour.movement import Movement, MovementConfig
 from core.ecology.metabolism import Metabolism, MetabolismConfig
 from core.ecology.service import Ecology
 from core.entities.store import EntityStore
-from core.genetics.expression import ExpressionMode, GeneticsConfig
+from core.genetics.expression import GeneticsConfig
 from core.genetics.service import Genetics
 from core.genetics.species import SpeciesRegistry
-from core.genetics.vocabulary import GeneVocabulary
 from core.selection import Selection
 from core.services import ColumnRegistry, ColumnOwnershipError
 from core.world.climate import Climate, ClimateConfig
 from core.world.terrain import Terrain
+
+from tests.support.genes import gene_registry
 
 
 GENE_NAMES = ("size", "speed", "insulation", "mutability")
@@ -32,17 +33,16 @@ GENE_NAMES = ("size", "speed", "insulation", "mutability")
 # across zero; `mutability` is in the vocabulary because inheritance's spread floor is a gene, and
 # every world needs one even when — as here — nothing in these tests breeds.
 GENETICS_CONFIG = GeneticsConfig(
-    expression_modes={name: ExpressionMode.MAGNITUDE for name in GENE_NAMES},
     mutability_gene="mutability",
     drift_margin=2.0,
 )
+GENE_REGISTRY = gene_registry(GENE_NAMES, {"insulation": 1.0})
 
 # Free metabolism: every gene costs nothing and there is no basal rate, so the only thing that
 # moves an energy pool in these tests is the locomotion charge under test. Insulation still carries
 # a positive cost because MetabolismConfig requires it to (a free insulation gene is a free lunch),
 # and no cohort below expresses a non-zero value for it.
 FREE_METABOLISM = MetabolismConfig(
-    gene_costs={"size": 0.0, "speed": 0.0, "insulation": 1.0, "mutability": 0.0},
     basal_rate=0.0,
     thermoregulation_rate=0.0,
     neutral_temperature=20.0,
@@ -96,9 +96,9 @@ class World:
     def __init__(self, heights, movement_config=MOVEMENT_CONFIG, capacity=256):
         self.store = EntityStore(initial_capacity=capacity, n_drives=1, n_genes=len(GENE_NAMES))
         self.registry = ColumnRegistry()
-        self.vocabulary = GeneVocabulary(GENE_NAMES)
-        self.species = SpeciesRegistry(self.vocabulary)
-        self.genetics = Genetics(self.store, self.registry, self.species, self.vocabulary, GENETICS_CONFIG)
+        self.genes = GENE_REGISTRY
+        self.species = SpeciesRegistry(self.genes.vocabulary)
+        self.genetics = Genetics(self.store, self.registry, self.species, self.genes, GENETICS_CONFIG)
         self.terrain = Terrain(heights, cell_size=CELL_SIZE)
         self.climate = Climate(
             self.terrain,
@@ -109,7 +109,7 @@ class World:
             self.registry,
             self.genetics,
             self.climate,
-            Metabolism(self.vocabulary, FREE_METABOLISM, GENETICS_CONFIG.expression_modes),
+            Metabolism(self.genes, FREE_METABOLISM),
         )
         # Exertion is where movement records effort (#107); nothing here asserts on it, so the
         # recovery rate is arbitrary. `tests/core/behaviour/test_exertion.py` is what covers it.
@@ -121,7 +121,7 @@ class World:
             self.exertion,
             self.genetics,
             self.terrain,
-            self.vocabulary,
+            self.genes,
             movement_config,
         )
         self.species_id = self.species.register(GENE_NAMES)

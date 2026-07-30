@@ -3,12 +3,13 @@ import pytest
 
 from core.entities.store import EntityStore
 from core.genetics.distance import between, centroid_between
-from core.genetics.expression import ExpressionMode, GeneticsConfig
+from core.genetics.expression import GeneticsConfig
 from core.genetics.service import Genetics
 from core.genetics.species import SpeciesRegistry
-from core.genetics.vocabulary import GeneVocabulary
 from core.selection import Selection
 from core.services import ColumnRegistry
+
+from tests.support.genes import gene_registry
 
 GENE_NAMES = ("size", "speed", "sight", "camouflage", "clutch_size", "gestation", "mutability")
 
@@ -16,10 +17,10 @@ GENE_NAMES = ("size", "speed", "sight", "camouflage", "clutch_size", "gestation"
 # across zero; `mutability` is in the vocabulary because inheritance's spread floor is a gene, and
 # every world needs one even when — as here — nothing in these tests breeds.
 GENETICS_CONFIG = GeneticsConfig(
-    expression_modes={name: ExpressionMode.MAGNITUDE for name in GENE_NAMES},
     mutability_gene="mutability",
     drift_margin=2.0,
 )
+GENE_REGISTRY = gene_registry(GENE_NAMES)
 
 
 def make_world(rng, n_entities):
@@ -28,7 +29,7 @@ def make_world(rng, n_entities):
     distance across genuinely different masks, not just one species end to end.
     """
     store = EntityStore(initial_capacity=n_entities, n_drives=1, n_genes=len(GENE_NAMES))
-    vocabulary = GeneVocabulary(GENE_NAMES)
+    vocabulary = GENE_REGISTRY
     species = SpeciesRegistry(vocabulary)
     genetics = Genetics(store, ColumnRegistry(), species, vocabulary, GENETICS_CONFIG)
 
@@ -70,7 +71,7 @@ def three_populations(seed, k=5, n_entities=15):
 class TestBetweenBasics:
     def test_distance_is_euclidean_over_expressed_phenotype(self):
         store = EntityStore(initial_capacity=2, n_drives=1, n_genes=len(GENE_NAMES))
-        vocabulary = GeneVocabulary(GENE_NAMES)
+        vocabulary = GENE_REGISTRY
         species = SpeciesRegistry(vocabulary)
         genetics = Genetics(store, ColumnRegistry(), species, vocabulary, GENETICS_CONFIG)
         species_id = species.register(GENE_NAMES)  # expresses every gene: exact Euclidean check
@@ -96,7 +97,7 @@ class TestBetweenBasics:
 
     def test_unexpressed_genes_do_not_affect_distance(self):
         store = EntityStore(initial_capacity=2, n_drives=1, n_genes=len(GENE_NAMES))
-        vocabulary = GeneVocabulary(GENE_NAMES)
+        vocabulary = GENE_REGISTRY
         species = SpeciesRegistry(vocabulary)
         genetics = Genetics(store, ColumnRegistry(), species, vocabulary, GENETICS_CONFIG)
         species_id = species.register(("size", "speed"))

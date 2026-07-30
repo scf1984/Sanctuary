@@ -35,7 +35,8 @@ from core.behaviour.movement import MovementConfig
 from core.ecology.cues import CueFieldConfig, ScentGenes
 from core.ecology.metabolism import MetabolismConfig
 from core.ecology.plants import PlantsConfig
-from core.genetics.expression import ExpressionMode, GeneticsConfig
+from core.genetics.expression import GeneticsConfig
+from core.genetics.registry import ExpressionMode, GeneSpec, Unit
 from core.world.diffusion import DiffusionConfig
 from core.world.assembly import World, WorldConfig, build_world
 from core.world.climate import ClimateConfig
@@ -52,21 +53,94 @@ _AVERSION_GENES = (
     tuple(f"aversion0_{channel}" for channel in range(8)),
     tuple(f"aversion1_{channel}" for channel in range(8)),
 )
-_GENE_NAMES = (
-    "size",
-    "speed",
-    "insulation",
-    "sight",
-    "scent_emission",
-    "scent_acuity",
-    *_SIGNATURE_GENES,
-    *_AVERSION_GENES[0],
-    *_AVERSION_GENES[1],
-    "mutability",
+def _cue_gene(name: str, meaning: str) -> GeneSpec:
+    """A cue-space gene: signed, free, and dimensionless.
+
+    Signed because cue space is a space — a signature is a position in it and an aversion a
+    direction through it, and the sign is what doubles its discriminating power (§2.5, #104). Free
+    because a cost on a signed gene subtracts from upkeep wherever the value is negative, which is
+    a discount selection would chase rather than a charge (#136) — and because §2.5 wants exactly
+    this block drifting neutrally, as the molecular clock that makes two isolated populations
+    recognisably different.
+    """
+    return GeneSpec(
+        name=name,
+        cost=0.0,
+        expression_mode=ExpressionMode.SIGNED,
+        unit=Unit.DIMENSIONLESS,
+        description=meaning,
+    )
+
+
+_GENES = (
+    GeneSpec(
+        name="size",
+        cost=0.01,
+        expression_mode=ExpressionMode.MAGNITUDE,
+        unit=Unit.DIMENSIONLESS,
+        description="Body scale. Multiplies every locomotion cost, and is never a mass (§2.6).",
+    ),
+    GeneSpec(
+        name="speed",
+        cost=0.01,
+        expression_mode=ExpressionMode.MAGNITUDE,
+        unit=Unit.LENGTH,
+        description="Top speed, in world units per tick — a length, since the tick is unitless.",
+    ),
+    GeneSpec(
+        name="insulation",
+        cost=0.01,
+        expression_mode=ExpressionMode.MAGNITUDE,
+        unit=Unit.DIMENSIONLESS,
+        description=(
+            "Damps thermoregulation upkeep with diminishing returns. Must charge a positive cost: "
+            "a gene that only reduces upkeep and charges nothing is unbounded free benefit."
+        ),
+    ),
+    GeneSpec(
+        name="sight",
+        cost=0.01,
+        expression_mode=ExpressionMode.MAGNITUDE,
+        unit=Unit.DIMENSIONLESS,
+        description="Visual acuity: scales what is sampled from the forage field, not a radius.",
+    ),
+    GeneSpec(
+        name="scent_emission",
+        cost=0.01,
+        expression_mode=ExpressionMode.MAGNITUDE,
+        unit=Unit.DIMENSIONLESS,
+        description=(
+            "Broadcast strength on the scent modality. This world charges it, which §2.5 argues is "
+            "a trap — low emission is already a survival benefit, so a cost makes silence both "
+            "cheaper and safer and drives emission to zero. Kept as-is here because changing a "
+            "cost moves outcomes (§2.8); filed separately rather than fixed in a refactor."
+        ),
+    ),
+    GeneSpec(
+        name="scent_acuity",
+        cost=0.01,
+        expression_mode=ExpressionMode.MAGNITUDE,
+        unit=Unit.DIMENSIONLESS,
+        description="Scent sensitivity, which for a diffused plume is also detection range.",
+    ),
+    *(_cue_gene(name, "Position in cue space: what this creature smells like.")
+      for name in _SIGNATURE_GENES),
+    *(_cue_gene(name, "First aversion direction: one region of cue space that frightens it.")
+      for name in _AVERSION_GENES[0]),
+    *(_cue_gene(name, "Second aversion direction, so two unrelated threats need not be averaged.")
+      for name in _AVERSION_GENES[1]),
+    GeneSpec(
+        name="mutability",
+        cost=0.0,
+        expression_mode=ExpressionMode.MAGNITUDE,
+        unit=Unit.DIMENSIONLESS,
+        description=(
+            "Floors the spread of an offspring's inherited draw, so a lineage evolves its own "
+            "evolvability. Free: an unfit brood is its own price (#104)."
+        ),
+    ),
 )
-# Cue space is signed — a signature is a position in it, an aversion a direction through it — while
-# every other gene here is a quantity that cannot go negative (#104).
-_CUE_GENES = (*_SIGNATURE_GENES, *_AVERSION_GENES[0], *_AVERSION_GENES[1])
+_GENE_NAMES = tuple(gene.name for gene in _GENES)
 
 
 def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
@@ -100,26 +174,12 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
         ),
         cue_field=CueFieldConfig(diffusion_range=3.0),
         metabolism=MetabolismConfig(
-            gene_costs={
-                **{name: 0.01 for name in _GENE_NAMES},
-                # Mutability charges nothing: high mutability already pays for itself in unfit
-                # offspring, so a stable world selects it down with no energy price (#104).
-                "mutability": 0.0,
-                # Cue genes cost nothing, per §2.5's reserved block. They are read `SIGNED`, so a
-                # cost on one subtracts from upkeep wherever the value is negative rather than
-                # adding to it — a discount selection would chase (#136).
-                **{name: 0.0 for name in _CUE_GENES},
-            },
             basal_rate=0.05,
             thermoregulation_rate=0.01,
             neutral_temperature=20.0,
             insulation_gene="insulation",
         ),
         genetics=GeneticsConfig(
-            expression_modes={
-                name: ExpressionMode.SIGNED if name in _CUE_GENES else ExpressionMode.MAGNITUDE
-                for name in _GENE_NAMES
-            },
             mutability_gene="mutability",
             drift_margin=2.0,
         ),
@@ -152,7 +212,7 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
         ),
         fatigue=FatigueConfig(weight=1.0, exertion_saturation=20.0),
         scent_genes=ScentGenes(emission_gene="scent_emission", signature_genes=_SIGNATURE_GENES),
-        gene_names=_GENE_NAMES,
+        genes=_GENES,
         # Naive founders (§2.5, #101): a uniform draw over the whole cue space rather than a chosen
         # point, so nothing here writes down what a lineage smells like or what frightens it.
         founder_gene_ranges={
