@@ -15,7 +15,7 @@ the frame path still reading it correctly now that entities move.
 import numpy as np
 
 from clients.viewer.demo_world import build_demo_world
-from clients.viewer.render import interpolate_positions, species_colors, world_to_screen
+from clients.viewer.render import live_positions, species_colors, world_to_screen
 from core.invariants import default_registry
 
 _SCREEN = (640, 480)
@@ -87,17 +87,50 @@ class TestFramePath:
         world = build_demo_world(seed=4, n_entities=40)
         world.loop.advance(1)
 
-        x, y, _z = interpolate_positions(
-            world.loop.previous_positions, world.loop.current_positions, 0.5
+        x, y, _z, drawn = live_positions(
+            world.loop.previous_positions,
+            world.loop.previous_row_ids,
+            world.loop.current_positions,
+            world.loop.current_row_ids,
+            0.5,
         )
         px, py = world_to_screen(
             x, y, world.terrain.world_width, world.terrain.world_height, *_SCREEN
         )
-        colors = species_colors(world.store.species_id)
+        colors = species_colors(world.store.species_id[drawn])
 
-        assert px.shape == py.shape == (world.store.capacity,)
+        n_live = int(world.store.alive.sum())
+        assert px.shape == py.shape == (n_live,)
         assert ((0 <= px) & (px < _SCREEN[0])).all()
         assert ((0 <= py) & (py < _SCREEN[1])).all()
-        assert colors.shape == (world.store.capacity, 3)
+        assert colors.shape == (n_live, 3)
         # Every founder is given a species, so none falls back to the unset-species gray.
         assert (world.store.species_id[world.store.alive] >= 0).all()
+
+    def test_a_death_removes_an_entity_from_the_frame(self):
+        """End-to-end proof that the ghost is gone (#119).
+
+        Nothing in an assembled world dies yet — #21 is unbuilt — so this releases a row directly.
+        That is exactly what death will do, and the point is that the *frame path* stops drawing it
+        rather than that any particular system caused it. Capacity-wide rendering was accidentally
+        correct only because the demo world allocated exactly its capacity and never released a row.
+        """
+        world = build_demo_world(seed=4, n_entities=40)
+        world.loop.advance(1)
+        before = int(world.store.alive.sum())
+
+        doomed = world.store.row_ids()[world.store.alive][:1]
+        world.store.release(doomed)
+        world.loop.advance(1)
+
+        x, _y, _z, drawn = live_positions(
+            world.loop.previous_positions,
+            world.loop.previous_row_ids,
+            world.loop.current_positions,
+            world.loop.current_row_ids,
+            0.5,
+        )
+
+        assert int(drawn.sum()) == before - 1
+        assert len(x) == before - 1
+        assert world.store.capacity == before, "capacity is unchanged; only the drawn set shrank"

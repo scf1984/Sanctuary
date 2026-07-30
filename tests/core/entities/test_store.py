@@ -180,6 +180,49 @@ class TestFreeRowMask:
         assert mask.tolist() == [True, True, True, True]
 
 
+class TestRowIds:
+    def test_free_rows_read_minus_one(self):
+        store = make_store(initial_capacity=3)
+        assert store.row_ids().tolist() == [-1, -1, -1]
+
+    def test_allocated_rows_hold_their_own_id(self):
+        store = make_store(initial_capacity=4)
+        ids = store.allocate(2)
+        row_ids = store.row_ids()
+        for id_ in ids.tolist():
+            assert row_ids[store._id_to_row[id_]] == id_
+
+    def test_released_rows_return_to_minus_one(self):
+        store = make_store(initial_capacity=4)
+        ids = store.allocate(2)
+        row = store._id_to_row[ids[0].item()]
+        store.release(ids[:1])
+        assert store.row_ids()[row] == -1
+
+    def test_a_reused_row_reports_a_different_id_than_before(self):
+        """The distinction `alive` cannot make, and the reason this accessor exists (#119).
+
+        Ids are never reused, so a row that was released and handed to a newborn reads as a
+        different entity — where `alive` reads True both before and after and hides the swap.
+        """
+        store = make_store(initial_capacity=1)
+        first = store.allocate(1)
+        row = store._id_to_row[first[0].item()]
+        store.release(first)
+        second = store.allocate(1)
+
+        assert store._id_to_row[second[0].item()] == row, "expected the row to be recycled"
+        assert store.alive[row]
+        assert store.row_ids()[row] != first[0]
+        assert store.row_ids()[row] == second[0]
+
+    def test_returned_array_is_a_snapshot_not_a_live_view(self):
+        store = make_store(initial_capacity=2)
+        row_ids = store.row_ids()
+        store.allocate(2)
+        assert row_ids.tolist() == [-1, -1]
+
+
 class TestGrowth:
     def test_doubles_capacity(self):
         store = make_store(initial_capacity=8)

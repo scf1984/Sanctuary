@@ -19,7 +19,7 @@ from clients.viewer.playback import Playback
 from clients.viewer.render import (
     apply_water_overlay,
     elevation_shading,
-    interpolate_positions,
+    live_positions,
     species_colors,
     world_to_screen,
 )
@@ -76,13 +76,17 @@ def run(seed: int = 0, n_entities: int = 200) -> None:
 
         screen.blit(background, (0, 0))
 
-        x, y, _z = interpolate_positions(
-            world.loop.previous_positions, world.loop.current_positions, alpha
+        x, y, _z, drawn = live_positions(
+            world.loop.previous_positions,
+            world.loop.previous_row_ids,
+            world.loop.current_positions,
+            world.loop.current_row_ids,
+            alpha,
         )
         px, py = world_to_screen(
             x, y, world.terrain.world_width, world.terrain.world_height, *_SCREEN_SIZE
         )
-        colors = species_colors(world.store.species_id)
+        colors = species_colors(world.store.species_id[drawn])
         for screen_x, screen_y, color in zip(px.tolist(), py.tolist(), colors.tolist()):
             pygame.draw.circle(screen, color, (screen_x, screen_y), _ENTITY_RADIUS)
 
