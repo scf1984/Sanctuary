@@ -31,6 +31,7 @@ from core.behaviour.drives import (
     ThirstConfig,
 )
 from core.behaviour.exertion import ExertionConfig
+from core.behaviour.service import BehaviourConfig
 from core.behaviour.movement import MovementConfig
 from core.ecology.cues import CueFieldConfig, ScentGenes
 from core.ecology.metabolism import MetabolismConfig
@@ -130,6 +131,17 @@ _GENES = (
     *(_cue_gene(name, "Second aversion direction, so two unrelated threats need not be averaged.")
       for name in _AVERSION_GENES[1]),
     GeneSpec(
+        name="choice_temperature",
+        cost=0.0,
+        expression_mode=ExpressionMode.EXPONENTIAL,
+        unit=Unit.DIMENSIONLESS,
+        description=(
+            "Boltzmann temperature for option sampling: low commits to the best heading, high "
+            "explores. Read through `exp` so it can never reach zero however far it drifts. Free, "
+            "because exploring badly is its own price."
+        ),
+    ),
+    GeneSpec(
         name="mutability",
         cost=0.0,
         expression_mode=ExpressionMode.MAGNITUDE,
@@ -211,6 +223,17 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
             weight=1.0, maturity_age=20, breeding_energy=120.0, abundant_energy=250.0
         ),
         fatigue=FatigueConfig(weight=1.0, exertion_saturation=20.0),
+        behaviour=BehaviourConfig(
+            # Eight headings is enough that a forager can follow a gradient without the walk
+            # visibly staircasing, and the per-entity jitter makes the effective resolution
+            # continuous across the population.
+            n_candidates=8,
+            # One diffusion range: the distance over which the forage field carries information,
+            # so it is the furthest a candidate reading can vouch for.
+            look_ahead=4.0,
+            change_aversion=0.15,
+            choice_temperature_gene="choice_temperature",
+        ),
         scent_genes=ScentGenes(emission_gene="scent_emission", signature_genes=_SIGNATURE_GENES),
         genes=_GENES,
         # Naive founders (§2.5, #101): a uniform draw over the whole cue space rather than a chosen
@@ -228,6 +251,9 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
             # rather than fixed so founders vary in evolvability like anything else
             # (docs/spikes/speciation-drift.md).
             "mutability": (0.01, 0.03),
+            # Around zero, so `exp` puts founding temperatures around 1 — the scale at which a
+            # utility difference of one is a decisive preference rather than a faint one.
+            "choice_temperature": (-0.3, 0.3),
         },
         n_founders=n_entities,
         founder_energy=180.0,

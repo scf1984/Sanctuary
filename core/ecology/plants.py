@@ -284,6 +284,19 @@ class Plants:
         """
         return self.forage_diffusion.spread(self.biomass.astype(np.float32))
 
+    def forage_at(self, field, x, y):
+        """The forage field's value at each ``(x, y)``, in the field's own units.
+
+        Accepts any shape, because #114 samples a whole block of candidate options at once —
+        ``(n_entities, n_options)`` — and `_cell_indices` is elementwise, so one call serves the
+        whole population's whole option set rather than one call per option (§2.3).
+
+        Sampled to the containing cell rather than interpolated, matching `biomass_at`: a forager
+        that walks there will graze *that* cell, so what it can see and what it can eat agree.
+        """
+        rows, cols = self._cell_indices(x, y)
+        return field[rows, cols]
+
     def forage_gradient(
         self, field: np.ndarray, x: np.ndarray, y: np.ndarray
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:

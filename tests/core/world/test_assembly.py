@@ -20,6 +20,7 @@ from core.behaviour.drives import (
     ThirstConfig,
 )
 from core.behaviour.exertion import ExertionConfig
+from core.behaviour.service import BehaviourConfig
 from core.behaviour.movement import MovementConfig
 from core.ecology.cues import CueFieldConfig, ScentGenes
 from core.ecology.metabolism import MetabolismConfig
@@ -57,6 +58,7 @@ GENE_NAMES = (
     *AVERSION_GENES[0],
     *AVERSION_GENES[1],
     "mutability",
+    "choice_temperature",
 )
 # Cue space is signed — a signature is a position in it, an aversion a direction through it — and
 # everything else here is a quantity that cannot go negative (#104).
@@ -144,6 +146,17 @@ def world_config(**overrides):
             weight=1.0, maturity_age=20, breeding_energy=120.0, abundant_energy=250.0
         ),
         fatigue=FatigueConfig(weight=1.0, exertion_saturation=20.0),
+        behaviour=BehaviourConfig(
+            # Eight headings is enough that a forager can follow a gradient without the walk
+            # visibly staircasing, and the per-entity jitter makes the effective resolution
+            # continuous across the population.
+            n_candidates=8,
+            # One diffusion range: the distance over which the forage field carries information,
+            # so it is the furthest a candidate reading can vouch for.
+            look_ahead=4.0,
+            change_aversion=0.15,
+            choice_temperature_gene="choice_temperature",
+        ),
         scent_genes=ScentGenes(
             emission_gene="scent_emission", signature_genes=SIGNATURE_GENES
         ),
@@ -163,6 +176,7 @@ def world_config(**overrides):
             # rather than fixed so a founder population varies in its evolvability like anything
             # else (docs/spikes/speciation-drift.md).
             "mutability": (0.01, 0.03),
+            "choice_temperature": (-0.3, 0.3),
         },
         n_founders=40,
         founder_energy=180.0,

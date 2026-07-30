@@ -42,10 +42,32 @@ class ExpressionMode(Enum):
     SIGNED = "signed"
     """A direction in cue space: read as stored. Sign is information, not a mistake."""
 
-    # There is deliberately no unit-interval mode. #104 names a third reading, a squash to [0, 1],
-    # for `sex_allocation` and `selfing_rate` (#99) and for respiration allocation (#146) — none of
+    EXPONENTIAL = "exponential"
+    """A rate or a scale: read as `exp(value)`. Strictly positive on the whole real line, so the
+    phenotype can never reach zero however far the gene drifts, and equal steps in storage are
+    equal *ratios* in the phenotype — which is what a temperature or a rate wants, since halving
+    and doubling are the symmetric pair rather than plus and minus one.
+
+    Note this is not interchangeable with MAGNITUDE. `abs` folds at zero, so a gene drifting across
+    it produces a phenotype that bounces off zero; `exp` is monotone, so drift is smooth and the
+    sign of the stored value carries real information (below one versus above it)."""
+
+    # There is deliberately no unit-interval mode. #104 names a squash to [0, 1] for
+    # `sex_allocation` and `selfing_rate` (#99) and for respiration allocation (#146) — none of
     # which exist yet, so adding the member now would be a mode nothing declares (§8.2). Adding one
-    # later is additive.
+    # later is additive, as EXPONENTIAL was when #114's `choice_temperature` first needed it.
+
+
+    @property
+    def always_non_negative(self) -> bool:
+        """Whether this reading can ever produce a negative phenotype.
+
+        Asked rather than hardcoded as a member list, because it is the *property* #136 needs and
+        not the identity of any one mode: a cost charges correctly only when the value it
+        multiplies cannot go below zero. `abs` and `exp` both promise that; a raw signed read does
+        not. A mode added later answers here once instead of being remembered in the registry.
+        """
+        return self in (ExpressionMode.MAGNITUDE, ExpressionMode.EXPONENTIAL)
 
 
 class Unit(Enum):
@@ -105,6 +127,7 @@ class GeneRegistry:
         so trait upkeep for any number of entities is one matrix-vector product (§2.3).
     magnitude_columns: (n_genes,) bool, True where the gene is read as a magnitude, in column
         order — so applying every mode to a phenotype block is a handful of whole-array operations.
+    exponential_columns: (n_genes,) bool, True where the gene is read as `exp(value)`.
     """
 
     def __init__(self, specs: tuple[GeneSpec, ...]) -> None:
@@ -123,16 +146,16 @@ class GeneRegistry:
         miscosted = [
             gene
             for gene in specs
-            if gene.cost != 0 and gene.expression_mode is not ExpressionMode.MAGNITUDE
+            if gene.cost != 0 and not gene.expression_mode.always_non_negative
         ]
         if miscosted:
             offenders = ", ".join(
                 f"{gene.name} ({gene.expression_mode.value})" for gene in miscosted
             )
             raise ValueError(
-                f"only genes read as a magnitude may carry a cost; costed but not a magnitude: "
-                f"{offenders}. A signed phenotype times a positive cost discounts upkeep instead "
-                "of charging it (#136)"
+                f"only a gene whose expression mode cannot produce a negative phenotype may carry "
+                f"a cost; costed but signed: {offenders}. A signed phenotype times a positive cost "
+                "discounts upkeep instead of charging it (#136)"
             )
 
         self.specs = specs
@@ -141,6 +164,9 @@ class GeneRegistry:
         self.cost = np.array([gene.cost for gene in specs], dtype=np.float32)
         self.magnitude_columns = np.array(
             [gene.expression_mode is ExpressionMode.MAGNITUDE for gene in specs], dtype=bool
+        )
+        self.exponential_columns = np.array(
+            [gene.expression_mode is ExpressionMode.EXPONENTIAL for gene in specs], dtype=bool
         )
 
     def __len__(self) -> int:

@@ -188,7 +188,7 @@ class Movement(DomainService):
         """Advance `selection` one tick toward ``(target_x, target_y)``, charging the effort.
 
         target_x, target_y: (len(selection),) world units, in ascending row order — the same order
-            every service reads a selection in, so a target array from `Hunger.forage_target` lines
+            every service reads a selection in, so a target array from `Behaviour.chosen_target` lines
             up with the selection it was computed for without either side handling row indices.
         pace: fraction of top speed to travel at, in (0, 1]. `MovementConfig.walking_pace` for an
             unhurried animal; higher for urgency, which costs more per world unit (see the module
@@ -226,7 +226,7 @@ class Movement(DomainService):
         to_target_x = target_x - x
         to_target_y = target_y - y
         distance = np.hypot(to_target_x, to_target_y)
-        # An animal standing on its target has no direction, and `Hunger.forage_target` returns
+        # An animal standing on its target has no direction, and `Behaviour.chosen_target` returns
         # exactly that whenever nothing edible is in sight — a normal tick, not an edge case.
         moving = distance > 0.0
         unit_x = np.where(moving, to_target_x / np.where(moving, distance, 1.0), 0.0)

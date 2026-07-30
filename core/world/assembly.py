@@ -62,7 +62,7 @@ from core.behaviour.drives import (
 )
 from core.behaviour.exertion import Exertion, ExertionConfig
 from core.behaviour.movement import Movement, MovementConfig
-from core.behaviour.service import Behaviour
+from core.behaviour.service import Behaviour, BehaviourConfig
 from core.ecology.aging import Aging
 from core.ecology.cues import CueField, CueFieldConfig, Scent, ScentGenes
 from core.ecology.metabolism import Metabolism, MetabolismConfig
@@ -137,6 +137,7 @@ class WorldConfig:
     fear: FearConfig
     lust: LustConfig
     fatigue: FatigueConfig
+    behaviour: BehaviourConfig
     scent_genes: ScentGenes
     genes: tuple[GeneSpec, ...]
     founder_gene_ranges: Mapping[str, tuple[float, float]]
@@ -227,7 +228,9 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
     movement = Movement(
         store, columns, ecology, exertion, genetics, terrain, genes, config.movement
     )
-    behaviour = Behaviour(store, columns)
+    behaviour = Behaviour(
+        store, columns, genetics, genes, terrain, config.behaviour
+    )
     aging = Aging(store, columns)
     scent = Scent(
         store,
@@ -255,7 +258,8 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
             f"registered drives {behaviour.drive_names} do not match {_DRIVE_NAMES}"
         )
 
-    founders = _found(config, store, genetics, species, movement, terrain, seed)
+    rng = np.random.default_rng(seed)
+    founders = _found(config, store, genetics, species, movement, terrain, rng)
 
     systems = _build_systems(
         store,
@@ -267,6 +271,7 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
         exertion,
         ecology,
         aging,
+        rng,
         config.movement.walking_pace,
     )
     loop = TickLoop(
@@ -331,6 +336,7 @@ def _build_systems(
     exertion: Exertion,
     ecology: Ecology,
     aging: Aging,
+    rng: np.random.Generator,
     walking_pace: float,
 ) -> dict[str, Callable[[], None]]:
     """One zero-argument callable per system, by name. `_ordered` decides the sequence.
@@ -348,18 +354,19 @@ def _build_systems(
     def living() -> Selection:
         return Selection.from_mask(store.alive)
 
-    def move_foragers() -> None:
-        # Only hunger has a destination today; see the module docstring. Everyone else has been
-        # scored and stands still, which is what the absent mechanics mean rather than a bug.
-        foragers = behaviour.driven_by("hunger", living())
-        target_x, target_y = hunger.forage_target(foragers)
-        movement.step(foragers, target_x, target_y, walking_pace)
+    def move_chosen() -> None:
+        # Everyone moves, because everyone chose — including the animals that chose to stay, whose
+        # target is their own position and whose step therefore costs nothing (#114). There is no
+        # longer a subset "driven by" one drive: a heading is the sum of every drive's opinion.
+        population = living()
+        target_x, target_y = behaviour.chosen_target(population)
+        movement.step(population, target_x, target_y, walking_pace)
 
     return {
         "plant_growth": plants.grow,
         "cue_field_rebuild": lambda: scent.rebuild(living()),
-        "drive_scoring": lambda: behaviour.score(living()),
-        "movement": move_foragers,
+        "drive_scoring": lambda: behaviour.choose(living(), rng),
+        "movement": move_chosen,
         "exertion_recovery": lambda: exertion.recover(living()),
         "metabolic_upkeep": lambda: ecology.drain(living()),
         "age_increment": lambda: aging.advance(living()),
@@ -373,7 +380,7 @@ def _found(
     species: SpeciesRegistry,
     movement: Movement,
     terrain: Terrain,
-    seed: int,
+    rng: np.random.Generator,
 ) -> Selection:
     """Allocate the founding population: naive genes, scattered over the surface.
 
@@ -381,7 +388,6 @@ def _found(
     the only honest reason is that selection made them differ — which is what the simulation is for
     (§2.5, #101).
     """
-    rng = np.random.default_rng(seed)
     n = config.n_founders
 
     x = rng.uniform(0.0, terrain.world_width, n).astype(np.float32)
