@@ -27,7 +27,11 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-COVERAGE_JSON = REPO_ROOT / "coverage.json"
+# Where `pytest --cov-report=json` writes, and the only report CI has. A *default* rather than a
+# constant `main()` reads directly: the report location is an input, and a function whose input is a
+# module global can only be tested by reassigning that global from the outside. Every test here did
+# exactly that until the parameter existed, which is the design saying it should have been one.
+DEFAULT_REPORT = REPO_ROOT / "coverage.json"
 
 # Measured, not chosen (CLAUDE.md §8.5). Two populations were measured on the commit that added
 # this check, over the same 794-test suite:
@@ -76,12 +80,12 @@ def module_rows(coverage_data: dict) -> list[tuple[str, int, float]]:
     return sorted(rows, key=lambda row: (row[2], row[0]))
 
 
-def main() -> int:
-    if not COVERAGE_JSON.exists():
-        print(f"No coverage data at {COVERAGE_JSON}; run pytest --cov-report=json first.")
+def main(report: Path = DEFAULT_REPORT) -> int:
+    if not report.exists():
+        print(f"No coverage data at {report}; run pytest --cov-report=json first.")
         return 1
 
-    rows = module_rows(json.loads(COVERAGE_JSON.read_text(encoding="utf-8")))
+    rows = module_rows(json.loads(report.read_text(encoding="utf-8")))
     if not rows:
         # An empty report means the run measured nothing, which passes every threshold vacuously.
         # That is the one way this check could report success while telling us nothing at all.
