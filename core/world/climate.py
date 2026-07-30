@@ -36,17 +36,29 @@ class ClimateConfig:
         latitude band across the world's y extent rather than a full planet.
     equator_temperature: temperature at the equator at `sea_level_elevation`.
     latitude_gradient: degrees C lost per world unit of distance from `equator_y`.
-    sea_level_elevation: elevation (meters) at which the altitude lapse rate is zero.
-    lapse_rate: degrees C lost per meter of elevation above `sea_level_elevation`. Defaults to
-        Earth's ~6.5 °C/km tropospheric lapse rate as a plausible starting point, not a
-        measured claim about this simulation.
+    sea_level_elevation: elevation (world units) at which the altitude lapse rate is zero. A
+        default of 0.0 is a reference point rather than a guess about scale, so unlike
+        `TerrainConfig`'s elevation range it may carry one.
+    lapse_rate: degrees C lost per **world unit** of elevation above `sea_level_elevation`
+        (#112). It was denominated in a physical length unit and defaulted to Earth's tropospheric
+        lapse rate, which is exactly the Earth-calibrated constant this world has no use for —
+        read against elevation in world units, that default cooled a peak by hundredths of a
+        degree, and altitude stopped driving climate at all.
+
+        Re-derived from the world's own geometry instead: a peak should be about as cold as a
+        pole, or §2.6's "climate zones are consequences of terrain" is decoration. That means
+        ``lapse_rate * relief ~= latitude_gradient * half_extent``, and with relief chosen at
+        roughly a tenth of extent (see `TerrainConfig.max_elevation`) it lands at five times
+        `latitude_gradient`. The two are therefore **one pair, tuned together** — §2.1's warning
+        about constants drifting apart applies to them exactly, and a test pins the factor so
+        that moving one alone fails rather than quietly halving how much terrain matters.
     """
 
     equator_y: float
     equator_temperature: float = 30.0
     latitude_gradient: float = 0.05
     sea_level_elevation: float = 0.0
-    lapse_rate: float = 0.0065
+    lapse_rate: float = 0.25
 
     def __post_init__(self) -> None:
         if self.latitude_gradient < 0:

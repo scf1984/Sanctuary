@@ -78,7 +78,7 @@ class TestDeposit:
         assert near > far
 
     def test_broadcasters_accumulate(self):
-        """Ten wolves at 30 metres outweigh one at 25 — the reading a nearest-neighbour query gets
+        """Ten wolves 30 world units off outweigh one at 25 — the reading a nearest-neighbour query gets
         backwards, and a reason the field is not merely the cheaper model.
         """
         _, one = make_field()

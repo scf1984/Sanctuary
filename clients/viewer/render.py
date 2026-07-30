@@ -32,7 +32,8 @@ _ELEVATION_COLORS = np.array(
 )
 
 _WATER_COLOR = np.array([40.0, 90.0, 200.0])
-# Depth (meters) at which standing water reaches its most saturated tint; deeper water clips to
+# Depth (world units, as `Water.depth` reports) at which standing water reaches its most
+# saturated tint; deeper water clips to
 # the same color rather than growing darker without bound.
 _WATER_REFERENCE_DEPTH = 3.0
 

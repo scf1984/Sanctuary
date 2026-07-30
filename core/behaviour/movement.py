@@ -12,11 +12,12 @@ Three properties carry the design:
   heightmap from scenery into the isolation barrier speciation needs (#16) — nobody places a
   barrier, and a mountain range becomes one because crossing it costs more than the far side is
   worth.
-- **Effort is charged, not just distance** (§2.5). Cost per metre rises with `pace`, so a sprint is
-  dearer than a stroll over the same ground. Pricing distance alone would make a chase merely long;
-  it is the per-metre premium that makes a predator pay for every chase it loses and prey pay for
-  every escape. Nothing here knows what fleeing *is* — a drive that wants urgency passes a higher
-  pace, and #19's chase and #24's flight are then priced without this module changing.
+- **Effort is charged, not just distance** (§2.5). Cost per world unit rises with `pace`, so a
+  sprint is dearer than a stroll over the same ground. Pricing distance alone would make a chase
+  merely long; it is the per-unit premium that makes a predator pay for every chase it loses and
+  prey pay for every escape. Nothing here knows what fleeing *is* — a drive that wants urgency
+  passes a higher pace, and #19's chase and #24's flight are then priced without this module
+  changing.
 - **The pool gates the step, it does not merely record it.** An animal that cannot pay for the
   whole step covers only what it can afford, and an empty one does not move at all. This is §2.5's
   "a starving animal can neither run nor hide" as a mechanism rather than as a mood: hunger closes
@@ -60,14 +61,21 @@ class MovementConfig:
         Must be positive: at zero, distance is free and nothing stops an animal crossing the world
         every tick, which removes the cost half of §2.5's hard budget for the one trait that
         spends the most.
-    exertion_premium: extra fraction of `transport_cost` charged at full pace, so a metre at pace
-        ``p`` costs ``transport_cost × (1 + exertion_premium × p)``. Must be non-negative —
-        negative would make sprinting cheaper per metre than walking, inverting §2.5.
-    climb_cost: joules per metre of elevation *gained*, per unit of expressed size. Descent
-        charges nothing beyond its horizontal distance: raising a body against gravity is work in
-        a way that lowering it is not, and that asymmetry is the whole of "uphill costs more than
-        downhill". Must be non-negative; negative would mint energy out of walking uphill, which
-        §2.5's closed loop forbids outright.
+    exertion_premium: extra fraction of `transport_cost` charged at full pace, so a world unit at
+        pace ``p`` costs ``transport_cost × (1 + exertion_premium × p)``. Must be non-negative —
+        negative would make sprinting cheaper per unit than walking, inverting §2.5.
+    climb_cost: joules per **world unit** of elevation *gained*, per unit of expressed size — the
+        same length unit `transport_cost` is denominated in (#112), so ``climb_cost /
+        transport_cost`` is a real statement: how many world units of flat ground cost what one
+        world unit of climb does. Elevation used to be documented in a physical length unit while
+        x and y were in world units, which left that ratio resting on a conversion factor nothing
+        declared, nothing checked, and everything depended on — the same shape of defect as the
+        prototype's degree-valued sight angle compared against a radian difference (§8.4).
+
+        Descent charges nothing beyond its horizontal distance: raising a body against gravity is
+        work in a way that lowering it is not, and that asymmetry is the whole of "uphill costs
+        more than downhill". Must be non-negative; negative would mint energy out of walking
+        uphill, which §2.5's closed loop forbids outright.
     walking_pace: the fraction of top speed an unhurried animal uses. Config rather than a literal
         at the call site because it is one half of the walk/sprint ratio `exertion_premium` prices,
         and tuning either one alone is what §2.1 means by constants drifting apart. Must be in
@@ -91,7 +99,7 @@ class MovementConfig:
         if self.exertion_premium < 0:
             raise ValueError(
                 f"exertion_premium must be non-negative, got {self.exertion_premium}; "
-                "negative makes sprinting cheaper per metre than walking"
+                "negative makes sprinting cheaper per world unit than walking"
             )
         if self.climb_cost < 0:
             raise ValueError(
@@ -174,7 +182,7 @@ class Movement(DomainService):
             every service reads a selection in, so a target array from `Hunger.forage_target` lines
             up with the selection it was computed for without either side handling row indices.
         pace: fraction of top speed to travel at, in (0, 1]. `MovementConfig.walking_pace` for an
-            unhurried animal; higher for urgency, which costs more per metre (see the module
+            unhurried animal; higher for urgency, which costs more per world unit (see the module
             docstring). A scalar rather than a per-entity array because pace is a property of the
             *drive* that won this tick, and `driven_by` already partitions the population by drive
             — a fleeing set and a foraging set are two calls, not one call with a mixed column.

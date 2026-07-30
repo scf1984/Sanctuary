@@ -4,6 +4,14 @@ Elevation is real from the start (CLAUDE.md §2.6): it drives movement cost, lin
 occlusion, downhill water flow, and temperature by altitude, so climate zones fall out of
 relief instead of being painted on. Generation is a pure function of a world seed so a world
 can be recreated for testing even though the running simulation is not deterministic (§2.2).
+
+**This module defines the world's one length unit** (#112). `cell_size` is world units per cell
+edge and elevation is in those same units, so vertical and horizontal distance are directly
+comparable and nothing needs a conversion factor between them. The unit is deliberately **not** a
+physical one: grounding it invites Earth-calibrated constants — Earth's tropospheric lapse rate
+was the first — that carry no meaning in a world whose relief is whatever its config says, and
+cannot be tuned freely once written down. Every length in `core/` is in this unit, and
+`tests/test_length_units.py` fails if any of them claims otherwise.
 """
 
 from __future__ import annotations
@@ -20,24 +28,33 @@ class TerrainConfig:
     width, height: grid resolution in cells. World extent in world units is
         ``(width - 1) * cell_size`` by ``(height - 1) * cell_size`` — callers derive this from
         climate-zone variety and animal home range (§2.6), never from a fixed constant here.
-    cell_size: world units per cell edge.
+    min_elevation, max_elevation: output height range, **world units** — the same unit as x, y,
+        cell_size and speed (#112). Required rather than defaulted, because relief only means
+        something against the extent above, which only the caller knows: the range this replaced
+        defaulted to 0–1000 against a default `cell_size` of 1.0, i.e. relief a thousand cells
+        tall, and nothing in the type system or the tests noticed. Choose it as a *ratio* to
+        extent — around a tenth gives terrain a creature must climb but not a wall of cliffs —
+        and rescale it when the world grows, since it is the ratio and not the magnitude that
+        decides whether a ridge isolates a population (§2.6, #16).
+    cell_size: world units per cell edge. Defaulting to 1.0 is a normalisation rather than a
+        guess about scale — one cell *is* one world unit — which is why this length may carry a
+        default where the two above may not.
     seed: generation is a pure function of this value; the same seed always yields the same
         height field.
     octaves: number of fractal noise layers combined to build relief. More octaves add
         finer detail on top of the same large-scale shape.
     persistence: amplitude falloff per octave, in (0, 1). Higher values weight finer octaves
         more heavily, producing rougher terrain.
-    min_elevation, max_elevation: output height range, meters.
     """
 
     width: int
     height: int
+    min_elevation: float
+    max_elevation: float
     cell_size: float = 1.0
     seed: int = 0
     octaves: int = 6
     persistence: float = 0.5
-    min_elevation: float = 0.0
-    max_elevation: float = 1000.0
 
     def __post_init__(self) -> None:
         if self.width < 2 or self.height < 2:
@@ -55,7 +72,9 @@ class TerrainConfig:
 class Terrain:
     """Owns the world's height field and the slope/aspect derived from it.
 
-    heights: (height, width) float32, meters.
+    heights: (height, width) float32, world units — the same unit as `cell_size`, so a slope is a
+             ratio of two quantities in one unit and `climb_cost` is comparable to
+             `transport_cost` (#112).
     slope:   (height, width) float32, radians from horizontal; 0 is flat.
     aspect:  (height, width) float32, radians of the downhill direction measured
              counterclockwise from +x (grid column axis); 0 on perfectly flat cells, where the
@@ -96,7 +115,7 @@ class Terrain:
         return (self.heights.shape[0] - 1) * self.cell_size
 
     def elevation_at(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
-        """Bilinearly interpolated elevation (meters) at continuous world positions."""
+        """Bilinearly interpolated elevation (world units) at continuous world positions."""
         return self._sample(self.heights, x, y)
 
     def slope_at(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
