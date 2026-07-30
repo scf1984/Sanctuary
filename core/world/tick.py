@@ -33,6 +33,14 @@ class TickLoop:
         (§2.1) so tick size is never constrained by visual smoothness. A snapshot is taken once
         per ``advance()`` call, not once per tick within it, so a large catch-up batch copies
         positions twice regardless of how many ticks it covers.
+    previous_row_ids, current_row_ids: ``(n_entities,)`` int64, the stable id in each row at those
+        same two boundaries, -1 for a free row (`EntityStore.row_ids`). Taken together with the
+        positions rather than left to the reader to fetch, because a position snapshot is not
+        interpretable without the occupancy that qualifies it: a row's coordinates survive
+        `release` untouched, so a position alone cannot say whether it belongs to a live entity, to
+        one that died during the interval, or to a newborn that inherited the row. Reading
+        ``store.alive`` at draw time answers only the first of those, and only for the *current*
+        end of the interval (#119).
     invariants, debug_checks: an optional InvariantRegistry (CLAUDE.md §6) evaluated after every
         tick, only when ``debug_checks`` is True. It is handed ``store``; invariants over anything
         else the world holds — the plant field, say — close over it when they are built, so the
@@ -56,8 +64,11 @@ class TickLoop:
         self._invariants = invariants if invariants is not None else InvariantRegistry()
         self.debug_checks = debug_checks
         self.tick_count = 0
-        self.current_positions = self._snapshot_positions()
-        self.previous_positions = self.current_positions
+        self.current_positions, self.current_row_ids = self._snapshot()
+        self.previous_positions, self.previous_row_ids = (
+            self.current_positions,
+            self.current_row_ids,
+        )
 
     def advance(self, n_ticks: int) -> None:
         """Run every system in order, ``n_ticks`` times, advancing the tick counter by n_ticks.
@@ -69,14 +80,26 @@ class TickLoop:
         if n_ticks < 0:
             raise ValueError("n_ticks must be non-negative")
 
-        self.previous_positions = self.current_positions
+        self.previous_positions, self.previous_row_ids = (
+            self.current_positions,
+            self.current_row_ids,
+        )
         for _ in range(n_ticks):
             for system in self.systems:
                 system()
             self.tick_count += 1
             if self.debug_checks:
                 self._invariants.check_all(self._store, self.tick_count)
-        self.current_positions = self._snapshot_positions()
+        self.current_positions, self.current_row_ids = self._snapshot()
 
-    def _snapshot_positions(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        return (self._store.x.copy(), self._store.y.copy(), self._store.z.copy())
+    def _snapshot(self) -> tuple[tuple[np.ndarray, np.ndarray, np.ndarray], np.ndarray]:
+        """Positions and the row occupancy that qualifies them, as of right now.
+
+        Returned together, and assigned together by both callers, so the two halves are always
+        from the same instant. Split into two calls they could drift by a system, which would be a
+        silent mismatch rather than an error.
+        """
+        return (
+            (self._store.x.copy(), self._store.y.copy(), self._store.z.copy()),
+            self._store.row_ids(),
+        )

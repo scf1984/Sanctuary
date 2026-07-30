@@ -128,6 +128,78 @@ class TestInterpolationState:
         assert loop.current_positions[0] is snapshot
 
 
+class TestOccupancySnapshots:
+    """Occupancy is snapshotted with the positions, because a position alone cannot be read (#119).
+
+    `release` leaves x/y/z untouched, so a coordinate says nothing about whether a live entity is
+    standing there — or whether the one standing there now is the one that was there last tick.
+    """
+
+    def test_free_rows_read_minus_one_at_construction(self):
+        store = make_store(initial_capacity=4)
+        store.allocate(2)
+        loop = TickLoop(store, systems=[])
+        assert (loop.current_row_ids >= 0).sum() == 2
+        assert loop.previous_row_ids.tolist() == loop.current_row_ids.tolist()
+
+    def test_a_death_during_advance_shows_in_current_but_not_previous(self):
+        store = make_store(initial_capacity=4)
+        ids = store.allocate(2)
+        row = store._id_to_row[ids[0].item()]
+        loop = TickLoop(store, systems=[lambda: store.release(ids[:1])])
+
+        loop.advance(1)
+
+        assert loop.previous_row_ids[row] == ids[0]
+        assert loop.current_row_ids[row] == -1
+
+    def test_a_birth_during_advance_shows_in_current_but_not_previous(self):
+        store = make_store(initial_capacity=2)
+        store.allocate(1)
+        births: list[np.ndarray] = []
+        loop = TickLoop(store, systems=[lambda: births.append(store.allocate(1))])
+
+        loop.advance(1)
+
+        row = store._id_to_row[births[0][0].item()]
+        assert loop.previous_row_ids[row] == -1
+        assert loop.current_row_ids[row] == births[0][0]
+
+    def test_a_row_recycled_within_one_advance_reports_both_occupants(self):
+        """The case `alive` cannot see: the row is occupied at both ends, by different entities.
+
+        §2.1 puts death before reproduction inside a single tick precisely so freed rows are
+        reusable immediately, so this is the ordinary path once #20 and #21 land, not an edge case.
+        """
+        store = make_store(initial_capacity=1)
+        first = store.allocate(1)
+        row = store._id_to_row[first[0].item()]
+        second: list[np.ndarray] = []
+
+        def die_then_breed():
+            store.release(first)
+            second.append(store.allocate(1))
+
+        loop = TickLoop(store, systems=[die_then_breed])
+        loop.advance(1)
+
+        assert store.alive[row], "the row is occupied at both ends of the interval"
+        assert loop.previous_row_ids[row] == first[0]
+        assert loop.current_row_ids[row] == second[0][0]
+
+    def test_occupancy_snapshots_are_copies_not_live_views(self):
+        store = make_store(initial_capacity=2)
+        ids = store.allocate(2)
+        loop = TickLoop(store, systems=[])
+        snapshot = loop.current_row_ids
+
+        store.release(ids)
+
+        assert (store.row_ids() == -1).all(), "the store itself has forgotten them"
+        assert (snapshot >= 0).all(), "the snapshot still remembers who was there"
+        assert loop.current_row_ids is snapshot
+
+
 class TestDebugChecks:
     def test_disabled_by_default_even_with_a_broken_system(self):
         store = make_store()

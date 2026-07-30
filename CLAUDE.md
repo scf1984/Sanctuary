@@ -708,6 +708,24 @@ supporting it, and a heavier GUI toolkit (Qt, etc.) buys nothing this diagnostic
 Terrain and water render once, as a static NumPy RGB array blitted per generation; only entity
 positions and the status readout update every frame.
 
+**A position snapshot is never read without the occupancy that qualifies it** — decided in #119,
+which owned it, and it governs every future overlay (#39) rather than the entity dots alone.
+`EntityStore.release` clears `alive` and the id mapping but deliberately leaves `x`, `y` and `z`
+untouched, since `allocate` overwrites whatever its caller seeds. A snapshot is therefore full
+*capacity*, not population, and rendering it whole draws a corpse frozen at its death site, in its
+species colour, forever. `TickLoop` consequently snapshots `row_ids` at the same instant as
+positions, and the renderer's entry point takes both — the mistake is unrepresentable rather than
+merely documented.
+
+**Occupancy is identity, not a flag.** Ids are never reused, so comparing two id snapshots
+distinguishes the three cases an `alive` bit cannot: a row still holding the same entity (blend
+it), a row now empty (drop it), and **a row freed and handed to a newborn inside the interval**
+(draw it where it is now). The third is why this is an id comparison: `alive` reads True at both
+ends of that interval and hides the swap entirely, so the newborn would streak in from wherever
+its predecessor fell. §2.1 puts death before reproduction *within* a tick precisely so freed rows
+are reusable immediately, which makes that the ordinary path once #20 and #21 land, not an edge
+case.
+
 ---
 
 ## 4. Architecture boundaries
