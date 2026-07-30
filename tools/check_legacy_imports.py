@@ -1,22 +1,25 @@
-#!/usr/bin/env python3
 """Fail if any file outside legacy/ imports from it.
 
 legacy/ holds the 2017-2023 prototype (see legacy/README.md and CLAUDE.md §1): it does not
-run and must not be extended. Run as `python tools/check_legacy_imports.py`; exits non-zero
-and prints every offending import if new code starts depending on it.
+run and must not be extended. Run as `python -m tools.check_legacy_imports` from the repository
+root; exits non-zero and prints every offending import if new code starts depending on it.
+
+Run as a *module*, not as a path, because it imports `tools.sources` — shared with its sibling
+check so the walk and the decode exist once (#88). Executing the file directly puts `tools/` on
+`sys.path` instead of the repository root, and the import fails outright rather than quietly
+finding something else.
 """
 import ast
 import sys
 from pathlib import Path
 
+from tools.sources import iter_source_files, parse_source
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
-EXCLUDED_DIRS = {'.git', 'legacy'}
-
-
-def iter_source_files(root):
-    for path in root.rglob('*.py'):
-        if not set(path.relative_to(root).parts) & EXCLUDED_DIRS:
-            yield path
+# The prototype quarantine itself: legacy/ is full of imports from legacy/, and they are the one
+# place those are allowed. Everything else this walk skips — virtualenvs, worktrees, caches — is
+# environment rather than rule, and belongs to iter_source_files rather than here.
+SKIPPED_DIRS = frozenset({'legacy'})
 
 
 def imports_legacy(node):
@@ -29,16 +32,15 @@ def imports_legacy(node):
 
 
 def find_violations(path):
-    tree = ast.parse(path.read_text(), filename=str(path))
     violations = []
-    for node in ast.walk(tree):
+    for node in ast.walk(parse_source(path)):
         violations.extend(imports_legacy(node))
     return violations
 
 
 def main():
     offenses = []
-    for path in iter_source_files(REPO_ROOT):
+    for path in iter_source_files(REPO_ROOT, SKIPPED_DIRS):
         for module in find_violations(path):
             offenses.append(f'{path.relative_to(REPO_ROOT)}: imports {module!r}')
 

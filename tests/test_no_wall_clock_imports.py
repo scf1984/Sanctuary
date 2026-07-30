@@ -1,4 +1,5 @@
-from tools.check_wall_clock_imports import CORE_ROOT, find_violations, iter_source_files
+from tools.check_wall_clock_imports import CORE_ROOT, find_violations
+from tools.sources import iter_source_files
 
 
 def test_core_has_no_wall_clock_imports():

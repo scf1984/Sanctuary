@@ -1,24 +1,22 @@
-#!/usr/bin/env python3
 """Fail if any file under core/ imports a wall-clock module.
 
 CLAUDE.md §2.1: the tick counter is the only clock; real time exists only to compute how many
 ticks are owed, and that computation belongs outside core/ (in scheduler/). A wall-clock read
 inside simulation logic would make offline catch-up a second code path instead of the same
-simulation with rendering off. Run as `python tools/check_wall_clock_imports.py`; exits
-non-zero and prints every offending import if new code under core/ starts reading wall-clock
-time.
+simulation with rendering off. Run as `python -m tools.check_wall_clock_imports` from the
+repository root; exits non-zero and prints every offending import if new code under core/ starts
+reading wall-clock time. See its sibling `check_legacy_imports` on why it is a module and not a
+path.
 """
 import ast
 import sys
 from pathlib import Path
 
+from tools.sources import iter_source_files, parse_source
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CORE_ROOT = REPO_ROOT / "core"
 WALL_CLOCK_MODULES = {"time", "datetime"}
-
-
-def iter_source_files(root):
-    yield from root.rglob("*.py")
 
 
 def wall_clock_imports(node):
@@ -35,9 +33,8 @@ def wall_clock_imports(node):
 
 
 def find_violations(path):
-    tree = ast.parse(path.read_text(), filename=str(path))
     violations = []
-    for node in ast.walk(tree):
+    for node in ast.walk(parse_source(path)):
         violations.extend(wall_clock_imports(node))
     return violations
 
