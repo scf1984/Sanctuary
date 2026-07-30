@@ -42,7 +42,7 @@ class PlantsConfig:
     """Per-world primary-productivity table (CLAUDE.md §2.1: tuned as a table, not as scattered
     literals, and never as constants inside `core/`).
 
-    solar_constant: joules of new biomass per cell per tick under a perpendicular sun, at the
+    solar_constant: energy units of new biomass per cell per tick under a perpendicular sun, at the
         optimal temperature and saturated soil. Already net of photosynthetic efficiency — there
         is no separate efficiency term, because nothing in the simulation can observe incident
         light and converted biomass separately, and two coefficients multiplied together are two
@@ -52,8 +52,8 @@ class PlantsConfig:
     min_growth_temperature, optimal_growth_temperature, max_growth_temperature: degrees C. Growth
         is zero at and beyond the two extremes and peaks at the optimum, rising and falling
         linearly between them.
-    nutrient_per_biomass: nutrient units bound up in one joule of standing biomass. This is the
-        exchange rate between the two conserved quantities, so it is also what converts a soil
+    nutrient_per_biomass: nutrient units bound up in one energy unit of standing biomass. This is
+        the exchange rate between the two conserved quantities, so it is also what converts a soil
         pool into a ceiling on standing crop.
     initial_soil_nutrients: nutrient units per cell at world creation. Since nutrients are
         conserved, this is the world's entire nutrient budget for all time — the single number
@@ -121,13 +121,14 @@ class PlantsConfig:
 class Plants:
     """The world's plant field: standing biomass and the soil nutrients it is built from.
 
-    biomass:          (height, width) float64, joules. Standing crop per cell — what a grazer eats.
+    biomass:          (height, width) float64, energy units. Standing crop per cell — what a
+                      grazer eats.
     soil_nutrients:   (height, width) float64, nutrient units. The unbound pool growth draws on.
-    potential_growth: (height, width) float64, joules per cell per tick. Light-, temperature- and
-                      moisture-limited gain, before the soil is consulted. Static: it is a pure
-                      function of terrain, climate and water, all of which are themselves static
-                      between terraforming interventions, so it is computed once here rather than
-                      per tick.
+    potential_growth: (height, width) float64, energy units per cell per tick. Light-,
+                      temperature- and moisture-limited gain, before the soil is consulted.
+                      Static: it is a pure function of terrain, climate and water, all of which are
+                      themselves static between terraforming interventions, so it is computed once
+                      here rather than per tick.
     moisture:         (height, width) float64, dimensionless in [0, 1]. Soil wetness, already
                       folded into `potential_growth`; kept as its own attribute because the
                       diagnostic viewer's overlays (§3.3) need to show *why* a region is barren,
@@ -205,7 +206,7 @@ class Plants:
         self.soil_nutrients -= growth * self.config.nutrient_per_biomass
 
     def biomass_at(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
-        """(n,) float64, joules: standing biomass in the cell containing each world position.
+        """(n,) float64, energy units: standing biomass in the cell containing each world position.
 
         Sampled to the containing cell rather than bilinearly interpolated, unlike every other
         field query in `core/world`. Those fields are read-only; this one is grazed. An
@@ -216,11 +217,11 @@ class Plants:
         return self.biomass[rows, cols]
 
     def graze(self, x: np.ndarray, y: np.ndarray, demand: np.ndarray) -> np.ndarray:
-        """Harvest up to `demand` joules of biomass at each world position; return what was taken.
+        """Harvest up to `demand` biomass at each world position; return what was taken.
 
         x, y:   (n,) world units — where each grazer is standing.
-        demand: (n,) joules — what each grazer would eat if the cell could supply it.
-        returns (n,) float64 joules, one entry per grazer, in the order given.
+        demand: (n,) energy units — what each grazer would eat if the cell could supply it.
+        returns (n,) float64 energy units, one entry per grazer, in the order given.
 
         Grazers sharing a cell contend for it: when total demand exceeds the standing crop, each
         takes the same *fraction* of what it asked for, so the cell empties exactly and a hungrier
@@ -267,7 +268,7 @@ class Plants:
         radius: (n,) world units — how far each one can perceive food, computed by the caller
                 from its expressed sight-range phenotype. Non-negative.
         returns (patch_x, patch_y, biomass), each (n, k) float64: the world position of every
-                perceivable patch and the standing crop on it, in joules.
+                perceivable patch and the standing crop on it, in energy units.
 
         **This reports patches; it does not choose between them.** Which patch is worth walking
         to weighs a payoff against the cost of the walk, and that is a drive's decision (#22), not

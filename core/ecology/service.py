@@ -57,11 +57,11 @@ class Ecology(DomainService):
         self.metabolism = metabolism
 
     def energy(self, selection: Selection) -> np.ndarray:
-        """(len(selection),) float32, joules: the current metabolic pool, in ascending row order."""
+        """(len(selection),) float32, energy units: the current pool, in ascending row order."""
         return self.store.energy[selection.to_mask()]
 
     def upkeep(self, selection: Selection) -> np.ndarray:
-        """(len(selection),) float32, joules per tick: what one tick will cost each entity.
+        """(len(selection),) float32, energy units per tick: what one tick will cost each entity.
 
         Exposed separately from `drain` because it is a pure read: the diagnostic viewer's energy
         overlay and any future intervention that asks "what does this animal cost to keep" need
@@ -80,8 +80,8 @@ class Ecology(DomainService):
         """
         self.spend(selection, self.upkeep(selection))
 
-    def spend(self, selection: Selection, joules: np.ndarray) -> None:
-        """Charge `joules` to `selection`'s pools, flooring each at zero.
+    def spend(self, selection: Selection, cost: np.ndarray) -> None:
+        """Charge `cost` energy units to `selection`'s pools, flooring each at zero.
 
         The floor is what makes the pool a hard budget rather than a debt (CLAUDE.md §2.5): an
         entity can be emptied, never overdrawn, which is the invariant #7 asserts every tick. The
@@ -99,12 +99,12 @@ class Ecology(DomainService):
         #19's feeding, never a cost with its sign flipped, and §2.5's closed loop has no other
         income (§8.7).
         """
-        joules = np.asarray(joules, dtype=np.float32)
-        if np.any(joules < 0.0):
+        cost = np.asarray(cost, dtype=np.float32)
+        if np.any(cost < 0.0):
             raise ValueError(
                 "spend() charges energy and cannot be negative; income belongs to #18 and #19"
             )
-        self.write("energy", selection, np.maximum(self.energy(selection) - joules, 0.0))
+        self.write("energy", selection, np.maximum(self.energy(selection) - cost, 0.0))
 
     def starving(self, selection: Selection) -> Selection:
         """The entities in `selection` whose pool has run out — energy at or below zero.

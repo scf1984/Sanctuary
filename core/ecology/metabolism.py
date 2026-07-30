@@ -15,9 +15,9 @@ Two rules give this module its shape:
   the vocabulary without an entry here fails at construction (§8.7) instead of quietly becoming a
   free trait, which is the one failure mode that would defeat the entire hard-budget design.
 
-The math is deliberately store-free: it takes phenotype rows and temperatures and returns joules
-per tick. `core.ecology.service.Ecology` is what binds it to the entity store, the climate field
-and the energy column.
+The math is deliberately store-free: it takes phenotype rows and temperatures and returns energy
+units per tick. `core.ecology.service.Ecology` is what binds it to the entity store, the climate
+field and the energy column.
 
 Coefficients are per-world configuration, never constants in this module — the numbers that make
 an ecology legible are tuning, and CLAUDE.md §2.1 requires them tuned as a table rather than
@@ -36,16 +36,16 @@ from core.genetics.vocabulary import GeneVocabulary
 
 @dataclass(frozen=True)
 class MetabolismConfig:
-    """Per-world metabolic cost table. Every rate is joules per tick.
+    """Per-world metabolic cost table. Every rate is energy units per tick.
 
-    gene_costs: gene name -> joules per tick charged per unit of that gene's *expressed* value.
-        Must name every gene in the vocabulary exactly once; zero is a legal cost, absence is not
-        (see module docstring).
-    basal_rate: joules per tick charged to every entity regardless of phenotype. Without it, a
-        species expressing only zero-cost genes would pay nothing to stay alive and could never
+    gene_costs: gene name -> energy units per tick charged per unit of that gene's *expressed*
+        value. Must name every gene in the vocabulary exactly once; zero is a legal cost, absence
+        is not (see module docstring).
+    basal_rate: energy units per tick charged to every entity regardless of phenotype. Without it,
+        a species expressing only zero-cost genes would pay nothing to stay alive and could never
         starve, which is a free lunch reached by expressing less rather than by evolving more.
-    thermoregulation_rate: joules per tick per degree C of deviation from `neutral_temperature`,
-        for an entity with no insulation.
+    thermoregulation_rate: energy units per tick per degree C of deviation from
+        `neutral_temperature`, for an entity with no insulation.
     neutral_temperature: degrees C at which thermoregulation costs nothing. Deviation is
         unsigned — holding a body above a cold world or below a hot one are both work.
     insulation_gene: the gene whose expressed value damps thermoregulation cost. It must itself
@@ -77,7 +77,7 @@ class MetabolismConfig:
 class Metabolism:
     """A cost table resolved against one gene vocabulary into vectorized coefficients.
 
-    gene_cost: (n_genes,) float32, joules per tick per unit of expressed gene value, in
+    gene_cost: (n_genes,) float32, energy units per tick per unit of expressed gene value, in
         vocabulary column order — so trait upkeep for any number of entities is one matrix-vector
         product rather than a per-gene or per-species loop (CLAUDE.md §2.3).
     """
@@ -108,7 +108,7 @@ class Metabolism:
             )
 
     def upkeep(self, expressed_genes: np.ndarray, temperature: np.ndarray) -> np.ndarray:
-        """(n,) float32, joules per tick: what one tick of life costs each of `n` entities.
+        """(n,) float32, energy units per tick: what one tick of life costs each of `n` entities.
 
         expressed_genes: (n, n_genes) float32 phenotype rows — unexpressed slots already zeroed
             by the caller, which is what makes an unexpressed gene cost nothing.

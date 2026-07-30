@@ -58,13 +58,13 @@ class EntityStore:
     Columns, each shape ``(capacity,)`` unless noted:
       x, y, z: float32, world units. z is stored from the start per CLAUDE.md §2.6 ("z-capable
           data model first"), even though nothing yet moves along it.
-      energy: float32, joules.
+      energy: float32, energy units.
       age: int64, ticks lived — the tick is the only clock (CLAUDE.md §2.1).
       health: float32, unit-free fraction, 0 (dead) to 1 (full health).
       exertion: float32, work per unit of expressed body size — recent effort, accumulated by
           movement and shed each tick by `core.behaviour.exertion.Exertion`, which owns it. Not
-          joules: the size-independent half of the movement bill, so one saturation constant means
-          the same tiredness to a mouse and to an elephant.
+          energy units: the size-independent half of the movement bill, so one saturation constant
+          means the same tiredness to a mouse and to an elephant.
       species_id: int32, opaque id into the species registry owned elsewhere; -1 means unset.
       drive_scores: ``(capacity, n_drives)`` float32, unit-free utility scores. Which drives
           exist is owned by the behaviour system (CLAUDE.md §8.3); this module only provides a

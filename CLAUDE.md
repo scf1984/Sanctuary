@@ -278,11 +278,12 @@ a winner from any other drive stands still — which is a real problem rather th
   only as recovery from injury. `core.behaviour.exertion.Exertion` owns the column; movement hands
   over what a step took exactly as it hands `Ecology` the bill for it.
 
-  **Not joules, and not the energy pool.** The movement bill is `size × (haul + climb)` and what
-  accumulates is the parenthesised half, so one saturation constant means the same tiredness to a
-  mouse and to an elephant — raw joules would leave a large animal permanently exhausted by an
-  ordinary walk. Reading the pool instead was rejected outright: hunger already scores on exactly
-  that quantity, and two drives reading one number is how a drive contest becomes a coin flip.
+  **Not the energy bill, and not the energy pool.** The movement bill is `size × (haul + climb)` and
+  what accumulates is the parenthesised half, so one saturation constant means the same tiredness to
+  a mouse and to an elephant — accumulating the size-scaled bill would leave a large animal
+  permanently exhausted by an ordinary walk. Reading the pool instead was rejected outright: hunger
+  already scores on exactly that quantity, and two drives reading one number is how a drive contest
+  becomes a coin flip.
   Distance between position snapshots was rejected too, because `TickLoop` samples those once per
   `advance()` call rather than once per tick, and §2.4 forbids batching from changing outcomes.
 
@@ -536,8 +537,13 @@ a winner from any other drive stands still — which is a real problem rather th
   real joules. Grounding a unit invites Earth-calibrated constants that carry no meaning here and
   cannot be tuned freely — `Climate.lapse_rate` defaulting to Earth's tropospheric value was the
   first, and read against world units it cooled a peak by hundredths of a degree, quietly removing
-  altitude from climate. Only lengths are converted so far; energy is still denominated in joules
-  and is the obvious next instance (#123).
+  altitude from climate.
+
+  Lengths were converted first (#112) and **energy followed (#123)**: the metabolic pool, every
+  upkeep and locomotion coefficient, and plant biomass are all in *energy units*, the pool's own
+  unit with no physical claim. Mass never became a unit at all — `size` is an expressed gene value,
+  never kilograms — and it is checked anyway, because grounding energy is only tempting when there
+  is a body mass to calibrate it against.
 
   Two consequences worth stating, because they are what keep it fixed:
 
@@ -548,8 +554,10 @@ a winner from any other drive stands still — which is a real problem rather th
     unit) or a *reference point* (`sea_level_elevation = 0.0`) is fine; an arbitrary magnitude is
     not.
   - **A units mismatch cannot fail a test on its own**, since both sides are floats, so the check
-    is on prose: `tests/test_length_units.py` fails if anything under `core/` or `clients/` names
-    a physical length unit. It caught 17 declarations when it was written.
+    is on prose: `tests/test_physical_units.py` fails if anything under `core/` or `clients/` names
+    a physical length, energy or mass unit. The length check caught 17 declarations when it was
+    written and the energy check 32. It is **one module for the whole rule, not one per dimension**
+    — the next dimension to be converted extends the table there rather than adding a third file.
 - **Animals may leave the surface.** Flight and swimming depth are real mechanics, so positions
   carry a z coordinate and the spatial index is volumetric.
   > ⚠️ This is the most expensive decision in this document. It makes spatial indexing, sensing, and
@@ -937,7 +945,7 @@ SoA was chosen for speed (§2.3) and it costs clarity. That trade is only worth 
 actively repaid:
 
 - Every array-holding attribute documents **shape, dtype, and unit** — e.g. `(n_entities,) float32,
-  joules`.
+  energy units`. The unit is the world's own, never a physical one (§2.6).
 - Selections and masks are named for what they select — `starving`, `in_range` — never `mask1`.
 - A vectorized expression beyond a few operations carries a comment stating its **ecological
   meaning**, not a restatement of the NumPy.
