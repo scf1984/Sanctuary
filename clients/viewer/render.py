@@ -116,20 +116,58 @@ def _color_for_id(species_id: int) -> np.ndarray:
     return (np.array([r, g, b]) * 255.0).astype(np.uint8)
 
 
-def interpolate_positions(
+def live_positions(
     previous: tuple[np.ndarray, np.ndarray, np.ndarray],
+    previous_row_ids: np.ndarray,
     current: tuple[np.ndarray, np.ndarray, np.ndarray],
+    current_row_ids: np.ndarray,
     alpha: float,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Blend two tick-boundary position snapshots for smooth rendering between ticks (§2.1).
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Where to draw each live entity this frame, blended between two tick-boundary snapshots.
 
     `alpha` in [0, 1]: 0 renders exactly at `previous`, 1 exactly at `current`. Tick size is a
     simulation concern and must stay independent of how smooth this looks (CLAUDE.md §2.1), so
     this is the only place frame-rate-driven blending happens.
+
+    Returns `(x, y, z, drawn)`: three `(n_live,)` arrays of world-unit coordinates, plus the
+    `(capacity,)` bool mask that selected them, so a caller can filter any other column — species
+    id, energy, a future overlay — onto exactly the same rows.
+
+    **Occupancy is an argument, not an afterthought.** `EntityStore.release` clears `alive` and the
+    id mapping but deliberately leaves `x`, `y` and `z` untouched, since `allocate` overwrites
+    whatever its caller seeds. A snapshot of positions is therefore full *capacity*, not
+    population, and drawing it whole paints every row that has ever been used — a corpse frozen at
+    the spot it died, in its species colour, forever (#119). That was invisible only because
+    nothing had ever died: the demo world allocated exactly its capacity and never bred.
+
+    Two distinct rows are excluded, and one id array answers both because ids are never reused:
+
+    - **Not occupied now** (`current_row_ids < 0`) — nothing to draw.
+    - **Not the same entity as at `previous`** — there is no position to blend *from*. Such a row
+      is drawn at its current position instead. This covers a newborn in a fresh row, whose
+      previous entry holds nothing meaningful, *and* a newborn in a recycled one, whose previous
+      entry holds its predecessor's death site — the second is why this compares ids rather than an
+      `alive` flag, which reads True at both ends of that interval and hides the reuse entirely.
+      Without it a newborn streaks across the screen from wherever the last occupant fell.
     """
     if not 0.0 <= alpha <= 1.0:
         raise ValueError("alpha must be in [0, 1]")
-    return tuple(prev + (curr - prev) * alpha for prev, curr in zip(previous, current))
+
+    drawn = current_row_ids >= 0
+    # Blend only where the row held this same entity at both ends of the interval. Elsewhere the
+    # previous coordinate belongs to somebody else, so `alpha` is replaced by 1 and the entity is
+    # drawn where it is now.
+    continuous = current_row_ids[drawn] == previous_row_ids[drawn]
+    blend = np.where(continuous, alpha, 1.0)
+
+    previous_x, previous_y, previous_z = (axis[drawn] for axis in previous)
+    current_x, current_y, current_z = (axis[drawn] for axis in current)
+    return (
+        previous_x + (current_x - previous_x) * blend,
+        previous_y + (current_y - previous_y) * blend,
+        previous_z + (current_z - previous_z) * blend,
+        drawn,
+    )
 
 
 def world_to_screen(

@@ -134,6 +134,21 @@ class EntityStore:
         mask[self._free_rows] = True
         return mask
 
+    def row_ids(self) -> np.ndarray:
+        """(capacity,) int64: the stable id occupying each row, -1 where the row is free.
+
+        A copy, for the same reason `free_row_mask` builds a fresh array: this is the store's own
+        bookkeeping and a caller must not be able to mutate it.
+
+        Exists because `alive` answers "is this row occupied" but not "is it still the *same*
+        entity". Ids are never reused, so comparing two of these tells a reader whose row indices
+        are meaningless to it — the renderer, blending two tick-boundary snapshots (#119) — whether
+        a row held one continuous entity across an interval or was freed and handed to a newborn
+        inside it. Nothing else can distinguish those: `release` and `allocate` both leave `alive`
+        True at the ends of that interval.
+        """
+        return self._row_to_id.copy()
+
     def allocate(self, n: int, **initial_values: np.ndarray) -> np.ndarray:
         """Allocate ``n`` new rows from the free list and return their stable ids.
 
