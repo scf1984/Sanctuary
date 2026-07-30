@@ -3,6 +3,7 @@ import pytest
 
 from core.ecology.cues import CueField, CueFieldConfig, Scent, ScentGenes
 from core.entities.store import EntityStore
+from core.genetics.expression import ExpressionMode, GeneticsConfig
 from core.genetics.service import Genetics
 from core.genetics.species import SpeciesRegistry
 from core.genetics.vocabulary import GeneVocabulary
@@ -12,8 +13,21 @@ from core.world.terrain import Terrain
 
 CHANNELS = 3
 SIGNATURE_GENES = tuple(f"signature_{i}" for i in range(CHANNELS))
-GENE_NAMES = ("scent_emission", *SIGNATURE_GENES)
+GENE_NAMES = ("scent_emission", *SIGNATURE_GENES, "mutability")
 SCENT_GENES = ScentGenes(emission_gene="scent_emission", signature_genes=SIGNATURE_GENES)
+
+# A signature is a position in cue space, so its sign is information and it is read raw (#104).
+# Emission is a broadcast strength and cannot be negative; mutability is a spread.
+GENETICS_CONFIG = GeneticsConfig(
+    expression_modes={
+        name: (
+            ExpressionMode.SIGNED if name in SIGNATURE_GENES else ExpressionMode.MAGNITUDE
+        )
+        for name in GENE_NAMES
+    },
+    mutability_gene="mutability",
+    drift_margin=2.0,
+)
 
 
 def make_field(grid=21, cell_size=1.0, diffusion_range=2.0, channels=CHANNELS):
@@ -229,7 +243,7 @@ class TestScentBinder:
         vocabulary = GeneVocabulary(GENE_NAMES)
         species = SpeciesRegistry(vocabulary)
         store = EntityStore(initial_capacity=8, n_drives=1, n_genes=len(GENE_NAMES))
-        genetics = Genetics(store, ColumnRegistry(), species)
+        genetics = Genetics(store, ColumnRegistry(), species, vocabulary, GENETICS_CONFIG)
         terrain = Terrain(np.zeros((grid, grid), dtype=np.float32), cell_size=1.0)
         field = CueField(terrain, CHANNELS, CueFieldConfig(diffusion_range=2.0))
         scent = Scent(store, genetics, field, vocabulary, SCENT_GENES)
@@ -254,7 +268,9 @@ class TestScentBinder:
     def test_rejects_signature_genes_that_do_not_match_the_channel_count(self):
         vocabulary = GeneVocabulary(GENE_NAMES)
         store = EntityStore(initial_capacity=2, n_drives=1, n_genes=len(GENE_NAMES))
-        genetics = Genetics(store, ColumnRegistry(), SpeciesRegistry(vocabulary))
+        genetics = Genetics(
+            store, ColumnRegistry(), SpeciesRegistry(vocabulary), vocabulary, GENETICS_CONFIG
+        )
         terrain = Terrain(np.zeros((5, 5), dtype=np.float32), cell_size=1.0)
         field = CueField(terrain, CHANNELS, CueFieldConfig(diffusion_range=1.0))
 

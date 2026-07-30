@@ -17,6 +17,7 @@ import pytest
 from core.ecology.metabolism import Metabolism, MetabolismConfig
 from core.ecology.service import Ecology
 from core.entities.store import EntityStore
+from core.genetics.expression import ExpressionMode, GeneticsConfig
 from core.genetics.service import Genetics
 from core.genetics.species import SpeciesRegistry
 from core.genetics.vocabulary import GeneVocabulary
@@ -28,10 +29,19 @@ from core.world.terrain import Terrain
 from core.world.tick import TickLoop
 
 
-GENE_NAMES = ("size", "speed", "sight", "insulation")
+GENE_NAMES = ("size", "speed", "sight", "insulation", "mutability")
+
+# Every gene declares how its stored value is read (#104). These are all quantities, so all fold
+# across zero; `mutability` is in the vocabulary because inheritance's spread floor is a gene, and
+# every world needs one even when — as here — nothing in these tests breeds.
+GENETICS_CONFIG = GeneticsConfig(
+    expression_modes={name: ExpressionMode.MAGNITUDE for name in GENE_NAMES},
+    mutability_gene="mutability",
+    drift_margin=2.0,
+)
 
 METABOLISM_CONFIG = MetabolismConfig(
-    gene_costs={"size": 2.0, "speed": 3.0, "sight": 0.0, "insulation": 1.0},
+    gene_costs={"size": 2.0, "speed": 3.0, "sight": 0.0, "insulation": 1.0, "mutability": 0.0},
     basal_rate=1.0,
     thermoregulation_rate=0.5,
     neutral_temperature=20.0,
@@ -47,7 +57,7 @@ def make_world(capacity=1024, equator_temperature=20.0, latitude_gradient=0.0):
     registry = ColumnRegistry()
     vocabulary = GeneVocabulary(GENE_NAMES)
     species = SpeciesRegistry(vocabulary)
-    genetics = Genetics(store, registry, species)
+    genetics = Genetics(store, registry, species, vocabulary, GENETICS_CONFIG)
     terrain = Terrain(np.zeros((41, 41), dtype=np.float32), cell_size=1.0)
     climate = Climate(
         terrain,

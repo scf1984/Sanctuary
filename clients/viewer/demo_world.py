@@ -35,6 +35,7 @@ from core.behaviour.movement import MovementConfig
 from core.ecology.cues import CueFieldConfig, ScentGenes
 from core.ecology.metabolism import MetabolismConfig
 from core.ecology.plants import PlantsConfig
+from core.genetics.expression import ExpressionMode, GeneticsConfig
 from core.world.assembly import World, WorldConfig, build_world
 from core.world.climate import ClimateConfig
 from core.world.terrain import TerrainConfig
@@ -60,7 +61,11 @@ _GENE_NAMES = (
     *_SIGNATURE_GENES,
     *_AVERSION_GENES[0],
     *_AVERSION_GENES[1],
+    "mutability",
 )
+# Cue space is signed — a signature is a position in it, an aversion a direction through it — while
+# every other gene here is a quantity that cannot go negative (#104).
+_CUE_GENES = (*_SIGNATURE_GENES, *_AVERSION_GENES[0], *_AVERSION_GENES[1])
 
 
 def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
@@ -93,11 +98,24 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
         ),
         cue_field=CueFieldConfig(diffusion_range=3.0),
         metabolism=MetabolismConfig(
-            gene_costs={name: 0.01 for name in _GENE_NAMES},
+            gene_costs={
+                **{name: 0.01 for name in _GENE_NAMES},
+                # Mutability charges nothing: high mutability already pays for itself in unfit
+                # offspring, so a stable world selects it down with no energy price (#104).
+                "mutability": 0.0,
+            },
             basal_rate=0.05,
             thermoregulation_rate=0.01,
             neutral_temperature=20.0,
             insulation_gene="insulation",
+        ),
+        genetics=GeneticsConfig(
+            expression_modes={
+                name: ExpressionMode.SIGNED if name in _CUE_GENES else ExpressionMode.MAGNITUDE
+                for name in _GENE_NAMES
+            },
+            mutability_gene="mutability",
+            drift_margin=2.0,
         ),
         movement=MovementConfig(
             speed_gene="speed",
@@ -140,6 +158,10 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
             "scent_acuity": (0.5, 1.5),
             **{name: (0.0, 1.0) for name in _SIGNATURE_GENES},
             **{name: (-1.0, 1.0) for name in _AVERSION_GENES[0] + _AVERSION_GENES[1]},
+            # Around the 0.02 the drift spike measured as a working mutation-drift balance, drawn
+            # rather than fixed so founders vary in evolvability like anything else
+            # (docs/spikes/speciation-drift.md).
+            "mutability": (0.01, 0.03),
         },
         n_founders=n_entities,
         founder_energy=180.0,

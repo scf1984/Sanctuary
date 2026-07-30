@@ -3,13 +3,23 @@ import pytest
 
 from core.entities.store import EntityStore
 from core.genetics.distance import between, centroid_between
+from core.genetics.expression import ExpressionMode, GeneticsConfig
 from core.genetics.service import Genetics
 from core.genetics.species import SpeciesRegistry
 from core.genetics.vocabulary import GeneVocabulary
 from core.selection import Selection
 from core.services import ColumnRegistry
 
-GENE_NAMES = ("size", "speed", "sight", "camouflage", "clutch_size", "gestation")
+GENE_NAMES = ("size", "speed", "sight", "camouflage", "clutch_size", "gestation", "mutability")
+
+# Every gene declares how its stored value is read (#104). These are all quantities, so all fold
+# across zero; `mutability` is in the vocabulary because inheritance's spread floor is a gene, and
+# every world needs one even when — as here — nothing in these tests breeds.
+GENETICS_CONFIG = GeneticsConfig(
+    expression_modes={name: ExpressionMode.MAGNITUDE for name in GENE_NAMES},
+    mutability_gene="mutability",
+    drift_margin=2.0,
+)
 
 
 def make_world(rng, n_entities):
@@ -20,7 +30,7 @@ def make_world(rng, n_entities):
     store = EntityStore(initial_capacity=n_entities, n_drives=1, n_genes=len(GENE_NAMES))
     vocabulary = GeneVocabulary(GENE_NAMES)
     species = SpeciesRegistry(vocabulary)
-    genetics = Genetics(store, ColumnRegistry(), species)
+    genetics = Genetics(store, ColumnRegistry(), species, vocabulary, GENETICS_CONFIG)
 
     species_ids = [
         species.register(
@@ -62,13 +72,13 @@ class TestBetweenBasics:
         store = EntityStore(initial_capacity=2, n_drives=1, n_genes=len(GENE_NAMES))
         vocabulary = GeneVocabulary(GENE_NAMES)
         species = SpeciesRegistry(vocabulary)
-        genetics = Genetics(store, ColumnRegistry(), species)
+        genetics = Genetics(store, ColumnRegistry(), species, vocabulary, GENETICS_CONFIG)
         species_id = species.register(GENE_NAMES)  # expresses every gene: exact Euclidean check
 
         ids = store.allocate(2, species_id=np.array([species_id, species_id], dtype=np.int32))
         rows = np.array([store._id_to_row[i] for i in ids.tolist()], dtype=np.int64)
         store.genes[rows] = np.array(
-            [[0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [3.0, 4.0, 0.0, 0.0, 0.0, 0.0]],
+            [[0.0] * len(GENE_NAMES), [3.0, 4.0, *([0.0] * (len(GENE_NAMES) - 2))]],
             dtype=np.float32,
         )
 
@@ -88,18 +98,16 @@ class TestBetweenBasics:
         store = EntityStore(initial_capacity=2, n_drives=1, n_genes=len(GENE_NAMES))
         vocabulary = GeneVocabulary(GENE_NAMES)
         species = SpeciesRegistry(vocabulary)
-        genetics = Genetics(store, ColumnRegistry(), species)
+        genetics = Genetics(store, ColumnRegistry(), species, vocabulary, GENETICS_CONFIG)
         species_id = species.register(("size", "speed"))
 
         ids = store.allocate(2, species_id=np.array([species_id, species_id], dtype=np.int32))
         rows = np.array([store._id_to_row[i] for i in ids.tolist()], dtype=np.int64)
-        genes = np.array(
-            [
-                [1.0, 2.0, 999.0, -999.0, 0.0, 0.0],
-                [1.0, 2.0, -123.0, 456.0, 0.0, 0.0],
-            ],
-            dtype=np.float32,
-        )
+        genes = np.zeros((2, len(GENE_NAMES)), dtype=np.float32)
+        genes[:, GENE_NAMES.index("size")] = 1.0
+        genes[:, GENE_NAMES.index("speed")] = 2.0
+        genes[:, GENE_NAMES.index("sight")] = [999.0, -123.0]
+        genes[:, GENE_NAMES.index("camouflage")] = [-999.0, 456.0]
         store.genes[rows] = genes
 
         a = selection_of(store, rows, [0])

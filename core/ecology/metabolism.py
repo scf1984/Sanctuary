@@ -121,10 +121,16 @@ class Metabolism:
         further unit of insulation buy less than the last, so insulation trades off against its
         own upkeep instead of running away.
 
-        Never negative for non-negative genes and costs, which is what lets `Ecology.drain` claim
-        it only ever removes energy. Gene values are non-negative by construction: inheritance
-        clamps offspring into a bounded range around non-negative parents
-        (`core.genetics.inheritance`), so no branch guards against a negative phenotype here.
+        Never negative for non-negative phenotypes and costs, which is what lets `Ecology.drain`
+        claim it only ever removes energy. **What guarantees a non-negative phenotype is the gene's
+        expression mode, not inheritance** (#104): storage is signed, and a gene declared
+        `MAGNITUDE` folds across zero when `Genetics.expressed` reads it, so a costed quantity
+        arrives here non-negative however far its stored value has drifted.
+
+        A gene declared `SIGNED` — a cue direction — arrives as stored, and one carrying a non-zero
+        cost would make this return a negative bill that `Ecology.spend` then *adds* to the pool.
+        Nothing rejects that configuration yet: it is #136, with its own failing test to come. §2.5
+        gives every cue gene a cost of zero, so a config that follows the document is safe.
         """
         trait_upkeep = expressed_genes @ self.gene_cost
         insulation = expressed_genes[:, self._insulation_index]

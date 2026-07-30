@@ -4,6 +4,7 @@ import pytest
 from core.ecology.metabolism import Metabolism, MetabolismConfig
 from core.ecology.service import Ecology
 from core.entities.store import EntityStore
+from core.genetics.expression import ExpressionMode, GeneticsConfig
 from core.genetics.service import Genetics
 from core.genetics.species import SpeciesRegistry
 from core.genetics.vocabulary import GeneVocabulary
@@ -13,10 +14,19 @@ from core.world.climate import Climate, ClimateConfig
 from core.world.terrain import Terrain
 
 
-GENE_NAMES = ("size", "speed", "sight", "insulation")
+GENE_NAMES = ("size", "speed", "sight", "insulation", "mutability")
+
+# Every gene declares how its stored value is read (#104). These are all quantities, so all fold
+# across zero; `mutability` is in the vocabulary because inheritance's spread floor is a gene, and
+# every world needs one even when — as here — nothing in these tests breeds.
+GENETICS_CONFIG = GeneticsConfig(
+    expression_modes={name: ExpressionMode.MAGNITUDE for name in GENE_NAMES},
+    mutability_gene="mutability",
+    drift_margin=2.0,
+)
 
 METABOLISM_CONFIG = MetabolismConfig(
-    gene_costs={"size": 2.0, "speed": 3.0, "sight": 0.0, "insulation": 1.0},
+    gene_costs={"size": 2.0, "speed": 3.0, "sight": 0.0, "insulation": 1.0, "mutability": 0.0},
     basal_rate=1.0,
     thermoregulation_rate=0.5,
     neutral_temperature=20.0,
@@ -33,8 +43,9 @@ def make_world(initial_capacity=8, temperature=20.0):
     """
     store = EntityStore(initial_capacity=initial_capacity, n_drives=1, n_genes=len(GENE_NAMES))
     registry = ColumnRegistry()
-    species = SpeciesRegistry(GeneVocabulary(GENE_NAMES))
-    genetics = Genetics(store, registry, species)
+    vocabulary = GeneVocabulary(GENE_NAMES)
+    species = SpeciesRegistry(vocabulary)
+    genetics = Genetics(store, registry, species, vocabulary, GENETICS_CONFIG)
     terrain = Terrain(np.zeros((4, 4), dtype=np.float32), cell_size=10.0)
     climate = Climate(
         terrain,
@@ -104,8 +115,9 @@ class TestUpkeepFromExpressedGenes:
         """
         store = EntityStore(initial_capacity=4, n_drives=1, n_genes=len(GENE_NAMES))
         registry = ColumnRegistry()
-        species = SpeciesRegistry(GeneVocabulary(GENE_NAMES))
-        genetics = Genetics(store, registry, species)
+        vocabulary = GeneVocabulary(GENE_NAMES)
+        species = SpeciesRegistry(vocabulary)
+        genetics = Genetics(store, registry, species, vocabulary, GENETICS_CONFIG)
         # A north-south gradient: 30 degC at y=0, falling 1 degC per world unit.
         terrain = Terrain(np.zeros((21, 21), dtype=np.float32), cell_size=1.0)
         climate = Climate(

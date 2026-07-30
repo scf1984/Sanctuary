@@ -5,6 +5,7 @@ import pytest
 
 from core.entities.store import EntityStore
 from core.genetics.inheritance import inherit_genes
+from core.genetics.expression import ExpressionMode, GeneticsConfig
 from core.genetics.service import Genetics
 from core.genetics.speciation import (
     Lineage,
@@ -18,7 +19,16 @@ from core.genetics.vocabulary import GeneVocabulary
 from core.selection import Selection
 from core.services import ColumnRegistry
 
-GENE_NAMES = ("size", "speed", "sight", "camouflage", "clutch_size", "gestation")
+GENE_NAMES = ("size", "speed", "sight", "camouflage", "clutch_size", "gestation", "mutability")
+
+# Every gene declares how its stored value is read (#104). These are all quantities, so all fold
+# across zero; `mutability` is in the vocabulary because inheritance's spread floor is a gene, and
+# every world needs one even when — as here — nothing in these tests breeds.
+GENETICS_CONFIG = GeneticsConfig(
+    expression_modes={name: ExpressionMode.MAGNITUDE for name in GENE_NAMES},
+    mutability_gene="mutability",
+    drift_margin=2.0,
+)
 
 
 def make_world(n_entities, expressed=GENE_NAMES, capacity=None):
@@ -29,8 +39,9 @@ def make_world(n_entities, expressed=GENE_NAMES, capacity=None):
     """
     capacity = capacity if capacity is not None else n_entities
     store = EntityStore(initial_capacity=capacity, n_drives=1, n_genes=len(GENE_NAMES))
-    species = SpeciesRegistry(GeneVocabulary(GENE_NAMES))
-    genetics = Genetics(store, ColumnRegistry(), species)
+    vocabulary = GeneVocabulary(GENE_NAMES)
+    species = SpeciesRegistry(vocabulary)
+    genetics = Genetics(store, ColumnRegistry(), species, vocabulary, GENETICS_CONFIG)
     species_id = species.register(expressed)
 
     ids = store.allocate(
@@ -206,7 +217,7 @@ class TestHasDiverged:
     def test_divergence_is_decided_at_the_threshold(self):
         store, genetics, rows = make_world(2)
         store.genes[rows] = np.array(
-            [[0.0] * len(GENE_NAMES), [3.0, 4.0, 0.0, 0.0, 0.0, 0.0]], dtype=np.float32
+            [[0.0] * len(GENE_NAMES), [3.0, 4.0, *([0.0] * (len(GENE_NAMES) - 2))]], dtype=np.float32
         )
         a = selection_of(store, rows, [0])
         b = selection_of(store, rows, [1])
@@ -234,13 +245,13 @@ class TestInterbreedingProbability:
         return store, genetics, rows
 
     def test_identical_creatures_of_one_species_are_fully_compatible(self):
-        store, genetics, rows = self.two_creatures([[1.0] * 6, [1.0] * 6])
+        store, genetics, rows = self.two_creatures([[1.0] * len(GENE_NAMES), [1.0] * len(GENE_NAMES)])
         a, b = selection_of(store, rows, [0]), selection_of(store, rows, [1])
 
         assert interbreeding_probability(genetics, a, b, threshold=1.0)[0] == pytest.approx(1.0)
 
     def test_compatibility_falls_linearly_and_reaches_zero_at_the_threshold(self):
-        store, genetics, rows = self.two_creatures([[0.0] * 6, [1.0, 0.0, 0.0, 0.0, 0.0, 0.0]])
+        store, genetics, rows = self.two_creatures([[0.0] * len(GENE_NAMES), [1.0, *([0.0] * (len(GENE_NAMES) - 1))]])
         a, b = selection_of(store, rows, [0]), selection_of(store, rows, [1])
 
         assert interbreeding_probability(genetics, a, b, threshold=4.0)[0] == pytest.approx(0.75)
@@ -248,7 +259,7 @@ class TestInterbreedingProbability:
         assert interbreeding_probability(genetics, a, b, threshold=1.0)[0] == pytest.approx(0.0)
 
     def test_beyond_the_threshold_compatibility_stays_at_zero(self):
-        store, genetics, rows = self.two_creatures([[0.0] * 6, [10.0, 0.0, 0.0, 0.0, 0.0, 0.0]])
+        store, genetics, rows = self.two_creatures([[0.0] * len(GENE_NAMES), [10.0, *([0.0] * (len(GENE_NAMES) - 1))]])
         a, b = selection_of(store, rows, [0]), selection_of(store, rows, [1])
 
         assert interbreeding_probability(genetics, a, b, threshold=1.0)[0] == 0.0
@@ -258,7 +269,7 @@ class TestInterbreedingProbability:
         population is about to be split is already breeding at a negligible rate, so the hard
         species gate that follows the split is not where compatibility falls off."""
         threshold = 1.0
-        store, genetics, rows = self.two_creatures([[0.0] * 6, [0.98, 0.0, 0.0, 0.0, 0.0, 0.0]])
+        store, genetics, rows = self.two_creatures([[0.0] * len(GENE_NAMES), [0.98, *([0.0] * (len(GENE_NAMES) - 1))]])
         a, b = selection_of(store, rows, [0]), selection_of(store, rows, [1])
 
         before_split = interbreeding_probability(genetics, a, b, threshold)[0]
@@ -271,7 +282,7 @@ class TestInterbreedingProbability:
         assert before_split - after_split < 0.05  # the discontinuity at the split is negligible
 
     def test_different_species_never_interbreed_however_similar(self):
-        store, genetics, rows = self.two_creatures([[1.0] * 6, [1.0] * 6])
+        store, genetics, rows = self.two_creatures([[1.0] * len(GENE_NAMES), [1.0] * len(GENE_NAMES)])
         a, b = selection_of(store, rows, [0]), selection_of(store, rows, [1])
         split(genetics, Lineage(), a)
 
@@ -283,10 +294,10 @@ class TestInterbreedingProbability:
         store, genetics, rows = make_world(4)
         store.genes[rows] = np.array(
             [
-                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],  # pairs with row 0: distance 0
-                [1.0, 0.0, 0.0, 0.0, 0.0, 0.0],  # pairs with row 1: distance 1
+                [0.0, *([0.0] * (len(GENE_NAMES) - 1))],
+                [0.0, *([0.0] * (len(GENE_NAMES) - 1))],
+                [0.0, *([0.0] * (len(GENE_NAMES) - 1))],  # pairs with row 0: distance 0
+                [1.0, *([0.0] * (len(GENE_NAMES) - 1))],  # pairs with row 1: distance 1
             ],
             dtype=np.float32,
         )
@@ -323,14 +334,21 @@ class TestInterbreedingProbability:
 
 
 # Statistical parameters for TestIsolationCausesSpeciation, measured rather than guessed --
-# docs/spikes/speciation-drift.md, a 200-seed sweep. After 50 generations at these settings two
-# isolated sub-populations' centroids sat at or above 0.12 in 199/200 runs (5th percentile 0.195,
-# median 0.344), while two arbitrary halves of one interbreeding pool never exceeded 0.050. The
-# threshold sits ~1.6x clear of both, so the test is not balanced on a knife edge. Re-run that
-# spike if the gene count, population size, or inherit_gain here changes.
+# docs/spikes/speciation-drift.md, a 200-seed sweep, **re-measured for #104's inheritance rule**.
+# After 50 generations at these settings two isolated sub-populations' centroids sat at or above 0.12
+# in 200/200 runs (minimum 0.145, 5th percentile 0.272, median 0.503), while two arbitrary halves of
+# one interbreeding pool crossed it in 1 run of 200 (median 0.025, 95th percentile 0.061). Re-run
+# that spike if the gene count, population size, mutability or drift margin here changes.
+#
+# `MUTABILITY` is what makes the isolated arm keep moving at all. The spike's control arm carries no
+# floor -- the rule this replaced -- and its within-pool spread collapses from 0.081 at generation 20
+# to 0.0004 at generation 100, so the two halves stop diverging once they have frozen. At 0.02 the
+# spread instead settles at ~0.036 and holds, which is a mutation-drift balance rather than either
+# collapse or blow-up (#104).
 POPULATION = 40
 GENERATIONS = 50
-INHERIT_GAIN = 1.05
+MUTABILITY = 0.02
+DRIFT_MARGIN = 2.0
 SPECIATION_THRESHOLD = 0.12
 
 
@@ -342,12 +360,19 @@ def breed(genetics, population, rng):
     reduced to its genetic content. Pairing is done here rather than through `Genetics.inherit`
     because that method pairs two selections positionally and a Selection is a set of rows, so it
     cannot express "row 3 mates with row 7, and row 3 again with row 12".
+
+    The mutability floor is passed directly rather than read from the population's own mutability
+    gene, so that this measurement holds one variable fixed: what is under test is whether isolation
+    separates two pools, not whether a lineage's evolvability itself drifts.
     """
     genes = genetics.genes(population)
     n = genes.shape[0]
     parent_a = genes[rng.integers(0, n, size=n)]
     parent_b = genes[rng.integers(0, n, size=n)]
-    genetics.set_genes(population, inherit_genes(parent_a, parent_b, INHERIT_GAIN, rng))
+    floor = np.full(n, MUTABILITY, dtype=np.float32)
+    genetics.set_genes(
+        population, inherit_genes(parent_a, parent_b, floor, DRIFT_MARGIN, rng)
+    )
 
 
 def evolve(seed, isolated):
@@ -382,11 +407,18 @@ class TestIsolationCausesSpeciation:
 
     def test_isolated_populations_reliably_diverge(self):
         diverged = sum(evolve(seed, isolated=True)[0] for seed in range(40))
-        assert diverged >= 36  # measured 199/200; 36/40 leaves room for seed-set variation
+        assert diverged >= 36  # measured 200/200; 36/40 leaves room for seed-set variation
 
     def test_an_interbreeding_population_reliably_does_not_diverge(self):
+        """A *rate*, not zero. #104's inheritance keeps a mixed pool's variance alive instead of
+        letting it converge, so an arbitrary partition of one pool occasionally wanders across the
+        threshold — measured at 1 run in 200, and 1 of these 40 seeds is that run. Asserting zero
+        against a quantity measured at 0.5% is the knife edge §6 warns about, so the bound is a rate
+        like its sibling above. A rare spurious split of a well-mixed population is real behaviour
+        rather than a bug: divergence is a distance between centroids, and nothing forbids one.
+        """
         diverged = sum(evolve(seed, isolated=False)[0] for seed in range(40))
-        assert diverged == 0
+        assert diverged <= 2
 
     def test_divergence_then_split_leaves_two_species_that_cannot_interbreed(self):
         """End to end: drift apart in isolation, split, and the two populations stop being able

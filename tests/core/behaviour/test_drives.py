@@ -20,6 +20,7 @@ from core.ecology.metabolism import Metabolism, MetabolismConfig
 from core.ecology.plants import Plants, PlantsConfig
 from core.ecology.service import Ecology
 from core.entities.store import EntityStore
+from core.genetics.expression import ExpressionMode, GeneticsConfig
 from core.genetics.service import Genetics
 from core.genetics.species import SpeciesRegistry
 from core.genetics.vocabulary import GeneVocabulary
@@ -46,8 +47,21 @@ GENE_NAMES = (
     "scent_acuity",
     *SIGNATURE_GENES,
     *FLAT_AVERSION,
+    "mutability",
 )
 SCENT_GENES = ScentGenes(emission_gene="scent_emission", signature_genes=SIGNATURE_GENES)
+
+# Cue space is signed: a signature is a position in it and an aversion is a direction through it, so
+# the sign is information in both (#104). Everything else here is a quantity.
+CUE_GENES = (*SIGNATURE_GENES, *FLAT_AVERSION)
+GENETICS_CONFIG = GeneticsConfig(
+    expression_modes={
+        name: ExpressionMode.SIGNED if name in CUE_GENES else ExpressionMode.MAGNITUDE
+        for name in GENE_NAMES
+    },
+    mutability_gene="mutability",
+    drift_margin=2.0,
+)
 
 METABOLISM_CONFIG = MetabolismConfig(
     gene_costs={
@@ -61,7 +75,10 @@ METABOLISM_CONFIG = MetabolismConfig(
         "scent_acuity": 0.5,
         # Signature and aversion are free: smelling of something and minding something cost
         # nothing to carry. §2.5 requires every gene declare a cost, zero included.
-        **{name: 0.0 for name in (*SIGNATURE_GENES, *FLAT_AVERSION)},
+        **{name: 0.0 for name in CUE_GENES},
+        # Mutability charges nothing: high mutability already pays for itself in unfit offspring, so
+        # a stable world selects it down without an energy price (#104).
+        "mutability": 0.0,
     },
     basal_rate=1.0,
     thermoregulation_rate=0.5,
@@ -99,7 +116,9 @@ class World:
         self.columns = ColumnRegistry()
         self.vocabulary = GeneVocabulary(GENE_NAMES)
         self.species = SpeciesRegistry(self.vocabulary)
-        self.genetics = Genetics(self.store, self.columns, self.species)
+        self.genetics = Genetics(
+            self.store, self.columns, self.species, self.vocabulary, GENETICS_CONFIG
+        )
         self.terrain = Terrain(np.zeros((grid, grid), dtype=np.float32), cell_size=cell_size)
         self.climate = Climate(
             self.terrain,

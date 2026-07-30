@@ -69,6 +69,7 @@ from core.ecology.metabolism import Metabolism, MetabolismConfig
 from core.ecology.plants import Plants, PlantsConfig
 from core.ecology.service import Ecology
 from core.entities.store import EntityStore
+from core.genetics.expression import GeneticsConfig
 from core.genetics.service import Genetics
 from core.genetics.species import SpeciesRegistry
 from core.genetics.vocabulary import GeneVocabulary
@@ -127,6 +128,7 @@ class WorldConfig:
     plants: PlantsConfig
     cue_field: CueFieldConfig
     metabolism: MetabolismConfig
+    genetics: GeneticsConfig
     movement: MovementConfig
     exertion: ExertionConfig
     hunger: HungerConfig
@@ -212,7 +214,7 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
     columns = ColumnRegistry()
 
     species = SpeciesRegistry(vocabulary)
-    genetics = Genetics(store, columns, species)
+    genetics = Genetics(store, columns, species, vocabulary, config.genetics)
     ecology = Ecology(
         store, columns, genetics, climate, Metabolism(vocabulary, config.metabolism)
     )
