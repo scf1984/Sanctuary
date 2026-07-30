@@ -1,34 +1,111 @@
 import numpy as np
 import pytest
 
-from core.behaviour.service import Behaviour, DriveRegistrationError
+from core.behaviour.service import Behaviour, BehaviourConfig, DriveRegistrationError
 from core.entities.store import EntityStore
+from core.genetics.expression import GeneticsConfig
+from core.genetics.service import Genetics
+from core.genetics.species import SpeciesRegistry
 from core.selection import Selection
 from core.services import ColumnOwnershipError, ColumnRegistry
+from core.world.terrain import Terrain
+
+from tests.support.genes import gene_registry
+
+GENE_NAMES = ("mutability", "choice_temperature")
+GENE_REGISTRY = gene_registry(GENE_NAMES)
+GENETICS_CONFIG = GeneticsConfig(mutability_gene="mutability", drift_margin=2.0)
+
+N_CANDIDATES = 8
+LOOK_AHEAD = 2.0
+SPACING = 2.0 * np.pi / N_CANDIDATES
+
+# The null option is the last column, by construction in `candidate_positions`.
+NULL = N_CANDIDATES
+
+# exp(-4) is about 0.018, so a utility gap of 1 becomes 55 in scaled units and swamps the Gumbel
+# noise the softmax adds: this animal takes its best option every time. exp(+4) is about 55, which
+# flattens the same gap to 0.018 and leaves the draw all but uniform. Temperature is a gene exactly
+# so one world can hold both (#114).
+DECISIVE = -4.0
+RECKLESS = 4.0
+
+
+class World:
+    """A flat world with the two services `Behaviour` reads: genetics, for the temperature gene,
+    and terrain, for the bounds candidate positions are clipped into.
+    """
+
+    def __init__(
+        self, capacity=8, n_drives=4, grid=9, change_aversion=0.0, n_candidates=N_CANDIDATES
+    ):
+        self.store = EntityStore(
+            initial_capacity=capacity, n_drives=n_drives, n_genes=len(GENE_NAMES)
+        )
+        self.columns = ColumnRegistry()
+        self.genes = GENE_REGISTRY
+        self.species = SpeciesRegistry(self.genes.vocabulary)
+        self.species_id = self.species.register(GENE_NAMES)
+        self.genetics = Genetics(
+            self.store, self.columns, self.species, self.genes, GENETICS_CONFIG
+        )
+        self.terrain = Terrain(np.zeros((grid, grid), dtype=np.float32), cell_size=1.0)
+        self.behaviour = Behaviour(
+            self.store,
+            self.columns,
+            self.genetics,
+            self.genes,
+            self.terrain,
+            BehaviourConfig(
+                n_candidates=n_candidates,
+                look_ahead=LOOK_AHEAD,
+                change_aversion=change_aversion,
+                choice_temperature_gene="choice_temperature",
+            ),
+        )
+
+    def spawn(self, n, temperature=DECISIVE, **columns):
+        """Allocate `n` entities at the world centre unless placed, at `temperature`."""
+        columns.setdefault("species_id", np.full(n, self.species_id, dtype=np.int32))
+        columns.setdefault("x", np.full(n, 4.0, dtype=np.float32))
+        columns.setdefault("y", np.full(n, 4.0, dtype=np.float32))
+        ids = self.store.allocate(n, **columns)
+        rows = [self.store._id_to_row[i] for i in ids.tolist()]
+        selection = Selection.from_indices(np.array(rows, dtype=np.int64), self.store.capacity)
+        genes = np.zeros((n, len(GENE_NAMES)), dtype=np.float32)
+        genes[:, GENE_NAMES.index("choice_temperature")] = temperature
+        self.genetics.set_genes(selection, genes)
+        return selection
 
 
 class ConstantDrive:
-    """A drive whose score is authored by the test rather than derived from the world.
+    """A drive whose urgency and appeal are authored by the test rather than read from a world.
 
-    Every drive the simulation ships reads fields (energy, climate, health) that the scoring loop
-    knows nothing about, so exercising the loop itself means supplying scores directly.
+    Every drive the simulation ships reads fields — energy, climate, the plant field — that the
+    option contest knows nothing about, so exercising the contest itself means supplying both halves
+    directly. `urgency` accepts a scalar or a whole column; `appeal` a scalar or one row of option
+    values shared by every entity.
     """
 
-    def __init__(self, name, values):
+    def __init__(self, name, urgency=0.0, appeal=1.0):
         self.name = name
-        self._values = np.asarray(values, dtype=np.float32)
+        self._urgency = np.asarray(urgency, dtype=np.float32)
+        self._appeal = np.asarray(appeal, dtype=np.float32)
 
-    def score(self, selection):
-        return self._values[selection.to_mask()]
+    def urgency(self, selection):
+        if self._urgency.ndim == 0:
+            return np.full(len(selection), float(self._urgency), dtype=np.float32)
+        return self._urgency[selection.to_mask()]
+
+    def appeal(self, selection, x, y):
+        return np.broadcast_to(self._appeal, x.shape).astype(np.float32)
 
 
-def make_store(capacity=8, n_drives=4):
-    return EntityStore(initial_capacity=capacity, n_drives=n_drives, n_genes=2)
-
-
-def selection_for(store, ids):
-    rows = [store._id_to_row[i] for i in np.asarray(ids).tolist()]
-    return Selection.from_indices(np.array(rows, dtype=np.int64), capacity=store.capacity)
+def wanting(option, urgency=1.0):
+    """A drive that wants exactly one option and is indifferent to the rest."""
+    appeal = np.zeros(N_CANDIDATES + 1, dtype=np.float32)
+    appeal[option] = 1.0
+    return ConstantDrive(f"wants_{option}", urgency=urgency, appeal=appeal)
 
 
 def per_row(store, **row_values):
@@ -40,227 +117,485 @@ def per_row(store, **row_values):
 
 
 class TestColumnOwnership:
-    def test_claims_the_drive_scores_column(self):
-        registry = ColumnRegistry()
-        Behaviour(make_store(), registry)
-        assert registry.owner_of("drive_scores") == "Behaviour"
+    def test_claims_every_column_it_writes(self):
+        world = World()
+        for column in ("drive_scores", "choice_heading", "choice_moving"):
+            assert world.columns.owner_of(column) == "Behaviour"
 
-    def test_a_rival_service_cannot_also_claim_drive_scores(self):
-        store, registry = make_store(), ColumnRegistry()
-        Behaviour(store, registry)
+    def test_a_rival_service_cannot_also_claim_them(self):
+        world = World()
 
         class RivalBehaviour(Behaviour):
             pass
 
         with pytest.raises(ColumnOwnershipError):
-            RivalBehaviour(store, registry)
+            RivalBehaviour(
+                world.store,
+                world.columns,
+                world.genetics,
+                world.genes,
+                world.terrain,
+                world.behaviour.config,
+            )
 
     def test_behaviour_cannot_write_a_column_it_does_not_own(self):
-        store = make_store()
-        behaviour = Behaviour(store, ColumnRegistry())
-        ids = store.allocate(1)
+        world = World()
+        selection = world.spawn(1)
 
         with pytest.raises(ColumnOwnershipError):
-            behaviour.write("energy", selection_for(store, ids), np.zeros(1, dtype=np.float32))
+            world.behaviour.write("energy", selection, np.zeros(1, dtype=np.float32))
 
 
 class TestRegistration:
     def test_drive_names_are_reported_in_registration_order(self):
-        behaviour = Behaviour(make_store(), ColumnRegistry())
-        behaviour.register(ConstantDrive("hunger", np.zeros(8)))
-        behaviour.register(ConstantDrive("fear", np.zeros(8)))
+        world = World()
+        world.behaviour.register(ConstantDrive("hunger"))
+        world.behaviour.register(ConstantDrive("fear"))
 
-        assert behaviour.drive_names == ("hunger", "fear")
+        assert world.behaviour.drive_names == ("hunger", "fear")
 
     def test_two_drives_cannot_share_a_name(self):
-        """Names are how the viewer and every downstream consumer address a drive; two drives
-        answering to one name would make `driven_by` silently report the wrong one.
+        """Names are how the viewer and `breakdown` address a drive; two answering to one name
+        would silently report the wrong contribution.
         """
-        behaviour = Behaviour(make_store(), ColumnRegistry())
-        behaviour.register(ConstantDrive("hunger", np.zeros(8)))
+        world = World()
+        world.behaviour.register(ConstantDrive("hunger"))
 
         with pytest.raises(DriveRegistrationError):
-            behaviour.register(ConstantDrive("hunger", np.zeros(8)))
+            world.behaviour.register(ConstantDrive("hunger"))
 
     def test_registering_past_the_column_width_fails_loudly(self):
         """The store's drive_scores block is allocated at a fixed width. Overflowing it is a
         world-construction error, and it is caught here rather than at the first tick (§8.7).
         """
-        behaviour = Behaviour(make_store(n_drives=2), ColumnRegistry())
-        behaviour.register(ConstantDrive("hunger", np.zeros(8)))
-        behaviour.register(ConstantDrive("thirst", np.zeros(8)))
+        world = World(n_drives=2)
+        world.behaviour.register(ConstantDrive("hunger"))
+        world.behaviour.register(ConstantDrive("thirst"))
 
         with pytest.raises(DriveRegistrationError):
-            behaviour.register(ConstantDrive("fear", np.zeros(8)))
+            world.behaviour.register(ConstantDrive("fear"))
 
-    def test_a_drive_returning_the_wrong_length_fails_loudly(self):
-        """A scalar or length-1 return would broadcast into the score column silently, giving
-        every entity one animal's motivation.
+    def test_a_drive_reporting_the_wrong_urgency_length_fails_loudly(self):
+        """A scalar or length-1 return would broadcast into the score column silently, giving every
+        entity one animal's motivation.
         """
-        store = make_store()
-        behaviour = Behaviour(store, ColumnRegistry())
-        behaviour.register(ConstantDrive("hunger", np.zeros(8)))
-        ids = store.allocate(3)
+        world = World()
+        selection = world.spawn(3)
 
-        class ScalarDrive:
+        class ScalarUrgency:
             name = "broken"
 
-            def score(self, selection):
+            def urgency(self, selection):
                 return np.float32(1.0)
 
-        behaviour.register(ScalarDrive())
+            def appeal(self, selection, x, y):
+                return np.ones_like(x, dtype=np.float32)
 
+        world.behaviour.register(ScalarUrgency())
+
+        with pytest.raises(ValueError, match="urgency"):
+            world.behaviour.choose(selection, np.random.default_rng(0))
+
+    def test_a_drive_scoring_one_column_of_appeal_fails_loudly(self):
+        """The case NumPy would *not* catch: an (n, 1) return broadcasts cleanly across every
+        option, so the drive would silently become indifferent and no shape error would be raised.
+        """
+        world = World()
+        selection = world.spawn(3)
+
+        class OneColumn:
+            name = "broken"
+
+            def urgency(self, selection):
+                return np.ones(len(selection), dtype=np.float32)
+
+            def appeal(self, selection, x, y):
+                return np.ones((x.shape[0], 1), dtype=np.float32)
+
+        world.behaviour.register(OneColumn())
+
+        with pytest.raises(ValueError, match="appeal"):
+            world.behaviour.choose(selection, np.random.default_rng(0))
+
+
+class TestCandidateOptions:
+    def test_headings_are_evenly_spaced_around_the_circle(self):
+        world = World()
+        selection = world.spawn(1)
+
+        headings = world.behaviour.candidate_headings(selection, np.random.default_rng(0))
+
+        assert headings.shape == (1, N_CANDIDATES)
+        assert np.diff(headings[0]) == pytest.approx(np.full(N_CANDIDATES - 1, SPACING))
+
+    def test_headings_are_jittered_per_entity(self):
+        """Without the jitter every animal evaluates the identical absolute directions, so a
+        population converges on the same few headings and moves in lockstep along them. The jitter
+        is what makes angular resolution effectively continuous across a population (#114).
+        """
+        world = World(capacity=64)
+        selection = world.spawn(50)
+
+        headings = world.behaviour.candidate_headings(selection, np.random.default_rng(0))
+
+        offsets = headings[:, 0]
+        assert len(np.unique(offsets)) == 50
+        assert ((offsets >= 0.0) & (offsets < SPACING)).all()
+
+    def test_every_heading_stays_inside_one_turn(self):
+        """The column is documented as radians in [0, 2pi), and the jitter is what could push the
+        last candidate past a full turn if it were ever allowed to reach a whole spacing.
+        """
+        world = World(capacity=64)
+        selection = world.spawn(50)
+
+        headings = world.behaviour.candidate_headings(selection, np.random.default_rng(1))
+
+        assert ((headings >= 0.0) & (headings < 2.0 * np.pi)).all()
+
+    def test_the_null_option_is_the_animals_own_position_and_comes_last(self):
+        world = World()
+        selection = world.spawn(2, x=np.float32([3.0, 5.0]), y=np.float32([2.0, 6.0]))
+        headings = world.behaviour.candidate_headings(selection, np.random.default_rng(0))
+
+        x, y = world.behaviour.candidate_positions(selection, headings)
+
+        assert x.shape == (2, N_CANDIDATES + 1)
+        assert x[:, NULL] == pytest.approx([3.0, 5.0])
+        assert y[:, NULL] == pytest.approx([2.0, 6.0])
+
+    def test_candidates_are_clipped_into_the_world(self):
+        """`Movement._landing` guarantees animals land exactly on the boundary, so a heading
+        pointing outward from one is the ordinary case. The fields a drive samples raise outside
+        their bounds, so the clip is what keeps a cornered animal scoreable at all.
+        """
+        world = World()
+        selection = world.spawn(1, x=np.float32([0.0]), y=np.float32([0.0]))
+        headings = world.behaviour.candidate_headings(selection, np.random.default_rng(0))
+
+        x, y = world.behaviour.candidate_positions(selection, headings)
+
+        assert ((x >= 0.0) & (x <= world.terrain.world_width)).all()
+        assert ((y >= 0.0) & (y <= world.terrain.world_height)).all()
+
+    def test_a_candidate_sits_one_look_ahead_from_the_animal(self):
+        world = World()
+        selection = world.spawn(1)
+        headings = world.behaviour.candidate_headings(selection, np.random.default_rng(0))
+
+        x, y = world.behaviour.candidate_positions(selection, headings)
+
+        reach = np.hypot(x[0, :N_CANDIDATES] - 4.0, y[0, :N_CANDIDATES] - 4.0)
+        assert reach == pytest.approx(np.full(N_CANDIDATES, LOOK_AHEAD))
+
+
+class TestUtilities:
+    def test_utility_is_urgency_times_appeal_summed_over_drives(self):
+        world = World()
+        selection = world.spawn(1)
+        world.behaviour.register(wanting(0, urgency=0.5))
+        world.behaviour.register(wanting(NULL, urgency=0.25))
+        headings = world.behaviour.candidate_headings(selection, np.random.default_rng(0))
+        x, y = world.behaviour.candidate_positions(selection, headings)
+
+        total, contributions = world.behaviour.utilities(selection, headings, x, y)
+
+        expected = np.zeros(N_CANDIDATES + 1)
+        expected[0] = 0.5
+        expected[NULL] = 0.25
+        assert total[0] == pytest.approx(expected)
+        assert contributions["wants_0"][0, 0] == pytest.approx(0.5)
+        assert contributions["wants_8"][0, NULL] == pytest.approx(0.25)
+
+    def test_a_mild_appetite_weighs_less_than_an_urgent_one(self):
+        """Urgency scaling appeal is what makes a starving animal's food preference outweigh a
+        peckish one's without either drive knowing the other exists.
+        """
+        world = World()
+        selection = world.spawn(2)
+        world.behaviour.register(
+            ConstantDrive(
+                "hunger",
+                urgency=per_row(world.store, **{str(selection.to_indices()[0]): 1.0,
+                                                str(selection.to_indices()[1]): 0.1}),
+                appeal=wanting(0)._appeal,
+            )
+        )
+        headings = world.behaviour.candidate_headings(selection, np.random.default_rng(0))
+        x, y = world.behaviour.candidate_positions(selection, headings)
+
+        total, _ = world.behaviour.utilities(selection, headings, x, y)
+
+        assert total[0, 0] == pytest.approx(1.0)
+        assert total[1, 0] == pytest.approx(0.1)
+
+
+class TestChoosing:
+    def test_a_decisive_animal_takes_its_best_option(self):
+        """The jitter is drawn from the generator before the Gumbel noise is, so replaying the same
+        seed through `candidate_headings` reproduces exactly the headings `choose` scored.
+        """
+        world = World()
+        selection = world.spawn(1)
+        world.behaviour.register(wanting(3))
+        expected = world.behaviour.candidate_headings(selection, np.random.default_rng(7))
+
+        world.behaviour.choose(selection, np.random.default_rng(7))
+
+        row = selection.to_indices()[0]
+        assert world.store.choice_moving[row]
+        assert world.store.choice_heading[row] == pytest.approx(expected[0, 3], abs=1e-6)
+
+    def test_appeal_on_the_null_option_keeps_an_animal_where_it_is(self):
+        """Rest is an option in the same contest — no mode, no flag, no state column (#114)."""
+        world = World()
+        selection = world.spawn(1)
+        world.behaviour.register(wanting(NULL))
+
+        world.behaviour.choose(selection, np.random.default_rng(0))
+
+        assert not world.store.choice_moving[selection.to_indices()[0]]
+
+    def test_an_animal_that_stays_keeps_the_heading_it_had(self):
+        """So a rested animal resumes the way it was going instead of choosing afresh from nothing,
+        which is what lets change-aversion hold a direction across the several ticks recovery needs.
+        """
+        world = World()
+        selection = world.spawn(1)
+        world.behaviour.register(wanting(3))
+        world.behaviour.choose(selection, np.random.default_rng(7))
+        walking = world.store.choice_heading[selection.to_indices()[0]]
+
+        world.behaviour.register(wanting(NULL, urgency=10.0))
+        world.behaviour.choose(selection, np.random.default_rng(11))
+
+        row = selection.to_indices()[0]
+        assert not world.store.choice_moving[row]
+        assert world.store.choice_heading[row] == pytest.approx(walking)
+
+    def test_temperature_decides_how_much_an_animal_explores(self):
+        """Boltzmann sampling, asserted as a distribution rather than as a draw (§2.2).
+
+        Both cohorts face the identical contest — all the appeal on staying put — and differ only
+        in the expressed temperature gene. The cold one always takes the best option; the warm one
+        is nearly uniform over the nine, so about one in nine stays.
+        """
+        world = World(capacity=512)
+        decisive = world.spawn(200, temperature=DECISIVE)
+        reckless = world.spawn(200, temperature=RECKLESS)
+        world.behaviour.register(wanting(NULL))
+
+        world.behaviour.choose(decisive, np.random.default_rng(3))
+        world.behaviour.choose(reckless, np.random.default_rng(3))
+
+        assert not world.store.choice_moving[decisive.to_indices()].any()
+        stayed = world.store.choice_moving[reckless.to_indices()].sum()
+        assert 0 < (200 - stayed) < 200, "the warm cohort was not exploring at all"
+        assert (200 - stayed) < 100, "the warm cohort ignored a preference it should still feel"
+
+    def test_an_animal_with_no_reason_to_do_anything_still_chooses(self):
+        """Every option scores zero, so the draw is uniform and the animal wanders. It does *not*
+        default to standing still: a flat contest is indifference, and freezing on indifference is
+        the failure #126 recorded — forty founders scored and not one moving.
+        """
+        world = World(capacity=512)
+        selection = world.spawn(200)
+        world.behaviour.register(ConstantDrive("nothing", urgency=0.0))
+
+        world.behaviour.choose(selection, np.random.default_rng(5))
+
+        moved = world.store.choice_moving[selection.to_indices()].sum()
+        assert moved > 100, "an unmotivated population froze instead of wandering"
+
+    def test_choosing_leaves_entities_outside_the_selection_untouched(self):
+        world = World()
+        chooser = world.spawn(1)
+        bystander = world.spawn(1)
+        world.behaviour.register(wanting(3))
+
+        world.behaviour.choose(chooser, np.random.default_rng(0))
+
+        row = bystander.to_indices()[0]
+        assert world.store.choice_heading[row] == pytest.approx(0.0)
+        assert not world.store.choice_moving[row]
+        assert world.behaviour.scores(bystander) == pytest.approx(np.zeros((1, 4)))
+
+
+class TestChangeAversion:
+    def test_an_option_continuing_last_tick_is_worth_more_than_one_reversing_it(self):
+        """Rewarded by *how well* the heading is continued rather than by an equality test: `cos`
+        of the turn falls off smoothly, so a slight correction keeps almost all of the bonus and a
+        reversal loses it. An option-index comparison could not express that, which is why the
+        column stores a heading (#114).
+        """
+        # Three candidates rather than eight, so the turn each one represents can be named exactly:
+        # straight on, a right angle, and a reversal.
+        world = World(change_aversion=0.5, n_candidates=3)
+        selection = world.spawn(1)
+        world.store.choice_heading[selection.to_indices()] = 0.0
+        headings = np.array([[0.0, np.pi / 2, np.pi]])
+        x, y = world.behaviour.candidate_positions(selection, headings)
+
+        total, _ = world.behaviour.utilities(selection, headings, x, y)
+
+        assert total[0, 0] == pytest.approx(0.5)  # straight on: the whole bonus
+        assert total[0, 1] == pytest.approx(0.0, abs=1e-9)  # a right-angle turn: none of it
+        assert total[0, 2] == pytest.approx(-0.5)  # a reversal: the bonus paid back
+        assert total[0, 3] == pytest.approx(0.0)  # the null option continues no direction
+
+    def test_change_aversion_holds_an_animal_on_a_heading_a_weak_drive_would_break(self):
+        world = World(change_aversion=1.0)
+        selection = world.spawn(1)
+        world.behaviour.register(wanting(3))
+        world.behaviour.choose(selection, np.random.default_rng(7))
+        held = world.store.choice_heading[selection.to_indices()[0]]
+
+        # A second tick in which nothing at all is preferred: only the bonus is left to decide.
+        world.behaviour._drives.clear()
+        world.behaviour.register(ConstantDrive("nothing", urgency=0.0))
+        world.behaviour.choose(selection, np.random.default_rng(7))
+
+        turn = abs(np.arctan2(
+            np.sin(world.store.choice_heading[selection.to_indices()[0]] - held),
+            np.cos(world.store.choice_heading[selection.to_indices()[0]] - held),
+        ))
+        assert turn < SPACING
+
+    def test_a_negative_change_aversion_is_rejected(self):
+        """It would reward reversing, which is a spin rather than a preference."""
         with pytest.raises(ValueError):
-            behaviour.score(selection_for(store, ids))
+            BehaviourConfig(
+                n_candidates=8,
+                look_ahead=1.0,
+                change_aversion=-0.1,
+                choice_temperature_gene="choice_temperature",
+            )
 
 
-class TestScoring:
-    def test_scores_are_written_in_registration_order(self):
-        store = make_store()
-        behaviour = Behaviour(store, ColumnRegistry())
-        ids = store.allocate(2)
-        rows = selection_for(store, ids).to_indices()
-        behaviour.register(ConstantDrive("hunger", per_row(store, **{str(rows[0]): 0.25})))
-        behaviour.register(ConstantDrive("thirst", per_row(store, **{str(rows[1]): 0.75})))
-
-        selection = selection_for(store, ids)
-        behaviour.score(selection)
-
-        # Sliced to the registered prefix; the store was built with columns to spare.
-        assert behaviour.scores(selection)[:, :2] == pytest.approx(
-            np.array([[0.25, 0.0], [0.0, 0.75]], dtype=np.float32)
-        )
-
-    def test_scoring_leaves_entities_outside_the_selection_untouched(self):
-        store = make_store()
-        behaviour = Behaviour(store, ColumnRegistry())
-        ids = store.allocate(2)
-        behaviour.register(ConstantDrive("hunger", np.full(store.capacity, 0.5)))
-
-        scored = selection_for(store, ids[:1])
-        untouched = selection_for(store, ids[1:])
-        behaviour.score(scored)
-
-        assert behaviour.scores(untouched) == pytest.approx(np.zeros((1, 4), dtype=np.float32))
-
-    def test_adding_a_drive_needs_no_change_to_the_scoring_loop(self):
-        """Issue #22's "done when": a new drive is registered, not wired into a dispatch chain.
-
-        The loop is exercised with two drives and then three, with nothing about the call
-        changing -- which is the property the registry exists to provide.
+class TestChosenTarget:
+    def test_a_movers_target_is_one_look_ahead_along_its_stored_heading(self):
+        """Recomputed from the store rather than carried out of `choose` in a variable, so the
+        decision survives as a fact between the two systems §2.1 keeps separate — scoring at
+        position 3 in the tick and movement at 4.
         """
-        store = make_store()
-        behaviour = Behaviour(store, ColumnRegistry())
-        ids = store.allocate(1)
-        selection = selection_for(store, ids)
-        row = str(selection.to_indices()[0])
-        behaviour.register(ConstantDrive("hunger", per_row(store, **{row: 0.1})))
-        behaviour.register(ConstantDrive("thirst", per_row(store, **{row: 0.2})))
+        world = World()
+        selection = world.spawn(1)
+        world.behaviour.register(wanting(3))
+        world.behaviour.choose(selection, np.random.default_rng(7))
 
-        behaviour.score(selection)
-        assert behaviour.breakdown(selection) == {
-            "hunger": pytest.approx([0.1]),
-            "thirst": pytest.approx([0.2]),
-        }
+        target_x, target_y = world.behaviour.chosen_target(selection)
 
-        behaviour.register(ConstantDrive("fear", per_row(store, **{row: 0.9})))
-        behaviour.score(selection)
+        heading = world.store.choice_heading[selection.to_indices()[0]]
+        assert target_x[0] == pytest.approx(4.0 + LOOK_AHEAD * np.cos(heading), abs=1e-5)
+        assert target_y[0] == pytest.approx(4.0 + LOOK_AHEAD * np.sin(heading), abs=1e-5)
 
-        assert behaviour.breakdown(selection)["fear"] == pytest.approx([0.9])
-        assert behaviour.driven_by("fear", selection) == selection
-
-
-class TestCompetition:
-    def test_the_highest_scoring_drive_wins(self):
-        store = make_store()
-        behaviour = Behaviour(store, ColumnRegistry())
-        ids = store.allocate(3)
-        rows = [str(r) for r in selection_for(store, ids).to_indices()]
-        behaviour.register(
-            ConstantDrive("hunger", per_row(store, **{rows[0]: 0.9, rows[1]: 0.1, rows[2]: 0.0}))
-        )
-        behaviour.register(
-            ConstantDrive("fear", per_row(store, **{rows[0]: 0.2, rows[1]: 0.8, rows[2]: 0.0}))
-        )
-
-        selection = selection_for(store, ids)
-        behaviour.score(selection)
-
-        assert behaviour.driven_by("hunger", selection) == selection_for(store, ids[:1])
-        assert behaviour.driven_by("fear", selection) == selection_for(store, ids[1:2])
-
-    def test_an_entity_with_no_active_drive_is_driven_by_nothing(self):
-        """A creature that is fed, cool, safe, immature and healthy has no reason to act. Letting
-        argmax hand it to whichever drive happens to be registered first would fabricate a
-        motivation out of an all-zero row (§8.7).
+    def test_a_stayers_target_is_its_own_position(self):
+        """`Movement.step` then prices a step of zero and it pays nothing, which is what makes rest
+        recover exertion (#107) with nothing anywhere branching on a resting state.
         """
-        store = make_store()
-        behaviour = Behaviour(store, ColumnRegistry())
-        ids = store.allocate(1)
-        selection = selection_for(store, ids)
-        behaviour.register(ConstantDrive("hunger", np.zeros(store.capacity)))
-        behaviour.register(ConstantDrive("fear", np.zeros(store.capacity)))
+        world = World()
+        selection = world.spawn(1)
+        world.behaviour.register(wanting(NULL))
+        world.behaviour.choose(selection, np.random.default_rng(0))
 
-        behaviour.score(selection)
+        target_x, target_y = world.behaviour.chosen_target(selection)
 
-        assert behaviour.winning_drive(selection) == pytest.approx([-1])
-        assert len(behaviour.driven_by("hunger", selection)) == 0
-        assert len(behaviour.driven_by("fear", selection)) == 0
+        assert target_x == pytest.approx([4.0])
+        assert target_y == pytest.approx([4.0])
 
-    def test_ties_resolve_to_the_earlier_registered_drive(self):
-        """Issue #22 requires ties resolve deterministically given the same scores. Registration
-        order is the only ordering available, and it is stable across runs.
+    def test_a_target_never_leaves_the_world(self):
+        world = World()
+        selection = world.spawn(1, x=np.float32([0.0]), y=np.float32([0.0]))
+        world.behaviour.register(ConstantDrive("nothing", urgency=0.0))
+        world.behaviour.choose(selection, np.random.default_rng(0))
+
+        target_x, target_y = world.behaviour.chosen_target(selection)
+
+        assert 0.0 <= target_x[0] <= world.terrain.world_width
+        assert 0.0 <= target_y[0] <= world.terrain.world_height
+
+
+class TestChoiceStateIsNotInherited:
+    def test_a_newborn_has_made_no_choices(self):
+        world = World()
+        selection = world.spawn(1)
+
+        assert world.store.choice_heading[selection.to_indices()[0]] == pytest.approx(0.0)
+        assert not world.store.choice_moving[selection.to_indices()[0]]
+
+    def test_a_reused_row_does_not_leak_its_predecessors_choice(self):
+        """§2.1 puts death before reproduction within a tick precisely so freed rows are reusable
+        immediately, which makes this the ordinary path once #20 and #21 land, not an edge case.
         """
-        store = make_store()
-        behaviour = Behaviour(store, ColumnRegistry())
-        ids = store.allocate(1)
-        behaviour.register(ConstantDrive("hunger", np.full(store.capacity, 0.5)))
-        behaviour.register(ConstantDrive("fear", np.full(store.capacity, 0.5)))
+        world = World()
+        first = world.spawn(1)
+        world.behaviour.register(wanting(3))
+        world.behaviour.choose(first, np.random.default_rng(7))
+        assert world.store.choice_moving[first.to_indices()[0]]
 
-        selection = selection_for(store, ids)
-        behaviour.score(selection)
+        world.store.release(world.store._row_to_id[first.to_mask()])
+        second = world.spawn(1)
 
-        assert behaviour.driven_by("hunger", selection) == selection
-        assert len(behaviour.driven_by("fear", selection)) == 0
-
-    def test_an_unregistered_score_column_never_wins(self):
-        """The store's block is wider than the drives registered against it; the trailing columns
-        hold zeros that argmax would otherwise be free to select.
-        """
-        store = make_store(n_drives=4)
-        behaviour = Behaviour(store, ColumnRegistry())
-        ids = store.allocate(1)
-        selection = selection_for(store, ids)
-        behaviour.register(ConstantDrive("hunger", np.full(store.capacity, 0.3)))
-
-        behaviour.score(selection)
-
-        assert behaviour.winning_drive(selection) == pytest.approx([0])
-
-    def test_driven_by_rejects_a_name_no_drive_answers_to(self):
-        behaviour = Behaviour(make_store(), ColumnRegistry())
-        behaviour.register(ConstantDrive("hunger", np.zeros(8)))
-
-        with pytest.raises(KeyError):
-            behaviour.driven_by("gluttony", Selection.none(8))
+        assert second.to_mask().tolist() == first.to_mask().tolist()  # the same row, reused
+        assert world.store.choice_heading[second.to_indices()[0]] == pytest.approx(0.0)
+        assert not world.store.choice_moving[second.to_indices()[0]]
 
 
 class TestInspection:
-    def test_breakdown_names_every_registered_drives_score(self):
-        """§3.3's click-to-inspect needs "why did it do that", which is the whole score row
-        labelled by drive, not just the winner.
+    def test_breakdown_reports_each_drives_share_of_the_option_taken(self):
+        """Not the bare urgency: two animals with identical hunger, one facing a meadow and one
+        facing bare rock, are not equally explained by "hunger 0.6". What §3.3's click-to-inspect
+        needs is how much of *this* decision each drive accounts for.
         """
-        store = make_store()
-        behaviour = Behaviour(store, ColumnRegistry())
-        ids = store.allocate(1)
-        selection = selection_for(store, ids)
-        row = str(selection.to_indices()[0])
-        behaviour.register(ConstantDrive("hunger", per_row(store, **{row: 0.4})))
-        behaviour.register(ConstantDrive("fatigue", per_row(store, **{row: 0.6})))
+        world = World()
+        selection = world.spawn(1)
+        world.behaviour.register(wanting(3, urgency=0.75))
+        world.behaviour.register(ConstantDrive("ambient", urgency=0.25, appeal=1.0))
 
-        behaviour.score(selection)
+        world.behaviour.choose(selection, np.random.default_rng(7))
 
-        assert behaviour.breakdown(selection) == {
-            "hunger": pytest.approx([0.4]),
-            "fatigue": pytest.approx([0.6]),
+        assert world.behaviour.breakdown(selection) == {
+            "wants_3": pytest.approx([0.75]),
+            "ambient": pytest.approx([0.25]),
         }
+
+    def test_a_drive_that_did_not_want_the_chosen_option_reports_nothing_for_it(self):
+        """The decomposition is of the option *actually taken*, so a drive that preferred a
+        different one contributed nothing to this decision however urgent it was.
+        """
+        world = World()
+        selection = world.spawn(1)
+        world.behaviour.register(wanting(3, urgency=1.0))
+        world.behaviour.register(wanting(5, urgency=0.2))
+
+        world.behaviour.choose(selection, np.random.default_rng(7))
+
+        breakdown = world.behaviour.breakdown(selection)
+        assert breakdown["wants_3"] == pytest.approx([1.0])
+        assert breakdown["wants_5"] == pytest.approx([0.0])
+
+    def test_adding_a_drive_needs_no_change_to_the_contest(self):
+        """#22's "done when", which #114 inherits unchanged: a new drive is registered, not wired
+        into a dispatch chain. The loop runs with one drive and then two, with nothing about the
+        call changing.
+        """
+        world = World()
+        selection = world.spawn(1)
+        world.behaviour.register(wanting(3, urgency=0.6))
+
+        world.behaviour.choose(selection, np.random.default_rng(7))
+        assert set(world.behaviour.breakdown(selection)) == {"wants_3"}
+
+        world.behaviour.register(ConstantDrive("ambient", urgency=0.4, appeal=1.0))
+        world.behaviour.choose(selection, np.random.default_rng(7))
+
+        assert world.behaviour.breakdown(selection)["ambient"] == pytest.approx([0.4])
+
+    def test_headings_are_reported_over_a_whole_selection(self):
+        world = World(capacity=16)
+        selection = world.spawn(6)
+        world.behaviour.register(wanting(3))
+
+        world.behaviour.choose(selection, np.random.default_rng(7))
+
+        assert world.behaviour.headings(selection).shape == (6,)

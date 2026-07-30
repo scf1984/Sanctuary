@@ -34,7 +34,7 @@ import numpy as np
 
 from core.world.climate import Climate
 from core.world.diffusion import CostAwareDiffusion, DiffusionConfig
-from core.world.terrain import Terrain, bilinear_sample
+from core.world.terrain import Terrain
 from core.world.water import Water
 
 
@@ -284,32 +284,18 @@ class Plants:
         """
         return self.forage_diffusion.spread(self.biomass.astype(np.float32))
 
-    def forage_gradient(
-        self, field: np.ndarray, x: np.ndarray, y: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Which way food lies, and how strongly, for foragers at ``(x, y)``.
+    def forage_at(self, field, x, y):
+        """The forage field's value at each ``(x, y)``, in the field's own units.
 
-        field: a `forage_field()` result. Passed in rather than rebuilt per call, because one tick
-            has one field and every forager reads the same one — building it per drive query would
-            pay for the diffusion once per caller.
-        returns (gx, gy, strength): the two gradient components, and the field's own value where
-            each forager stands, all ``(n,)`` float64.
+        Accepts any shape, because #114 samples a whole block of candidate options at once —
+        ``(n_entities, n_options)`` — and `_cell_indices` is elementwise, so one call serves the
+        whole population's whole option set rather than one call per option (§2.3).
 
-        **It ranks nothing and gates nothing.** Whether the reading is strong enough to notice is a
-        question about the animal — its sight phenotype against a detection threshold — and belongs
-        to the drive that asks (§2.5, the same split scent already uses). The field knows nothing of
-        genes, which is exactly why this returns a strength instead of a yes.
+        Sampled to the containing cell rather than interpolated, matching `biomass_at`: a forager
+        that walks there will graze *that* cell, so what it can see and what it can eat agree.
         """
-        x = np.asarray(x, dtype=np.float64)
-        y = np.asarray(y, dtype=np.float64)
-        if x.shape != y.shape:
-            raise ValueError("x and y must be the same length")
-        gradient_x, gradient_y = self.forage_diffusion.gradient_at(field, x, y)
-        strength = bilinear_sample(
-            field, x, y, self.terrain.cell_size, self.terrain.world_width,
-            self.terrain.world_height,
-        )
-        return gradient_x, gradient_y, strength
+        rows, cols = self._cell_indices(x, y)
+        return field[rows, cols]
 
     def total_nutrients(self) -> float:
         """Every nutrient unit the world contains: in soil, bound in biomass, or grazed away.

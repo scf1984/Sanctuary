@@ -78,12 +78,20 @@ class TestConstruction:
 
 
 class TestCostsAndModesCannotDisagree:
-    def test_rejects_a_cost_on_a_gene_not_read_as_a_magnitude(self):
+    def test_rejects_a_cost_on_a_gene_that_could_express_negative(self):
         # #136: a signed phenotype times a positive cost is a negative term in upkeep wherever the
         # value is negative, so the bill is discounted rather than charged. Folding the two tables
         # together is what makes this checkable at one place.
-        with pytest.raises(ValueError, match="magnitude"):
+        with pytest.raises(ValueError, match="costed but signed"):
             GeneRegistry((spec("size"), spec("aversion0_0", cost=0.5, mode=ExpressionMode.SIGNED)))
+
+    def test_allows_a_cost_on_an_exponential_gene(self):
+        # The rule is about the phenotype's sign, not about one mode's identity: `exp` is strictly
+        # positive, so a cost on it charges correctly (#114 added the mode; #136 set the rule).
+        registry = GeneRegistry(
+            (spec("size"), spec("metabolic_scale", cost=0.5, mode=ExpressionMode.EXPONENTIAL))
+        )
+        assert registry.cost[1] == pytest.approx(0.5)
 
     def test_allows_a_zero_cost_on_a_signed_gene(self):
         # A gene charging nothing cannot contribute a term of any sign, so the whole cue block is
@@ -115,6 +123,12 @@ class TestResolvingAGene:
 
 
 class TestGeneratedMap:
+    def test_an_exponential_gene_expresses_strictly_positive(self):
+        # The reason the mode exists: a temperature or a rate must never reach zero however far
+        # the gene drifts, and `exp` guarantees that by construction rather than by a clamp.
+        assert ExpressionMode.EXPONENTIAL.always_non_negative
+        assert not ExpressionMode.SIGNED.always_non_negative
+
     def test_describe_names_every_gene_with_its_declared_facts(self):
         described = GeneRegistry(SPECS).describe()
         for name in ("size", "speed", "insulation", "signature_0", "mutability"):

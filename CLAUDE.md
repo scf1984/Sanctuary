@@ -114,9 +114,10 @@ assembly is what §7.2 exists to prevent, and the viewer's world is now config h
 `TICK_ORDER` holds the **implemented prefix** of the table, in the table's relative order. Feeding
 (#19), death and decomposition (#21), reproduction (#20) and speciation (#16) have no system yet
 and are absent rather than stubbed (§8.2), so the assembled world runs without eating, dying or
-breeding. Movement likewise acts for one drive: hunger is the only one with a destination today, so
-a winner from any other drive stands still — which is a real problem rather than a gap, filed as
-#126.
+breeding. Movement, by contrast, now acts for **every** animal rather than for one drive's winners:
+#114 replaced the argmax over drives with a sampled heading, so there is no longer a subset "driven
+by" hunger and no animal stands still merely because the drive that won has no mechanic. That was
+#126, and it is closed by the encoding rather than by a special case.
 
 ### 2.2 Randomness and reproducibility
 
@@ -271,15 +272,27 @@ a winner from any other drive stands still — which is a real problem rather th
   |---|---|---|
   | magnitude (`abs`) | size, speed, acuity, camouflage, insulation, mutability | a quantity cannot be negative |
   | raw, signed | cue signature, aversion | sign carries information and doubles the discriminating power of cue space |
+  | exponential (`exp`) | choice temperature (#114) | a **scale**, which must stay strictly positive and multiply rather than add |
 
-  A third reading — squashed to [0, 1], for #99's `sex_allocation` and `selfing_rate` — is named
+  The exponential mode was added by #114 and is worth distinguishing from magnitude, since both
+  produce non-negative phenotypes. A magnitude *folds* at zero: two genes either side of it express
+  identically, and drift through zero is a reflection. That is right for a size and wrong for a
+  scale, where zero is not the smallest useful value but a division by zero — a Boltzmann
+  temperature of zero has no distribution. `exp` never reaches zero however far the gene drifts, so
+  the degenerate case is unrepresentable rather than clamped (§8.7), and equal steps in storage are
+  equal *ratios* in the phenotype, which is the arithmetic a scale actually wants.
+
+  A fourth reading — squashed to [0, 1], for #99's `sex_allocation` and `selfing_rate` — is named
   here and deliberately **not implemented**, because those genes do not exist yet and a mode nothing
   declares is §8.2's speculative generality.
 
   Two consequences bind. **A mode is required, never defaulted**: an undeclared gene would be taken
   as signed, and a signed `size` is a body with negative mass. And **the mode is what guarantees
   upkeep is non-negative**, not inheritance — from which follows the rule settled in #136:
-  **only a gene read as a magnitude may carry a cost**, checked when `Metabolism` is built.
+  **only a gene read as a magnitude may carry a cost**, checked when `Metabolism` is built. The
+  exponential mode is non-negative too and is *permitted* a cost by the same rule, asked as
+  `ExpressionMode.always_non_negative` rather than as a list of modes — the property is what #136
+  needs, and a list would have to be revisited by every mode added after it.
 
   The reason is that upkeep is a *sum*, so the damage begins long before any total goes negative. A
   `SIGNED` gene is founded across zero by design, so a positive cost on one contributes a negative
@@ -409,8 +422,76 @@ a winner from any other drive stands still — which is a real problem rather th
 - **Heritable drive weights.** Behaviour is a fixed set of authored drives (hunger, thirst, fear,
   lust, fatigue) competing each tick by utility score — but *the weights and thresholds are genes*.
   Boldness, sociality, and parental investment therefore evolve rather than being designed.
-  Behaviour stays explainable ("it fled because fear outscored hunger"), which the intervention
-  gameplay depends on.
+  Behaviour stays explainable, which the intervention gameplay depends on.
+- **Drives score *options*, not animals** — decided in #114, which owned it and which reopened #22's
+  abstraction to do so. Each tick an animal considers `N` jittered candidate headings plus a **null
+  option**, every drive scores every candidate, and one is sampled:
+
+  ```
+  utility(option) = Σ_drives urgency_d × appeal_d(option)
+  ```
+
+  A drive therefore answers two questions that #22 fused into one. `urgency` is *how much* — #22's
+  score under its proper name, a property of the animal. `appeal` is *which way* — a reading of the
+  world at each candidate, on the [0, 1] scale every drive shares because the utilities are summed.
+
+  **The reason is that an argmax over drives makes a drive without a mechanic dangerous.** Under
+  #22 the winning drive decided the action, so a winner that had no way to act left the animal
+  standing still with nothing saying so: the first assembled world had all forty founders wanting
+  water in a world with no way to drink, and not one moved for the entire run (#126). Scoring
+  options inverts that. **A drive that perceives nothing returns a flat appeal, which shifts no
+  ranking**, so missing mechanics degrade to *indifference* rather than to paralysis — and it
+  becomes safe to add a drive before its senses exist.
+
+  Three things fall out rather than being built, which is the argument for the shape:
+
+  - **Rest needs no mode, flag or state column.** It is the null option winning, and an animal that
+    picks it proposes no displacement, pays no transport cost, and therefore recovers (#107).
+  - **Fear needs no flee-target machinery.** It is appeal with the sign flipped.
+  - **Explainability improves rather than surviving.** `breakdown()` reports each drive's
+    contribution *to the option actually taken* — "62% of that heading was hunger" — which says
+    strictly more than a winner's name, and is only definable once an option is chosen. Two animals
+    with identical hunger, one facing a meadow and one facing bare rock, are not equally explained
+    by "hunger 0.6". `winning_drive` and `driven_by` were **deleted, not redefined**.
+
+  **The choice is sampled, not maximised**, from a Boltzmann distribution at a per-animal
+  temperature (`choice_temperature`, read exponentially — see the mode table above). A cold animal
+  takes its best option nearly always and a warm one explores, so exploration is a *trait under
+  selection* rather than a tuning constant. It is drawn by the Gumbel-max trick, which is exactly a
+  categorical draw from the softmax in one vectorized pass (§2.3) — the same extreme-value machinery
+  inheritance already uses, for the same reason: the sampling is the point, not the mean.
+
+  **Headings are continuous and never snapped to grid neighbours**, because 8-way movement gives
+  staircase paths and a diagonal bias. Fields are gridded; positions and headings are not. `N` is an
+  **engine resolution knob** and deliberately not a gene — it decides how finely the world is
+  sampled, not what any animal wants — and the candidates are **jittered per entity**, without which
+  every animal evaluates the identical absolute directions and the population moves in lockstep.
+  The jitter is what makes angular resolution effectively continuous across a population, and it is
+  why a two-stage refinement pass was rejected: refining around the coarse best is a hill-climb, so
+  it biases toward the argmax *before* the softmax can blur it, paying twice to partly undo the
+  exploration the temperature exists to create.
+
+  **The chosen heading is stored, not returned.** Behavioural momentum needs a choice that persists
+  across ticks, so `choice_heading` and `choice_moving` are columns `Behaviour` owns. Two columns
+  rather than one because a resting animal *keeps* its heading — change-aversion needs something to
+  continue — so the heading alone cannot also say whether it moved. Neither is inherited and both
+  are reset on row reuse: a newborn has made no choices. Storing a **heading** rather than an option
+  index is what lets change-aversion reward how *well* a direction is continued (`cos` of the turn)
+  rather than testing an index for equality, and it survives a change to `N`, which an index would
+  not — it would silently mean a different direction. Change-aversion is a per-world constant today
+  and becomes the `commitment` gene at #100, which should follow immediately: the constant is that
+  gene's degenerate case rather than a different mechanism, so nothing here changes shape when it
+  lands.
+
+  The cost is `N × n_drives × n_entities` field reads per tick, and §8.5 required it measured rather
+  than asserted: [`docs/spikes/option-sampling-cost.md`](docs/spikes/option-sampling-cost.md) finds
+  `choose()` at 362 ms/tick for 100,000 entities at `N=8` against §2.1's 1,000 ms budget, with **one
+  additional candidate costing 0.19 ms per 1,000 entities**. So `N` is genuinely affordable to raise,
+  which is what the rejection of two-stage refinement depended on. Candidate positions are sampled
+  **once per entity and shared by every drive** — the largest option-scaled term at 48.6 ms, which
+  per-drive sampling would pay four times for an identical result. The measurement also found the
+  worry misaimed: the dominant cost is the forage field's diffusion (110–145 ms, independent of
+  population), not the option multiplier.
 - **Exertion is a column, and it is work per unit of body size** — decided in #107, which owned it.
   Fatigue scored health deficit alone, so an animal that had sprinted across a ridge and one that
   had stood still all tick were indistinguishable at equal health, and resting was selected for
@@ -553,6 +634,7 @@ a winner from any other drive stands still — which is a real problem rather th
   | `maturity_age` | ticks before an animal seeks a mate at all | 0 — late maturity is already paid for in generations forgone |
   | `senescence_resistance` | damps how fast performance traits degrade with age | **positive**, per the insulation rule |
   | `commitment` | how doggedly a drive holds a target across ticks (#100) | 0 — selection on what the persistence achieves |
+  | `choice_temperature` | how much an animal explores rather than taking its best option (#114) | 0 — exploring badly is its own price, exactly as `mutability` above |
   | `mutability` | the floor under an offspring's inherited drift (#104) | 0 — an unfit brood is its own price; see the inheritance rule above |
 
   **Senescence is degradation, not a timer.** There is no `life_expectancy` gene and no death clock.

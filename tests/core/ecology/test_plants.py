@@ -394,39 +394,41 @@ class TestForageField:
 
         assert walled.forage_field()[5, 5] < open_ground.forage_field()[5, 5]
 
-    def test_the_gradient_points_at_food(self):
+    def test_the_field_reads_higher_nearer_the_food(self):
         plants = make_plants()
         plants.biomass[:] = 0.0
         plants.biomass[5, 8] = 40.0
         field = plants.forage_field()
 
-        gradient_x, gradient_y, strength = plants.forage_gradient(
-            field, np.array([5.0]), np.array([5.0])
-        )
+        toward, away = plants.forage_at(field, np.array([6.0, 4.0]), np.array([5.0, 5.0]))
 
-        assert gradient_x[0] > 0.0
-        assert gradient_y[0] == pytest.approx(0.0, abs=1e-6)
-        assert strength[0] > 0.0
+        assert toward > away
 
-    def test_the_gradient_answers_a_whole_population_at_once(self):
+    def test_a_whole_block_of_candidate_options_is_sampled_in_one_call(self):
+        """#114 reads `(n_entities, n_options)` positions at once, so this takes any shape rather
+        than a flat population vector — `_cell_indices` is elementwise and needs no reshaping.
+        """
         plants = make_plants()
         plants.biomass[:] = 0.0
         plants.biomass[:, 9] = 40.0
         field = plants.forage_field()
-        x = np.full(7, 4.0)
-        y = np.linspace(3.0, 7.0, 7)
+        x = np.tile(np.array([6.0, 4.0, 5.0]), (7, 1))
+        y = np.tile(np.linspace(3.0, 7.0, 7)[:, None], (1, 3))
 
-        gradient_x, gradient_y, strength = plants.forage_gradient(field, x, y)
+        readings = plants.forage_at(field, x, y)
 
-        assert gradient_x.shape == gradient_y.shape == strength.shape == (7,)
-        assert (gradient_x > 0.0).all()
+        assert readings.shape == (7, 3)
+        assert (readings[:, 0] > readings[:, 1]).all()
 
-    def test_mismatched_position_arrays_are_rejected(self):
+    def test_sampling_outside_the_world_is_rejected(self):
+        """A candidate off the map is a bug in whatever generated it, and defaulting to an edge
+        cell would let foragers read a border strip forever (§8.7).
+        """
         plants = make_plants()
         field = plants.forage_field()
 
-        with pytest.raises(ValueError):
-            plants.forage_gradient(field, np.array([1.0, 2.0]), np.array([1.0]))
+        with pytest.raises(ValueError, match="outside terrain bounds"):
+            plants.forage_at(field, np.array([-1.0]), np.array([1.0]))
 
     def test_a_source_that_does_not_cover_the_grid_is_rejected(self):
         plants = make_plants()

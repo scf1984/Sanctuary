@@ -57,12 +57,16 @@ class ExpressionTable:
         column order — so applying every mode to a phenotype block is a handful of whole-array
         operations rather than a per-gene loop (§2.3). Taken from the registry rather than rebuilt,
         since a second copy resolved separately is the disagreement #111 exists to prevent.
+    exponential_columns: (n_genes,) bool, True where the gene is read as `exp(value)`.
     mutability_index: int, the column `inherit()` reads the draw's spread floor from.
     """
 
     def __init__(self, registry: GeneRegistry, config: GeneticsConfig) -> None:
         self.config = config
         self.magnitude_columns = registry.magnitude_columns
+        self.exponential_columns = registry.exponential_columns
+        # Hoisted so `phenotype` — called every tick — does not reduce a boolean array per call.
+        self._has_exponential = bool(self.exponential_columns.any())
 
         # Raises KeyError naming the vocabulary version if the gene does not exist. The spread of
         # a distribution is a bare number, hence dimensionless.
@@ -76,9 +80,18 @@ class ExpressionTable:
     def phenotype(self, raw: np.ndarray) -> np.ndarray:
         """(n, n_genes) float32: `raw` gene rows read through each gene's mode.
 
-        Magnitude genes fold across zero and signed genes pass through, which is the whole of it.
+        Magnitude genes fold across zero, exponential genes are raised through `exp`, and signed
+        genes pass through.
         Species expression is *not* applied here — that is `Genetics.expressed`'s job, and it runs
         after this rather than before it, because a mode maps an unexpressed gene's stored value to
         something that is not necessarily zero and masking first would express half of it.
         """
-        return np.where(self.magnitude_columns, np.abs(raw), raw).astype(np.float32)
+        phenotype = np.where(self.magnitude_columns, np.abs(raw), raw).astype(np.float32)
+        # Applied to the exponential columns alone rather than to the whole block and selected
+        # from. `exp` over every column overflows on any gene holding a large value — a cue
+        # signature is unbounded and read raw — which raises a RuntimeWarning per tick and
+        # computes `inf` only to discard it.
+        if self._has_exponential:
+            columns = self.exponential_columns
+            phenotype[:, columns] = np.exp(phenotype[:, columns])
+        return phenotype

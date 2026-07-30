@@ -296,7 +296,7 @@ class TestFatigueReadsBoth:
             world.exertion.recover(sprinter)
             world.exertion.recover(rester)
 
-        assert world.fatigue.score(sprinter)[0] > world.fatigue.score(rester)[0]
+        assert world.fatigue.urgency(sprinter)[0] > world.fatigue.urgency(rester)[0]
 
     def test_a_healthy_idle_animal_wants_nothing(self):
         """A drive scoring zero cannot win (`Behaviour.winning_drive`), so a fresh healthy animal
@@ -304,7 +304,7 @@ class TestFatigueReadsBoth:
         world = World()
         cohort = world.place([5.0], 5.0, health=1.0)
 
-        assert world.fatigue.score(cohort) == pytest.approx([0.0])
+        assert world.fatigue.urgency(cohort) == pytest.approx([0.0])
 
     def test_injury_alone_still_scores(self):
         """The term that existed before #107 is unchanged in isolation: an animal that has not
@@ -312,7 +312,7 @@ class TestFatigueReadsBoth:
         world = World()
         cohort = world.place([5.0], 5.0, health=0.25)
 
-        assert world.fatigue.score(cohort) == pytest.approx([0.75])
+        assert world.fatigue.urgency(cohort) == pytest.approx([0.75])
 
     def test_hurt_and_spent_exceeds_either_alone(self):
         """Noisy-OR, per §2.5: independent reasons to do one thing compound rather than replacing
@@ -327,20 +327,20 @@ class TestFatigueReadsBoth:
         for cohort in (spent, both):
             world.step_toward(cohort, 9.0, float(world.store.y[cohort.to_mask()][0]), pace=1.0)
 
-        score_hurt = world.fatigue.score(hurt)[0]
-        score_spent = world.fatigue.score(spent)[0]
-        score_both = world.fatigue.score(both)[0]
+        score_hurt = world.fatigue.urgency(hurt)[0]
+        score_spent = world.fatigue.urgency(spent)[0]
+        score_both = world.fatigue.urgency(both)[0]
         assert score_both > score_hurt
         assert score_both > score_spent
 
-    def test_the_score_never_exceeds_its_weight(self):
+    def test_the_urgency_never_exceeds_its_weight(self):
         """Bounded in [0, 1] before weighting, like every other drive — which is the property that
         lets a third reason to rest be added later without retuning anything else."""
         world = World(exertion_saturation=0.01)
         cohort = world.place([5.0], 5.0, health=0.0)
         world.step_toward(cohort, 20.0, 5.0, pace=1.0)
 
-        assert world.fatigue.score(cohort)[0] == pytest.approx(1.0)
+        assert world.fatigue.urgency(cohort)[0] == pytest.approx(1.0)
 
 
 class TestOwnership:

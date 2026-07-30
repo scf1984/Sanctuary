@@ -24,14 +24,16 @@ _COLUMN_NAMES = (
     "exertion",
     "species_id",
     "drive_scores",
+    "choice_heading",
+    "choice_moving",
     "genes",
     "alive",
 )
 
 # Callers seed these via allocate()'s initial_values kwargs; "alive", "age" and "exertion" are set
-# by allocate() itself and are not caller-settable. The last two for the same reason: both count
+# by allocate() itself and are not caller-settable. The last three for the same reason: each records
 # something the entity itself did, and an entity that has just been allocated has done nothing.
-_SEEDABLE_COLUMN_NAMES = frozenset(_COLUMN_NAMES) - {"alive", "age", "exertion"}
+_SEEDABLE_COLUMN_NAMES = frozenset(_COLUMN_NAMES) - {"alive", "age", "exertion", "choice_heading", "choice_moving"}
 
 
 class EntityStoreFull(Exception):
@@ -66,6 +68,14 @@ class EntityStore:
           energy units: the size-independent half of the movement bill, so one saturation constant
           means the same tiredness to a mouse and to an elephant.
       species_id: int32, opaque id into the species registry owned elsewhere; -1 means unset.
+      choice_moving: ``(capacity,)`` bool: whether the option chosen last tick proposed a
+        displacement at all. Separate from the heading because a resting animal *keeps* its
+        heading — change-aversion needs something to continue — so the heading alone cannot say
+        whether it moved (#114).
+      choice_heading: ``(capacity,)`` float32, radians in [0, 2pi): the direction each entity
+        chose to move last tick, which change-aversion biases the next choice toward (#114).
+        Stored as a heading rather than an option index because an index would silently mean a
+        different direction if the candidate count were retuned.
       drive_scores: ``(capacity, n_drives)`` float32, unit-free utility scores. Which drives
           exist is owned by the behaviour system (CLAUDE.md §8.3); this module only provides a
           column block of the width it's told to.
@@ -110,6 +120,8 @@ class EntityStore:
         self.exertion = np.zeros(capacity, dtype=np.float32)
         self.species_id = np.full(capacity, -1, dtype=np.int32)
         self.drive_scores = np.zeros((capacity, self._n_drives), dtype=np.float32)
+        self.choice_heading = np.zeros(capacity, dtype=np.float32)
+        self.choice_moving = np.zeros(capacity, dtype=np.bool_)
         self.genes = np.zeros((capacity, self._n_genes), dtype=np.float32)
         self.alive = np.zeros(capacity, dtype=np.bool_)
 
@@ -152,10 +164,11 @@ class EntityStore:
     def allocate(self, n: int, **initial_values: np.ndarray) -> np.ndarray:
         """Allocate ``n`` new rows from the free list and return their stable ids.
 
-        Every column defaults to its zero value except ``alive`` (True), ``age`` (0) and
-        ``exertion`` (0) — the last two reset explicitly rather than relying on the row being
-        clean, since a reused row still holds its predecessor's years and its predecessor's
-        tiredness, and a newborn has neither. Pass
+        Every column defaults to its zero value except ``alive`` (True), ``age`` (0),
+        ``exertion`` (0), ``choice_heading`` (0) and ``choice_moving`` (False) — the last four reset
+        explicitly rather than relying on the row being clean, since a reused row still holds its
+        predecessor's years, its tiredness and the direction it was last walking, and a newborn has
+        none of them (#114). Pass
         column-name keyword arguments of length ``n`` to seed specific columns in the same
         vectorized write — e.g. ``allocate(3, x=..., energy=...)`` — since the ids this call
         returns are the only supported way to address these rows again.
@@ -184,6 +197,8 @@ class EntityStore:
         self.alive[rows] = True
         self.age[rows] = 0
         self.exertion[rows] = 0.0
+        self.choice_heading[rows] = 0.0
+        self.choice_moving[rows] = False
         self._row_to_id[rows] = ids
         for id_, row in zip(ids.tolist(), rows.tolist()):
             self._id_to_row[id_] = row

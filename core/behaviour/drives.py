@@ -100,7 +100,7 @@ class Hunger:
     """Wanting food, and knowing which patch of it is worth the walk.
 
     Score is the energy deficit against satiation — a property of the animal, not of the ground it
-    is standing on. Whether there is anything to eat nearby belongs to `forage_target`, and keeping
+    is standing on. Whether there is anything to eat nearby belongs to `appeal`, and keeping
     the two apart is what lets a starving animal in barren ground still read as starving rather
     than as content.
     """
@@ -125,57 +125,33 @@ class Hunger:
         # scales what is sampled from a field rather than a radius (#93), so it is dimensionless.
         self._sight_index = genes.index_of(config.sight_gene, unit=Unit.DIMENSIONLESS)
 
-    def score(self, selection: Selection) -> np.ndarray:
+    def urgency(self, selection: Selection) -> np.ndarray:
         """(len(selection),) float32: how far the pool has fallen below satiation, weighted."""
         deficit = 1.0 - self.ecology.energy(selection) / self.config.satiation_energy
         return (self.config.weight * np.clip(deficit, 0.0, 1.0)).astype(np.float32)
 
-    def forage_target(self, selection: Selection) -> tuple[np.ndarray, np.ndarray]:
-        """Where each forager should go to eat: (x, y), each (len(selection),) float64.
+    def appeal(self, selection: Selection, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+        """(n, n_options) float32 in [0, 1]: how much grazing each option leads toward.
 
-        A heading read off the plant field's gradient (#93), turned into a point far enough away
-        that `Movement.step` spends the whole tick walking toward it. The field has already applied
-        the distance discount and the cost of the ground between, so there is nothing left here to
-        rank: the direction the reading rises fastest *is* the answer to "toward what".
+        The diffused forage field read at each candidate, scaled by the sight phenotype and gated
+        by `detection_threshold` — the same rule `forage_target` applied to a single gradient, now
+        applied to every option. **Detection is a threshold, not a radius**: one field serves the
+        whole population, so sight cannot narrow what is sampled, only scale it (§2.5, #93).
 
-        This replaces an argmax over candidate patches scored by `biomass / (1 + distance /
-        forage_reluctance)`. That rule could only discount distance, so a meadow across a gorge
-        scored as well as one on open ground; the gradient discounts the walk itself.
-
-        **Detection is a threshold, not a radius.** One field serves the whole population, so the
-        sight phenotype cannot narrow what is sampled — it scales what is sampled, and an animal
-        whose scaled reading falls below `detection_threshold` has found nothing (§2.5 settles the
-        identical rule for scent). Such an animal is returned its own position: there is nothing
-        worth walking to, and inventing a destination would send it marching at a cell chosen by
-        whichever way the numerical noise happened to lean.
+        Normalised by each animal's own best option, which does two things at once. It puts appeal
+        on the same [0, 1] scale every other drive uses, so summed utilities are comparable; and it
+        makes an animal that detects nothing return **all zeros** rather than a flat non-zero
+        preference — so hunger drops out of the sum entirely and the null option can win. An animal
+        with no food in sight rests instead of marching whichever way the numerical noise leaned,
+        which is the failure `forage_target` had to special-case.
         """
-        mask = selection.to_mask()
-        x = self.store.x[mask].astype(np.float64)
-        y = self.store.y[mask].astype(np.float64)
         sight = self.genetics.expressed(selection)[:, self._sight_index].astype(np.float64)
-
-        field = self.plants.forage_field()
-        gradient_x, gradient_y, strength = self.plants.forage_gradient(field, x, y)
-
-        slope = np.hypot(gradient_x, gradient_y)
-        found = (sight * strength >= self.config.detection_threshold) & (slope > 0.0)
-        # A unit heading, then one field-range's worth of travel along it. Any distance at least a
-        # tick's reach would move the animal identically — `Movement.step` stops at its own reach —
-        # and the range is the honest choice: past it the field carries nothing, so it is the
-        # furthest point this reading can actually vouch for.
-        pace_out = self.plants.config.forage_diffusion.range
-        scale = np.where(found, pace_out / np.where(slope > 0.0, slope, 1.0), 0.0)
-        # Clamped into the world, because a heading is a direction and a direction near the edge
-        # points out of it. `Movement.step` consumes targets without bounding them — deliberately,
-        # since a step never overshoots one — so an out-of-world destination raises out of the
-        # middle of a tick from `Terrain.elevation_at`. The contract this replaced returned real
-        # in-world cell centres and could not express the problem; a heading can, so the drive that
-        # invents it is where it stops.
-        terrain = self.plants.terrain
-        return (
-            np.clip(x + gradient_x * scale, 0.0, terrain.world_width),
-            np.clip(y + gradient_y * scale, 0.0, terrain.world_height),
-        )
+        reading = sight[:, None] * self.plants.forage_at(self.plants.forage_field(), x, y)
+        found = np.where(reading >= self.config.detection_threshold, reading, 0.0)
+        best = found.max(axis=1, keepdims=True)
+        return np.divide(
+            found, best, out=np.zeros_like(found), where=best > 0.0
+        ).astype(np.float32)
 
 
 @dataclass(frozen=True)
@@ -218,7 +194,18 @@ class Thirst:
         self.climate = climate
         self.config = config
 
-    def score(self, selection: Selection) -> np.ndarray:
+    def appeal(self, selection: Selection, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+        """(n, n_options) float32: flat — thirst pulls at no direction yet.
+
+        There is no hydration column, no drinking and no dehydration (#156), so nothing here can
+        say which way water lies in a sense the animal could act on. Returning a constant makes
+        thirst **indifferent about direction while still visible in the breakdown**, which is the
+        whole point of #114: a drive without a mechanic no longer freezes the animal, it simply
+        stops steering. #156 replaces this with a reading of `Water.depth` at each candidate.
+        """
+        return np.ones_like(x, dtype=np.float32)
+
+    def urgency(self, selection: Selection) -> np.ndarray:
         """(len(selection),) float32: weighted heat load, zero below the onset temperature."""
         mask = selection.to_mask()
         temperature = self.climate.temperature_at(self.store.x[mask], self.store.y[mask])
@@ -271,7 +258,17 @@ class Lust:
         self.ecology = ecology
         self.config = config
 
-    def score(self, selection: Selection) -> np.ndarray:
+    def appeal(self, selection: Selection, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+        """(n, n_options) float32: flat — nothing can perceive a mate yet.
+
+        §2.5 settles that finding a mate is the cue field read with the searcher's *own* signature
+        as the vector, but there is no mating mechanic to act on it (#20). Constant until then, so
+        lust registers an appetite without steering — see `Thirst.appeal` for why that is the
+        correct degenerate case rather than a stub (§8.2).
+        """
+        return np.ones_like(x, dtype=np.float32)
+
+    def urgency(self, selection: Selection) -> np.ndarray:
         """(len(selection),) float32: weighted energy surplus, zero before maturity."""
         mature = self.store.age[selection.to_mask()] >= self.config.maturity_age
         headroom = self.config.abundant_energy - self.config.breeding_energy
@@ -398,7 +395,22 @@ class Fear:
             dtype=np.int64,
         )
 
-    def score(self, selection: Selection) -> np.ndarray:
+    def appeal(self, selection: Selection, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+        """(n, n_options) float32: flat — fear knows it is frightened, not which way is safer.
+
+        The noisy-OR below reads the cue field at the animal's **own** position, and reading it at a
+        candidate needs `Scent.sample_excluding_self` generalised to arbitrary points: the
+        self-response it subtracts is a per-cell quantity, so sampling elsewhere must subtract that
+        cell's value rather than the animal's. That is a real change to #22's scent surface and is
+        filed separately rather than smuggled in here (§7.2).
+
+        Until then fear is urgency without a direction, exactly as it was before #114 — flight has
+        never existed. What #114 changes is that fear can no longer *freeze* an animal by winning:
+        it contributes to every option equally and the other drives decide (#126).
+        """
+        return np.ones_like(x, dtype=np.float32)
+
+    def urgency(self, selection: Selection) -> np.ndarray:
         """(len(selection),) float32: weighted probability that something dangerous was detected."""
         detected = np.stack(self._channels(selection))
         # Noisy-OR: independent detections corroborate without ever summing past certainty, which
@@ -484,7 +496,18 @@ class Fatigue:
         self.exertion = exertion
         self.config = config
 
-    def score(self, selection: Selection) -> np.ndarray:
+    def appeal(self, selection: Selection, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+        """(n, n_options) float32: all of it on staying put, which is the last option.
+
+        This is what makes rest reachable without a mode, a flag or a state column (#114). A tired
+        animal's utility concentrates on the option proposing no displacement; it then pays no
+        transport cost, and therefore recovers (#107). Nothing anywhere branches on "is resting".
+        """
+        appeal = np.zeros_like(x, dtype=np.float32)
+        appeal[:, -1] = 1.0
+        return appeal
+
+    def urgency(self, selection: Selection) -> np.ndarray:
         """(len(selection),) float32: weighted urgency to rest, zero for a healthy idle animal."""
         injury = np.clip(1.0 - self.store.health[selection.to_mask()], 0.0, 1.0)
         spent = np.clip(

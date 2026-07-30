@@ -24,6 +24,18 @@ _SIGNED_PREFIXES = ("signature_", "aversion")
 # gene names the suite uses. `Movement` asserts this, which is the point of the unit field (#111).
 _LENGTH_GENES = frozenset({"speed"})
 
+# A Boltzmann temperature is read through `exp` so it is strictly positive however far the gene
+# drifts (#114); `abs` would fold it at zero, and a zero temperature is a division by zero.
+_EXPONENTIAL_GENES = frozenset({"choice_temperature"})
+
+
+def _mode_for(name: str) -> ExpressionMode:
+    if name in _EXPONENTIAL_GENES:
+        return ExpressionMode.EXPONENTIAL
+    if name.startswith(_SIGNED_PREFIXES):
+        return ExpressionMode.SIGNED
+    return ExpressionMode.MAGNITUDE
+
 
 def gene_registry(
     names: Iterable[str], costs: Mapping[str, float] | None = None
@@ -35,11 +47,7 @@ def gene_registry(
             GeneSpec(
                 name=name,
                 cost=charged.get(name, 0.0),
-                expression_mode=(
-                    ExpressionMode.SIGNED
-                    if name.startswith(_SIGNED_PREFIXES)
-                    else ExpressionMode.MAGNITUDE
-                ),
+                expression_mode=_mode_for(name),
                 unit=Unit.LENGTH if name in _LENGTH_GENES else Unit.DIMENSIONLESS,
                 description=f"test gene {name}",
             )
