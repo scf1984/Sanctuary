@@ -2,22 +2,42 @@ import numpy as np
 import pytest
 
 from core.ecology.metabolism import Metabolism, MetabolismConfig
+from core.genetics.expression import ExpressionMode
 from core.genetics.vocabulary import GeneVocabulary
 
 
-GENE_NAMES = ("size", "speed", "sight", "insulation")
+# `aversion0_0` is here to make the fixture representative rather than convenient: a real
+# vocabulary mixes quantities with cue-space directions, and the rule this module enforces is
+# about the boundary between them (#136).
+GENE_NAMES = ("size", "speed", "sight", "insulation", "aversion0_0")
+
+EXPRESSION_MODES = {
+    "size": ExpressionMode.MAGNITUDE,
+    "speed": ExpressionMode.MAGNITUDE,
+    "sight": ExpressionMode.MAGNITUDE,
+    "insulation": ExpressionMode.MAGNITUDE,
+    "aversion0_0": ExpressionMode.SIGNED,
+}
 
 
-def make_metabolism(**overrides):
+def make_metabolism(expression_modes=EXPRESSION_MODES, **overrides):
     defaults = dict(
-        gene_costs={"size": 2.0, "speed": 3.0, "sight": 0.0, "insulation": 1.0},
+        gene_costs={
+            "size": 2.0,
+            "speed": 3.0,
+            "sight": 0.0,
+            "insulation": 1.0,
+            "aversion0_0": 0.0,
+        },
         basal_rate=1.0,
         thermoregulation_rate=0.5,
         neutral_temperature=20.0,
         insulation_gene="insulation",
     )
     defaults.update(overrides)
-    return Metabolism(GeneVocabulary(GENE_NAMES), MetabolismConfig(**defaults))
+    return Metabolism(
+        GeneVocabulary(GENE_NAMES), MetabolismConfig(**defaults), expression_modes
+    )
 
 
 def expressed(**genes):
@@ -59,7 +79,13 @@ class TestConfigValidation:
     def test_a_negative_gene_cost_is_rejected(self):
         with pytest.raises(ValueError, match="speed"):
             make_metabolism(
-                gene_costs={"size": 2.0, "speed": -3.0, "sight": 0.0, "insulation": 1.0}
+                gene_costs={
+                    "size": 2.0,
+                    "speed": -3.0,
+                    "sight": 0.0,
+                    "insulation": 1.0,
+                    "aversion0_0": 0.0,
+                }
             )
 
     def test_a_negative_basal_rate_is_rejected(self):
@@ -75,12 +101,75 @@ class TestConfigValidation:
         # exact runaway this issue exists to prevent.
         with pytest.raises(ValueError, match="insulation"):
             make_metabolism(
-                gene_costs={"size": 2.0, "speed": 3.0, "sight": 0.0, "insulation": 0.0}
+                gene_costs={
+                    "size": 2.0,
+                    "speed": 3.0,
+                    "sight": 0.0,
+                    "insulation": 0.0,
+                    "aversion0_0": 0.0,
+                }
             )
 
     def test_an_insulation_gene_outside_the_vocabulary_is_rejected(self):
         with pytest.raises(KeyError):
             make_metabolism(insulation_gene="blubber")
+
+
+class TestOnlyMagnitudeGenesMayCost:
+    """A cost is only bounded below by zero if the phenotype it multiplies is (#136).
+
+    Storage is signed (#104), and what makes an expressed value non-negative is the gene's
+    expression mode, not inheritance. So a `SIGNED` gene — a cue-space direction, founded across
+    zero by design — multiplied by a positive cost contributes a **negative** term to upkeep.
+
+    That is not a crash waiting to happen so much as a subsidy: upkeep is a sum, so a negative
+    term merely discounts the total, and the animal is charged less for holding its aversion one
+    way round than the other. Selection acts on the discount, which is the free lunch §2.5's hard
+    budget exists to forbid, running in reverse. Only when the discount exceeds everything else
+    does the total go negative, and `Ecology.spend` rejects that — mid-tick, naming a module that
+    did nothing wrong. Both failures are the same misconfiguration, and it is knowable at
+    construction.
+    """
+
+    def test_a_signed_gene_carrying_a_cost_is_rejected(self):
+        with pytest.raises(ValueError, match="aversion0_0"):
+            make_metabolism(
+                gene_costs={
+                    "size": 2.0,
+                    "speed": 3.0,
+                    "sight": 0.0,
+                    "insulation": 1.0,
+                    "aversion0_0": 0.01,
+                }
+            )
+
+    def test_a_signed_gene_costing_nothing_is_accepted(self):
+        # §2.5 gives every cue gene a cost of zero, so a config following the document builds.
+        assert make_metabolism() is not None
+
+    def test_a_costed_gene_with_no_declared_mode_is_rejected(self):
+        # Not redundant with ExpressionTable's own completeness check: a `Metabolism` can be
+        # built without one ever existing, and skipping the check for want of a mode is exactly
+        # the silent default §8.7 forbids.
+        modes = {name: mode for name, mode in EXPRESSION_MODES.items() if name != "speed"}
+        with pytest.raises(ValueError, match="speed"):
+            make_metabolism(expression_modes=modes)
+
+    def test_the_rule_is_about_the_mode_and_not_the_gene_name(self):
+        # A quantity read as a magnitude may cost whatever it likes, whatever it is called: it is
+        # the mode that guarantees a non-negative phenotype, so the same name flips from rejected
+        # to accepted on the mode alone.
+        metabolism = make_metabolism(
+            expression_modes={**EXPRESSION_MODES, "aversion0_0": ExpressionMode.MAGNITUDE},
+            gene_costs={
+                "size": 2.0,
+                "speed": 3.0,
+                "sight": 0.0,
+                "insulation": 1.0,
+                "aversion0_0": 4.0,
+            },
+        )
+        assert upkeep_of(metabolism, aversion0_0=1.0) == pytest.approx(5.0)
 
 
 class TestTraitUpkeep:
@@ -167,3 +256,17 @@ class TestNoEnergyIsCreated:
         temperature = rng.uniform(-40.0, 60.0, size=200).astype(np.float32)
 
         assert (metabolism.upkeep(rows, temperature) >= 1.0).all()
+
+    def test_upkeep_holds_when_signed_phenotypes_are_negative(self):
+        """The sweeps above draw phenotypes from `[0, 20]`, which is why neither of them could
+        ever have caught #136: a real expressed phenotype is *not* non-negative any more. Cue
+        genes are read `SIGNED` and arrive as stored, so this draws across zero — and what keeps
+        the total non-negative is that the constructor refused to cost those columns.
+        """
+        metabolism = make_metabolism()
+        rng = np.random.default_rng(13)
+        rows = rng.uniform(0.0, 20.0, size=(500, len(GENE_NAMES))).astype(np.float32)
+        rows[:, GENE_NAMES.index("aversion0_0")] = rng.uniform(-20.0, 20.0, size=500)
+        temperature = rng.uniform(-40.0, 60.0, size=500).astype(np.float32)
+
+        assert (metabolism.upkeep(rows, temperature) >= 0.0).all()

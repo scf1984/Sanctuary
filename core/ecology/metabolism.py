@@ -14,6 +14,19 @@ Two rules give this module its shape:
 - **Every gene in the vocabulary must declare a cost**, even if that cost is zero. A gene added to
   the vocabulary without an entry here fails at construction (§8.7) instead of quietly becoming a
   free trait, which is the one failure mode that would defeat the entire hard-budget design.
+- **Only a gene read as a magnitude may carry a cost** (#136). A cost is bounded below by zero only
+  if the phenotype it multiplies is, and what guarantees that is the gene's *expression mode*, not
+  inheritance — storage is signed (§2.5, #104). A `SIGNED` gene is a cue-space direction, founded
+  across zero by design, so a positive cost on one contributes a **negative** term to a sum: the
+  animal is charged less for pointing its aversion one way round than the other, and selection
+  acts on the discount. That is §2.5's hard budget running in reverse, and it is knowable from the
+  two config tables alone, so it fails here rather than in a world.
+
+That last rule is why this module is handed expression modes it otherwise has no use for. It reads
+them once, at construction, and never during a tick — `Genetics.expressed` is what applies a mode
+to a value, and `upkeep` below receives the result. #111 folds the cost table and the mode table
+into one gene registry, at which point the two can no longer be supplied separately and this check
+moves there; until then they are two mappings that must agree, and this is where they are made to.
 
 The math is deliberately store-free: it takes phenotype rows and temperatures and returns energy
 units per tick. `core.ecology.service.Ecology` is what binds it to the entity store, the climate
@@ -31,6 +44,7 @@ from typing import Mapping
 
 import numpy as np
 
+from core.genetics.expression import ExpressionMode
 from core.genetics.vocabulary import GeneVocabulary
 
 
@@ -80,9 +94,21 @@ class Metabolism:
     gene_cost: (n_genes,) float32, energy units per tick per unit of expressed gene value, in
         vocabulary column order — so trait upkeep for any number of entities is one matrix-vector
         product rather than a per-gene or per-species loop (CLAUDE.md §2.3).
+
+    expression_modes: how each gene is read as a phenotype (`core.genetics.expression`). Consulted
+        once here, to reject a cost this table cannot keep non-negative (#136); never read again.
+        Only genes that actually carry a cost need a mode, because a gene charging nothing cannot
+        contribute a term of any sign — a vocabulary-wide completeness check belongs to
+        `ExpressionTable`, which owns the modes, and duplicating it here would mean two places to
+        change when #111 folds the tables together.
     """
 
-    def __init__(self, vocabulary: GeneVocabulary, config: MetabolismConfig) -> None:
+    def __init__(
+        self,
+        vocabulary: GeneVocabulary,
+        config: MetabolismConfig,
+        expression_modes: Mapping[str, ExpressionMode],
+    ) -> None:
         declared = set(config.gene_costs)
         known = set(vocabulary.names)
         unknown = sorted(declared - known)
@@ -92,6 +118,26 @@ class Metabolism:
         if undeclared:
             raise ValueError(
                 f"every gene must declare a cost (zero is allowed); missing: {undeclared}"
+            )
+
+        # A cost only ever charges if the value it multiplies cannot go negative, and MAGNITUDE is
+        # the only mode that promises that. Checked before the coefficient array is built so the
+        # message names the config the caller wrote rather than a column index.
+        costed = sorted(name for name, cost in config.gene_costs.items() if cost != 0)
+        not_magnitude = {
+            name: expression_modes.get(name)
+            for name in costed
+            if expression_modes.get(name) is not ExpressionMode.MAGNITUDE
+        }
+        if not_magnitude:
+            offenders = ", ".join(
+                f"{name} ({mode.value if mode else 'no declared mode'})"
+                for name, mode in not_magnitude.items()
+            )
+            raise ValueError(
+                f"only genes read as a magnitude may carry a cost; costed but not a magnitude: "
+                f"{offenders}. A signed phenotype times a positive cost is a negative term in "
+                "upkeep, which discounts the bill instead of charging it (#136)"
             )
 
         self.config = config
@@ -121,16 +167,13 @@ class Metabolism:
         further unit of insulation buy less than the last, so insulation trades off against its
         own upkeep instead of running away.
 
-        Never negative for non-negative phenotypes and costs, which is what lets `Ecology.drain`
-        claim it only ever removes energy. **What guarantees a non-negative phenotype is the gene's
-        expression mode, not inheritance** (#104): storage is signed, and a gene declared
-        `MAGNITUDE` folds across zero when `Genetics.expressed` reads it, so a costed quantity
-        arrives here non-negative however far its stored value has drifted.
-
-        A gene declared `SIGNED` — a cue direction — arrives as stored, and one carrying a non-zero
-        cost would make this return a negative bill that `Ecology.spend` then *adds* to the pool.
-        Nothing rejects that configuration yet: it is #136, with its own failing test to come. §2.5
-        gives every cue gene a cost of zero, so a config that follows the document is safe.
+        Never negative, which is what lets `Ecology.drain` claim it only ever removes energy.
+        **What guarantees that is the gene's expression mode, not inheritance** (#104): storage is
+        signed, and a gene declared `MAGNITUDE` folds across zero when `Genetics.expressed` reads
+        it, so a costed quantity arrives here non-negative however far its stored value has
+        drifted. A gene declared `SIGNED` arrives as stored and may well be negative — which is
+        why the constructor refuses to let one carry a cost, and why that refusal is what this
+        guarantee rests on rather than any check in here (#136).
         """
         trait_upkeep = expressed_genes @ self.gene_cost
         insulation = expressed_genes[:, self._insulation_index]

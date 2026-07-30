@@ -264,9 +264,24 @@ a winner from any other drive stands still — which is a real problem rather th
 
   Two consequences bind. **A mode is required, never defaulted**: an undeclared gene would be taken
   as signed, and a signed `size` is a body with negative mass. And **the mode is what guarantees
-  upkeep is non-negative**, not inheritance — which is why a `SIGNED` gene carrying a non-zero cost
-  makes upkeep mint energy (#136). The expression mode table is half of #111's registry, which folds
-  it together with the cost table so the two cannot disagree.
+  upkeep is non-negative**, not inheritance — from which follows the rule settled in #136:
+  **only a gene read as a magnitude may carry a cost**, checked when `Metabolism` is built.
+
+  The reason is that upkeep is a *sum*, so the damage begins long before any total goes negative. A
+  `SIGNED` gene is founded across zero by design, so a positive cost on one contributes a negative
+  term: an animal is charged less for pointing its aversion one way round than the other, at equal
+  magnitude and therefore equal usefulness. Measured on the assembly fixture as it stood at
+  `468457d` — which costed every gene at 0.01, cue genes included — aversion at −1 paid **0.098**
+  against **0.418** at +1: a 4.3× discount on total upkeep, silently accepted, with selection free
+  to chase it. That is the hard budget running in reverse, and it is the whole
+  of the defect; `Ecology.spend` already refuses an outright negative bill (#25), so the extreme
+  case was never energy creation but a mid-tick crash naming a module that did nothing wrong.
+
+  Both failures are one misconfiguration, and it is knowable from the two config tables alone —
+  which is why it is rejected at construction rather than guarded against per tick (§8.2, §8.7).
+  The expression mode table is half of #111's registry, which folds it together with the cost table
+  so the two cannot disagree; until that lands they are two mappings that must agree, and
+  `Metabolism.__init__` is where they are made to.
 
   **Effort is charged, not just distance.** Fleeing and chasing both cost energy at a premium over
   walking, and hiding costs energy to suppress scent. This is what makes hunger close off options

@@ -168,7 +168,7 @@ class World:
             self.columns,
             self.genetics,
             self.climate,
-            Metabolism(self.vocabulary, METABOLISM_CONFIG),
+            Metabolism(self.vocabulary, METABOLISM_CONFIG, GENETICS_CONFIG.expression_modes),
         )
         self.behaviour = Behaviour(self.store, self.columns)
         # Fatigue reads exertion as well as health (#107). These tests exercise the health term and

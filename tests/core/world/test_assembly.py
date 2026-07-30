@@ -97,6 +97,11 @@ def world_config(**overrides):
                 # Mutability charges nothing: high mutability already pays for itself in unfit
                 # offspring, so a stable world selects it down with no energy price (#104).
                 "mutability": 0.0,
+                # Cue genes cost nothing, per §2.5's reserved block — and a world may no longer
+                # say otherwise. They are read `SIGNED`, so a cost on one would subtract from
+                # upkeep for half the founders rather than adding to it (#136). This fixture said
+                # 0.01 for every gene and was the reason that defect was reachable at all.
+                **{name: 0.0 for name in CUE_GENES},
             },
             basal_rate=0.05,
             thermoregulation_rate=0.01,

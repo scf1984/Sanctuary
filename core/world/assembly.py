@@ -216,7 +216,13 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
     species = SpeciesRegistry(vocabulary)
     genetics = Genetics(store, columns, species, vocabulary, config.genetics)
     ecology = Ecology(
-        store, columns, genetics, climate, Metabolism(vocabulary, config.metabolism)
+        store,
+        columns,
+        genetics,
+        climate,
+        # The cost table and the expression modes are two halves of one rule, and this is the only
+        # place a world declares both — so it is where they are checked against each other (#136).
+        Metabolism(vocabulary, config.metabolism, config.genetics.expression_modes),
     )
     exertion = Exertion(store, columns, config.exertion)
     movement = Movement(

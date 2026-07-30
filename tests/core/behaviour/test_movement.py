@@ -109,7 +109,7 @@ class World:
             self.registry,
             self.genetics,
             self.climate,
-            Metabolism(self.vocabulary, FREE_METABOLISM),
+            Metabolism(self.vocabulary, FREE_METABOLISM, GENETICS_CONFIG.expression_modes),
         )
         # Exertion is where movement records effort (#107); nothing here asserts on it, so the
         # recovery rate is arbitrary. `tests/core/behaviour/test_exertion.py` is what covers it.

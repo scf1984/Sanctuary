@@ -105,6 +105,10 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
                 # Mutability charges nothing: high mutability already pays for itself in unfit
                 # offspring, so a stable world selects it down with no energy price (#104).
                 "mutability": 0.0,
+                # Cue genes cost nothing, per §2.5's reserved block. They are read `SIGNED`, so a
+                # cost on one subtracts from upkeep wherever the value is negative rather than
+                # adding to it — a discount selection would chase (#136).
+                **{name: 0.0 for name in _CUE_GENES},
             },
             basal_rate=0.05,
             thermoregulation_rate=0.01,
