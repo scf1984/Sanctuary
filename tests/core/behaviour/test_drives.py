@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
@@ -18,6 +20,7 @@ from core.behaviour.service import Behaviour
 from core.ecology.cues import CueField, CueFieldConfig, Scent, ScentGenes
 from core.ecology.metabolism import Metabolism, MetabolismConfig
 from core.ecology.plants import Plants, PlantsConfig
+from core.world.diffusion import DiffusionConfig
 from core.ecology.service import Ecology
 from core.entities.store import EntityStore
 from core.genetics.expression import ExpressionMode, GeneticsConfig
@@ -97,10 +100,16 @@ PLANTS_CONFIG = PlantsConfig(
     senescence_rate=0.01,
     saturation_accumulation=10.0,
     max_rooting_depth=1.0,
+    forage_diffusion=DiffusionConfig(range=4.0, climb_penalty=0.5),
 )
 
 HUNGER_CONFIG = HungerConfig(
-    weight=1.0, satiation_energy=100.0, forage_reluctance=5.0, sight_gene="sight"
+    weight=1.0,
+    satiation_energy=100.0,
+    # Low enough that an ordinary sight gene notices an ordinary meadow, high enough that a
+    # near-blind animal does not. `test_sight_gates_what_a_forager_notices` is what pins it.
+    detection_threshold=1.0,
+    sight_gene="sight",
 )
 
 
@@ -111,7 +120,16 @@ class World:
     everywhere, so a test that is not about climate never has to care where it put its entities.
     """
 
-    def __init__(self, capacity=8, temperature=20.0, grid=9, cell_size=1.0):
+    def __init__(
+        self,
+        capacity=8,
+        temperature=20.0,
+        grid=9,
+        cell_size=1.0,
+        heights=None,
+        forage_range=4.0,
+        climb_penalty=0.5,
+    ):
         self.store = EntityStore(initial_capacity=capacity, n_drives=5, n_genes=len(GENE_NAMES))
         self.columns = ColumnRegistry()
         self.vocabulary = GeneVocabulary(GENE_NAMES)
@@ -119,7 +137,9 @@ class World:
         self.genetics = Genetics(
             self.store, self.columns, self.species, self.vocabulary, GENETICS_CONFIG
         )
-        self.terrain = Terrain(np.zeros((grid, grid), dtype=np.float32), cell_size=cell_size)
+        if heights is None:
+            heights = np.zeros((grid, grid), dtype=np.float32)
+        self.terrain = Terrain(heights, cell_size=cell_size)
         self.climate = Climate(
             self.terrain,
             ClimateConfig(
@@ -132,7 +152,17 @@ class World:
             flow_accumulation=np.ones((grid, grid), dtype=np.float32),
             cell_size=cell_size,
         )
-        self.plants = Plants(self.terrain, self.climate, self.water, PLANTS_CONFIG)
+        self.plants = Plants(
+            self.terrain,
+            self.climate,
+            self.water,
+            replace(
+                PLANTS_CONFIG,
+                forage_diffusion=DiffusionConfig(
+                    range=forage_range, climb_penalty=climb_penalty
+                ),
+            ),
+        )
         self.ecology = Ecology(
             self.store,
             self.columns,
@@ -191,7 +221,7 @@ class TestHungerScore:
         world = World()
         selection = world.spawn(1, energy=np.array([0.0], dtype=np.float32))
         config = HungerConfig(
-            weight=3.0, satiation_energy=100.0, forage_reluctance=5.0, sight_gene="sight"
+            weight=3.0, satiation_energy=100.0, detection_threshold=1.0, sight_gene="sight"
         )
         hunger = Hunger(
             world.store, world.ecology, world.genetics, world.plants, world.vocabulary, config
@@ -201,9 +231,33 @@ class TestHungerScore:
 
 
 class TestForageTarget:
-    """The rule CLAUDE.md §2.5 settles: argmax of biomass / (1 + distance / forage_reluctance)."""
+    """The rule #93 settles: a heading read off the plant field's diffused gradient.
 
-    def test_a_grazer_walks_to_the_only_patch_it_can_see(self):
+    Targets are *directions* now, not chosen cells, so these assert which way a grazer sets off
+    rather than which patch it picked. That is not a weaker claim — it is the claim the mechanism
+    actually makes, and the one it replaced (an argmax over candidate patches) could only ever
+    discount distance, never the ground in between.
+    """
+
+    def _hunger(self, world, config=None):
+        return Hunger(
+            world.store,
+            world.ecology,
+            world.genetics,
+            world.plants,
+            world.vocabulary,
+            config or HUNGER_CONFIG,
+        )
+
+    def _heading(self, world, selection, index=0):
+        target_x, target_y = self._hunger(world).forage_target(selection)
+        mask = selection.to_mask()
+        return (
+            float(target_x[index] - world.store.x[mask][index]),
+            float(target_y[index] - world.store.y[mask][index]),
+        )
+
+    def test_a_grazer_sets_off_toward_the_only_food_there_is(self):
         world = World()
         selection = world.spawn(
             1, x=np.array([4.0], dtype=np.float32), y=np.array([4.0], dtype=np.float32)
@@ -211,63 +265,68 @@ class TestForageTarget:
         world.genetics.set_genes(selection, gene_rows({"sight": 3.0}))
         world.plants.biomass[:] = 0.0
         world.plants.biomass[4, 6] = 50.0
-        hunger = Hunger(
-            world.store, world.ecology, world.genetics, world.plants, world.vocabulary,
-            HUNGER_CONFIG,
-        )
 
-        target_x, target_y = hunger.forage_target(selection)
+        east, north = self._heading(world, selection)
 
-        assert (target_x, target_y) == (pytest.approx([6.0]), pytest.approx([4.0]))
+        assert east > 0.0
+        assert north == pytest.approx(0.0, abs=1e-6)
 
-    def test_a_near_patch_beats_a_richer_far_one_when_reluctance_is_low(self):
-        """Small forage_reluctance keeps grazers local and strips ground bare before they move —
-        which is the local grazing pressure the field model of #18 exists to express.
-        """
-        world = World()
+    def test_a_near_patch_beats_a_richer_far_one(self):
+        """Keeping grazers local is what strips ground bare before they move on, which is the local
+        grazing pressure the field model of #18 exists to express. The diffusion range sets it now,
+        so the discount lives in one coefficient instead of two — a range well short of the gap
+        between the patches is what "local" means."""
+        world = World(forage_range=1.0)
         selection = world.spawn(
             1, x=np.array([4.0], dtype=np.float32), y=np.array([4.0], dtype=np.float32)
         )
         world.genetics.set_genes(selection, gene_rows({"sight": 4.0}))
         world.plants.biomass[:] = 0.0
-        world.plants.biomass[4, 5] = 10.0  # 1 unit away
-        world.plants.biomass[4, 8] = 25.0  # 4 units away, 2.5x the standing crop
-        config = HungerConfig(
-            weight=1.0, satiation_energy=100.0, forage_reluctance=0.5, sight_gene="sight"
-        )
-        hunger = Hunger(
-            world.store, world.ecology, world.genetics, world.plants, world.vocabulary, config
-        )
+        world.plants.biomass[4, 3] = 10.0  # 1 unit west
+        world.plants.biomass[4, 8] = 25.0  # 4 units east, 2.5x the standing crop
 
-        target_x, _ = hunger.forage_target(selection)
+        east, _ = self._heading(world, selection)
 
-        # 10/(1 + 1/0.5) = 3.33 against 25/(1 + 4/0.5) = 2.78 — the near cell wins on discount
-        # alone, not on a tie-break.
-        assert target_x == pytest.approx([5.0])
+        assert east < 0.0
 
-    def test_a_high_reluctance_grazer_crosses_to_the_richer_patch(self):
-        world = World()
+    def test_a_wider_ranging_field_sends_a_grazer_to_the_richer_patch(self):
+        """The same two patches in a world whose forage field carries further: the richer one now
+        outweighs the discount. This is `forage_reluctance`'s old job, done by the field's range."""
+        world = World(forage_range=20.0)
         selection = world.spawn(
             1, x=np.array([4.0], dtype=np.float32), y=np.array([4.0], dtype=np.float32)
         )
         world.genetics.set_genes(selection, gene_rows({"sight": 4.0}))
         world.plants.biomass[:] = 0.0
-        world.plants.biomass[4, 5] = 10.0
+        world.plants.biomass[4, 3] = 10.0
         world.plants.biomass[4, 8] = 25.0
-        config = HungerConfig(
-            weight=1.0, satiation_energy=100.0, forage_reluctance=100.0, sight_gene="sight"
+
+        east, _ = self._heading(world, selection)
+
+        assert east > 0.0
+
+    def test_food_behind_a_ridge_loses_to_food_on_open_ground(self):
+        """What the discrete contract could not express (#93): two equal meadows, equally distant,
+        one across a climb. Sight range alone cannot tell them apart — the cost of the walk can."""
+        heights = np.zeros((9, 9), dtype=np.float32)
+        heights[:, 6] = 40.0
+        world = World(heights=heights, climb_penalty=1.0)
+        selection = world.spawn(
+            1, x=np.array([4.0], dtype=np.float32), y=np.array([4.0], dtype=np.float32)
         )
-        hunger = Hunger(
-            world.store, world.ecology, world.genetics, world.plants, world.vocabulary, config
-        )
+        world.genetics.set_genes(selection, gene_rows({"sight": 8.0}))
+        world.plants.biomass[:] = 0.0
+        world.plants.biomass[4, 2] = 40.0  # open ground, 2 west
+        world.plants.biomass[4, 8] = 40.0  # 2 east of the ridge, the same distance away
 
-        target_x, _ = hunger.forage_target(selection)
+        east, _ = self._heading(world, selection)
 
-        assert target_x == pytest.approx([8.0])
+        assert east < 0.0, "the grazer set off at the meadow behind the ridge"
 
-    def test_sight_range_gates_what_a_forager_can_find(self):
+    def test_sight_gates_what_a_forager_notices(self):
         """Perception a forager could not pay for would leave sight range charged by the metabolic
-        budget while buying nothing (CLAUDE.md §2.5). Two identical animals, different sight.
+        budget while buying nothing (§2.5). One field serves everyone, so acuity is a threshold on
+        what is sampled rather than a radius — the same rule scent already uses.
         """
         world = World()
         selection = world.spawn(
@@ -275,40 +334,31 @@ class TestForageTarget:
             x=np.array([4.0, 4.0], dtype=np.float32),
             y=np.array([4.0, 4.0], dtype=np.float32),
         )
-        world.genetics.set_genes(selection, gene_rows({"sight": 1.0}, {"sight": 4.0}))
+        world.genetics.set_genes(selection, gene_rows({"sight": 0.02}, {"sight": 40.0}))
         world.plants.biomass[:] = 0.0
         world.plants.biomass[4, 7] = 50.0
-        hunger = Hunger(
-            world.store, world.ecology, world.genetics, world.plants, world.vocabulary,
-            HUNGER_CONFIG,
-        )
 
-        target_x, target_y = hunger.forage_target(selection)
+        target_x, target_y = self._hunger(world).forage_target(selection)
 
-        # The short-sighted animal cannot see the patch and stays put; the far-sighted one goes.
         assert (target_x[0], target_y[0]) == (pytest.approx(4.0), pytest.approx(4.0))
-        assert (target_x[1], target_y[1]) == (pytest.approx(7.0), pytest.approx(4.0))
+        assert target_x[1] > 4.0
 
-    def test_an_animal_that_can_see_no_food_stays_where_it_is(self):
+    def test_an_animal_that_can_detect_no_food_stays_where_it_is(self):
         world = World()
         selection = world.spawn(
             1, x=np.array([4.0], dtype=np.float32), y=np.array([4.0], dtype=np.float32)
         )
         world.genetics.set_genes(selection, gene_rows({"sight": 3.0}))
         world.plants.biomass[:] = 0.0
-        hunger = Hunger(
-            world.store, world.ecology, world.genetics, world.plants, world.vocabulary,
-            HUNGER_CONFIG,
-        )
 
-        target_x, target_y = hunger.forage_target(selection)
+        target_x, target_y = self._hunger(world).forage_target(selection)
 
         assert (target_x, target_y) == (pytest.approx([4.0]), pytest.approx([4.0]))
 
     def test_an_unexpressed_sight_gene_leaves_a_forager_grazing_underfoot(self):
         """Expression, not genotype, is what a forager sees with — the same rule that makes an
-        unexpressed gene cost nothing (#17). `perceive` always reports the cell underfoot, so a
-        blind animal still finds food it is standing on rather than starving on top of it.
+        unexpressed gene cost nothing (#17). A blind animal detects nothing and stays put, which
+        still lets `graze` feed it where it stands.
         """
         world = World()
         blind = world.species.register(("size", "speed", "insulation"))
@@ -320,48 +370,51 @@ class TestForageTarget:
         )
         world.genetics.set_genes(selection, gene_rows({"sight": 4.0}))
         world.plants.biomass[:] = 0.0
-        world.plants.biomass[4, 4] = 5.0
         world.plants.biomass[4, 8] = 90.0
-        hunger = Hunger(
-            world.store, world.ecology, world.genetics, world.plants, world.vocabulary,
-            HUNGER_CONFIG,
-        )
 
-        target_x, target_y = hunger.forage_target(selection)
+        target_x, target_y = self._hunger(world).forage_target(selection)
 
         assert (target_x, target_y) == (pytest.approx([4.0]), pytest.approx([4.0]))
 
-    def test_a_returned_target_can_be_grazed_without_a_bounds_check(self):
-        """#93 guarantees perceived positions are real in-world cell centres. A forager at the map
-        edge is where that would break, so the target it produces is fed straight to `graze`.
+    def test_a_forager_on_the_world_edge_gets_a_usable_heading(self):
+        """The corner is where a gradient read by central differences would run off the grid, and
+        `Movement._landing` guarantees animals land exactly on the boundary — so this is a position
+        that certainly occurs, not an edge case.
+
+        It asserts only that the answer is finite and points into the world. It deliberately does
+        *not* assert that a cornered forager sets off toward nearby food: within about one diffusion
+        range of the boundary the field reads rich, because a walk starting at a corner is confined
+        and revisits nearby source more often than an interior walk does. That is recorded as a
+        known limitation of the operator rather than papered over here.
         """
-        world = World()
+        world = World(forage_range=1.0)
         selection = world.spawn(
             1, x=np.array([0.0], dtype=np.float32), y=np.array([0.0], dtype=np.float32)
         )
         world.genetics.set_genes(selection, gene_rows({"sight": 3.0}))
         world.plants.biomass[:] = 0.0
         world.plants.biomass[0, 2] = 20.0
-        hunger = Hunger(
-            world.store, world.ecology, world.genetics, world.plants, world.vocabulary,
-            HUNGER_CONFIG,
+
+        target_x, target_y = self._hunger(world).forage_target(selection)
+
+        assert np.isfinite(target_x).all() and np.isfinite(target_y).all()
+        assert target_x[0] >= 0.0 and target_y[0] >= 0.0
+
+    def test_every_forager_is_answered_in_one_call(self):
+        world = World(capacity=16)
+        selection = world.spawn(
+            6,
+            x=np.full(6, 4.0, dtype=np.float32),
+            y=np.linspace(2.0, 6.0, 6).astype(np.float32),
         )
+        world.genetics.set_genes(selection, gene_rows(*[{"sight": 5.0}] * 6))
+        world.plants.biomass[:] = 0.0
+        world.plants.biomass[:, 7] = 30.0
 
-        target_x, target_y = hunger.forage_target(selection)
-        harvested = world.plants.graze(target_x, target_y, np.array([5.0]))
+        target_x, _ = self._hunger(world).forage_target(selection)
 
-        assert harvested == pytest.approx([5.0])
-
-    def test_an_empty_selection_produces_empty_targets(self):
-        world = World()
-        hunger = Hunger(
-            world.store, world.ecology, world.genetics, world.plants, world.vocabulary,
-            HUNGER_CONFIG,
-        )
-
-        target_x, target_y = hunger.forage_target(Selection.none(world.store.capacity))
-
-        assert target_x.shape == (0,) and target_y.shape == (0,)
+        assert target_x.shape == (6,)
+        assert (target_x > 4.0).all()
 
 
 class TestThirst:

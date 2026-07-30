@@ -33,7 +33,8 @@ from dataclasses import dataclass
 import numpy as np
 
 from core.world.climate import Climate
-from core.world.terrain import Terrain
+from core.world.diffusion import CostAwareDiffusion, DiffusionConfig
+from core.world.terrain import Terrain, bilinear_sample
 from core.world.water import Water
 
 
@@ -67,6 +68,11 @@ class PlantsConfig:
         unit `Water.depth` reports (#112). Without
         this cutoff, lakes — which collect every cell's drainage — would be the most productive
         ground in the world, and every herbivore would live in one.
+    forage_diffusion: how far standing crop makes itself known, and how much relief impedes that
+        (#93, `core.world.diffusion`). Its `range` is the distance discount a forager applies —
+        small values keep grazers local and strip ground bare before they move on, large ones
+        spread grazing pressure out — and its `climb_penalty` is what makes a meadow behind a ridge
+        less attractive than one on open ground the same distance away.
     """
 
     solar_constant: float
@@ -79,6 +85,7 @@ class PlantsConfig:
     senescence_rate: float
     saturation_accumulation: float
     max_rooting_depth: float
+    forage_diffusion: DiffusionConfig
 
     def __post_init__(self) -> None:
         if self.solar_constant < 0:
@@ -177,6 +184,7 @@ class Plants:
             * _temperature_response(climate, config)
             * self.moisture
         )
+        self.forage_diffusion = CostAwareDiffusion(terrain, config.forage_diffusion)
         self.biomass = np.zeros(terrain.heights.shape, dtype=np.float64)
         self.soil_nutrients = np.full(
             terrain.heights.shape, config.initial_soil_nutrients, dtype=np.float64
@@ -259,91 +267,49 @@ class Plants:
         self.exported_nutrients += float(removed.sum()) * self.config.nutrient_per_biomass
         return harvested
 
-    def perceive(
-        self, x: np.ndarray, y: np.ndarray, radius: np.ndarray
+    def forage_field(self) -> np.ndarray:
+        """``(height, width)`` float32: how much grazing is *reachable* from every cell (#93).
+
+        Standing crop diffused over the terrain, so a cell's reading accumulates every meadow
+        within range, each discounted by how far away it is and by the climbing between. Rebuilt on
+        demand rather than cached, because grazing changes the source every tick and a stale field
+        would send foragers to ground that was stripped bare while they walked.
+
+        This is the whole of what a forager can know about food it is not standing on. It replaces
+        a per-forager list of candidate patches (the original #93 contract), and the reason is that
+        the list could only ever be ranked by *distance*: a meadow across a gorge scored exactly as
+        well as one on open ground. Diffusion makes the discount and the terrain the same
+        mechanism, so `forage_reluctance` is now this field's `range` rather than a second
+        coefficient in a drive (§2.1: tune as a table, not as constants that drift apart).
+        """
+        return self.forage_diffusion.spread(self.biomass.astype(np.float32))
+
+    def forage_gradient(
+        self, field: np.ndarray, x: np.ndarray, y: np.ndarray
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Every patch of grazing each forager can find from where it stands (#93).
+        """Which way food lies, and how strongly, for foragers at ``(x, y)``.
 
-        x, y:   (n,) world units — where each forager is standing.
-        radius: (n,) world units — how far each one can perceive food, computed by the caller
-                from its expressed sight-range phenotype. Non-negative.
-        returns (patch_x, patch_y, biomass), each (n, k) float64: the world position of every
-                perceivable patch and the standing crop on it, in energy units.
+        field: a `forage_field()` result. Passed in rather than rebuilt per call, because one tick
+            has one field and every forager reads the same one — building it per drive query would
+            pay for the diffusion once per caller.
+        returns (gx, gy, strength): the two gradient components, and the field's own value where
+            each forager stands, all ``(n,)`` float64.
 
-        **This reports patches; it does not choose between them.** Which patch is worth walking
-        to weighs a payoff against the cost of the walk, and that is a drive's decision (#22), not
-        the field's — so nothing here ranks, discounts, or returns a winner. The field answers
-        "what is there", the drive answers "toward what".
-
-        Sight range is a caller-supplied radius for the same reason `SpatialIndex` takes its cell
-        size that way (`core.spatial`): this module has no notion of genes, and the service that
-        owns sensing phenotype is the one positioned to compute the number. That the radius exists
-        at all is the point — perception a forager could not pay for would leave sight range
-        charged by the metabolic budget (§2.5) while buying nothing but predator avoidance, and
-        half the selection pressure on the trait would vanish.
-
-        Patches beyond a forager's own radius, and cells beyond the world edge, report zero
-        biomass rather than being omitted or masked separately. A rectangular result is what keeps
-        this one vectorized gather instead of a per-forager loop (§2.3), and zero is already the
-        honest answer to "how much food is there" for both — an empty patch and an unreachable one
-        are worth exactly the same to a grazer. Positions are always real in-world cell centres,
-        so a caller may pass any of them straight to `graze` without a bounds check of its own.
-
-        The cell underfoot is perceived whatever the radius, including zero: `graze` already feeds
-        an animal where it stands, and a perception that could hide it would put the two queries
-        into contradiction.
-
-        k is fixed by the largest radius in the batch, so a single far-sighted forager widens the
-        result for everyone. This is the cost of staying rectangular; k is the cell area of that
-        radius, in the tens for the sight ranges this ecology uses.
+        **It ranks nothing and gates nothing.** Whether the reading is strong enough to notice is a
+        question about the animal — its sight phenotype against a detection threshold — and belongs
+        to the drive that asks (§2.5, the same split scent already uses). The field knows nothing of
+        genes, which is exactly why this returns a strength instead of a yes.
         """
         x = np.asarray(x, dtype=np.float64)
         y = np.asarray(y, dtype=np.float64)
-        radius = np.asarray(radius, dtype=np.float64)
-        if not x.shape == y.shape == radius.shape:
-            raise ValueError("x, y and radius must be the same length")
-        if np.any(radius < 0):
-            raise ValueError("perception radius must be non-negative")
-
-        rows, cols = self._cell_indices(x, y)
-        if rows.size == 0:
-            empty = np.zeros((0, 1), dtype=np.float64)
-            return empty, empty.copy(), empty.copy()
-
-        cell_size = self.terrain.cell_size
-        reach = int(np.ceil(radius.max() / cell_size))
-        offsets = np.arange(-reach, reach + 1, dtype=np.int64)
-        row_offset, col_offset = (
-            grid.ravel() for grid in np.meshgrid(offsets, offsets, indexing="ij")
+        if x.shape != y.shape:
+            raise ValueError("x and y must be the same length")
+        gradient_x, gradient_y = self.forage_diffusion.gradient_at(field, x, y)
+        strength = bilinear_sample(
+            field, x, y, self.terrain.cell_size, self.terrain.world_width,
+            self.terrain.world_height,
         )
-
-        patch_rows = rows[:, None] + row_offset[None, :]
-        patch_cols = cols[:, None] + col_offset[None, :]
-        grid_rows, grid_cols = self.biomass.shape
-        in_world = (
-            (patch_rows >= 0)
-            & (patch_rows < grid_rows)
-            & (patch_cols >= 0)
-            & (patch_cols < grid_cols)
-        )
-        # Clipped before gathering, then zeroed by `in_world` above: a negative index would
-        # otherwise wrap around and report the far side of the map as neighbouring ground.
-        gather_rows = np.clip(patch_rows, 0, grid_rows - 1)
-        gather_cols = np.clip(patch_cols, 0, grid_cols - 1)
-
-        # Cell (r, c)'s centre, matching `_cell_indices`' rounding so a returned position resolves
-        # back to the cell it came from.
-        patch_x = gather_cols * cell_size
-        patch_y = gather_rows * cell_size
-
-        # Horizontal distance only: a grazer perceives ground, and z is the terrain it is standing
-        # on either way until #43 puts animals above it.
-        distance = np.hypot(patch_x - x[:, None], patch_y - y[:, None])
-        underfoot = (row_offset == 0) & (col_offset == 0)
-        in_reach = (distance <= radius[:, None]) | underfoot[None, :]
-
-        biomass = np.where(in_world & in_reach, self.biomass[gather_rows, gather_cols], 0.0)
-        return patch_x, patch_y, biomass
+        return gradient_x, gradient_y, strength
 
     def total_nutrients(self) -> float:
         """Every nutrient unit the world contains: in soil, bound in biomass, or grazed away.

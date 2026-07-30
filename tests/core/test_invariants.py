@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from core.ecology.plants import Plants, PlantsConfig
+from core.world.diffusion import DiffusionConfig
 from core.entities.store import EntityStore
 from core.invariants import (
     Invariant,
@@ -30,6 +31,7 @@ PLANTS_CONFIG = PlantsConfig(
     senescence_rate=0.05,
     saturation_accumulation=50.0,
     max_rooting_depth=0.5,
+    forage_diffusion=DiffusionConfig(range=4.0, climb_penalty=0.5),
 )
 
 
