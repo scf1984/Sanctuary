@@ -44,7 +44,13 @@ def build_demo_world(
     Generation is a pure function of `seed` (§2.2): the simulation itself is non-deterministic, but
     a world the viewer cannot rebuild is one whose crash cannot be replayed.
     """
-    terrain = Terrain.generate(TerrainConfig(width=80, height=80, seed=seed))
+    # Relief is a tenth of the world's extent, the ratio `TerrainConfig` asks callers to choose
+    # (#112): 79 world units across at the default cell size, so ~8 units of climb from trough to
+    # peak. Elevation shares x and y's unit, so this is directly a statement about how steep the
+    # world looks -- and about what crossing a ridge will cost once #115 registers movement.
+    terrain = Terrain.generate(
+        TerrainConfig(width=80, height=80, seed=seed, min_elevation=0.0, max_elevation=8.0)
+    )
     water = Water.generate(terrain)
     store = EntityStore(initial_capacity=n_entities, n_drives=_N_DRIVES, n_genes=_N_GENES)
 

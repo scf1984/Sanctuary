@@ -12,11 +12,12 @@ Three properties carry the design:
   heightmap from scenery into the isolation barrier speciation needs (#16) — nobody places a
   barrier, and a mountain range becomes one because crossing it costs more than the far side is
   worth.
-- **Effort is charged, not just distance** (§2.5). Cost per metre rises with `pace`, so a sprint is
-  dearer than a stroll over the same ground. Pricing distance alone would make a chase merely long;
-  it is the per-metre premium that makes a predator pay for every chase it loses and prey pay for
-  every escape. Nothing here knows what fleeing *is* — a drive that wants urgency passes a higher
-  pace, and #19's chase and #24's flight are then priced without this module changing.
+- **Effort is charged, not just distance** (§2.5). Cost per world unit rises with `pace`, so a
+  sprint is dearer than a stroll over the same ground. Pricing distance alone would make a chase
+  merely long; it is the per-unit premium that makes a predator pay for every chase it loses and
+  prey pay for every escape. Nothing here knows what fleeing *is* — a drive that wants urgency
+  passes a higher pace, and #19's chase and #24's flight are then priced without this module
+  changing.
 - **The pool gates the step, it does not merely record it.** An animal that cannot pay for the
   whole step covers only what it can afford, and an empty one does not move at all. This is §2.5's
   "a starving animal can neither run nor hide" as a mechanism rather than as a mood: hunger closes
@@ -36,6 +37,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from core.behaviour.exertion import Exertion
 from core.ecology.service import Ecology
 from core.entities.store import EntityStore
 from core.genetics.service import Genetics
@@ -60,14 +62,21 @@ class MovementConfig:
         Must be positive: at zero, distance is free and nothing stops an animal crossing the world
         every tick, which removes the cost half of §2.5's hard budget for the one trait that
         spends the most.
-    exertion_premium: extra fraction of `transport_cost` charged at full pace, so a metre at pace
-        ``p`` costs ``transport_cost × (1 + exertion_premium × p)``. Must be non-negative —
-        negative would make sprinting cheaper per metre than walking, inverting §2.5.
-    climb_cost: joules per metre of elevation *gained*, per unit of expressed size. Descent
-        charges nothing beyond its horizontal distance: raising a body against gravity is work in
-        a way that lowering it is not, and that asymmetry is the whole of "uphill costs more than
-        downhill". Must be non-negative; negative would mint energy out of walking uphill, which
-        §2.5's closed loop forbids outright.
+    exertion_premium: extra fraction of `transport_cost` charged at full pace, so a world unit at
+        pace ``p`` costs ``transport_cost × (1 + exertion_premium × p)``. Must be non-negative —
+        negative would make sprinting cheaper per unit than walking, inverting §2.5.
+    climb_cost: joules per **world unit** of elevation *gained*, per unit of expressed size — the
+        same length unit `transport_cost` is denominated in (#112), so ``climb_cost /
+        transport_cost`` is a real statement: how many world units of flat ground cost what one
+        world unit of climb does. Elevation used to be documented in a physical length unit while
+        x and y were in world units, which left that ratio resting on a conversion factor nothing
+        declared, nothing checked, and everything depended on — the same shape of defect as the
+        prototype's degree-valued sight angle compared against a radian difference (§8.4).
+
+        Descent charges nothing beyond its horizontal distance: raising a body against gravity is
+        work in a way that lowering it is not, and that asymmetry is the whole of "uphill costs
+        more than downhill". Must be non-negative; negative would mint energy out of walking
+        uphill, which §2.5's closed loop forbids outright.
     walking_pace: the fraction of top speed an unhurried animal uses. Config rather than a literal
         at the call site because it is one half of the walk/sprint ratio `exertion_premium` prices,
         and tuning either one alone is what §2.1 means by constants drifting apart. Must be in
@@ -91,7 +100,7 @@ class MovementConfig:
         if self.exertion_premium < 0:
             raise ValueError(
                 f"exertion_premium must be non-negative, got {self.exertion_premium}; "
-                "negative makes sprinting cheaper per metre than walking"
+                "negative makes sprinting cheaper per world unit than walking"
             )
         if self.climb_cost < 0:
             raise ValueError(
@@ -113,6 +122,9 @@ class Movement(DomainService):
     ecology: the owner of `energy` (#17). Every locomotion charge goes through `Ecology.spend`,
         because this service does not own that column and must not subtract from it directly
         (CLAUDE.md §2.3).
+    exertion: the owner of `exertion` (#107), told what each step took so that `Fatigue` has
+        something to read. Same relationship as `ecology` above and for the same reason — the bill
+        is handed over, never applied here.
     genetics: consulted for expressed phenotype only — this service never writes a gene. Speed and
         size are read through `expressed`, so a species that does not express speed does not move,
         exactly as it does not pay for speed.
@@ -130,6 +142,7 @@ class Movement(DomainService):
         store: EntityStore,
         registry: ColumnRegistry,
         ecology: Ecology,
+        exertion: Exertion,
         genetics: Genetics,
         terrain: Terrain,
         vocabulary: GeneVocabulary,
@@ -137,6 +150,7 @@ class Movement(DomainService):
     ) -> None:
         super().__init__(store, registry)
         self.ecology = ecology
+        self.exertion = exertion
         self.genetics = genetics
         self.terrain = terrain
         self.config = config
@@ -174,7 +188,7 @@ class Movement(DomainService):
             every service reads a selection in, so a target array from `Hunger.forage_target` lines
             up with the selection it was computed for without either side handling row indices.
         pace: fraction of top speed to travel at, in (0, 1]. `MovementConfig.walking_pace` for an
-            unhurried animal; higher for urgency, which costs more per metre (see the module
+            unhurried animal; higher for urgency, which costs more per world unit (see the module
             docstring). A scalar rather than a per-entity array because pace is a property of the
             *drive* that won this tick, and `driven_by` already partitions the population by drive
             — a fleeing set and a foraging set are two calls, not one call with a mixed column.
@@ -231,7 +245,7 @@ class Movement(DomainService):
             x, y, unit_x, unit_y, intended, distance, target_x, target_y
         )
         intended_z = self.terrain.elevation_at(intended_x, intended_y)
-        full_cost = self._cost(intended, intended_z - ground, size, pace)
+        full_cost = size * self._work(intended, intended_z - ground, pace)
         travelled = intended * self._affordable_fraction(selection, full_cost)
 
         new_x, new_y = self._landing(
@@ -242,9 +256,12 @@ class Movement(DomainService):
         self.write("x", selection, new_x.astype(np.float32))
         self.write("y", selection, new_y.astype(np.float32))
         self.write("z", selection, new_z.astype(np.float32))
-        self.ecology.spend(
-            selection, self._cost(travelled, new_z - ground, size, pace).astype(np.float32)
-        )
+        # The bill and the record of effort are the same quantity read two ways: `Ecology` is
+        # charged the size-scaled cost, `Exertion` accumulates the per-size work, so a sprint up a
+        # ridge is both expensive and tiring while a stroll over the same ground is neither (#107).
+        work = self._work(travelled, new_z - ground, pace)
+        self.ecology.spend(selection, (size * work).astype(np.float32))
+        self.exertion.accumulate(selection, work)
 
     def _landing(
         self,
@@ -292,19 +309,23 @@ class Movement(DomainService):
         fraction = np.clip(self.ecology.energy(selection) / chargeable, 0.0, 1.0)
         return np.where(payable, fraction, 1.0)
 
-    def _cost(
-        self, distance: np.ndarray, elevation_change: np.ndarray, size: np.ndarray, pace: float
+    def _work(
+        self, distance: np.ndarray, elevation_change: np.ndarray, pace: float
     ) -> np.ndarray:
-        """(n,) float64, joules: what covering `distance` while rising `elevation_change` costs.
+        """(n,) float64: what covering `distance` while rising `elevation_change` takes, per unit
+        of body size.
 
-        Hauling the body over the ground, plus raising it against gravity — both scaled by size,
-        since a heavier animal pays more for either. Only the *gain* is charged: descent is
-        braking rather than lifting, so it costs its horizontal distance and no more, and that
-        asymmetry alone is what makes a ridge a barrier and a valley a corridor.
+        Hauling the body over the ground, plus raising it against gravity. Only the *gain* counts:
+        descent is braking rather than lifting, so it costs its horizontal distance and no more,
+        and that asymmetry alone is what makes a ridge a barrier and a valley a corridor.
 
         Pace enters the horizontal term and not the climb: the premium is for moving urgently, and
         an animal that sprints up a hill has already paid for the sprint.
+
+        **Size is deliberately not applied here.** Multiplied by size this is the energy bill, and
+        left as it is it is the exertion an animal feels — a heavier animal pays more fuel for the
+        same ground but is not thereby more tired, and #107 needs both readings of one quantity.
         """
         haul = self.config.transport_cost * distance * (1.0 + self.config.exertion_premium * pace)
         climb = self.config.climb_cost * np.maximum(elevation_change, 0.0)
-        return size * (haul + climb)
+        return haul + climb

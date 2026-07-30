@@ -63,7 +63,8 @@ class PlantsConfig:
         until the soil is stripped bare, and the loop is open rather than closed.
     saturation_accumulation: flow accumulation (in cells draining through) at which soil moisture
         is saturated. Cells with less drainage above them are proportionally drier.
-    max_rooting_depth: meters of standing water a cell can hold before its plants drown. Without
+    max_rooting_depth: world units of standing water a cell can hold before its plants drown, the
+        unit `Water.depth` reports (#112). Without
         this cutoff, lakes — which collect every cell's drainage — would be the most productive
         ground in the world, and every herbivore would live in one.
     """

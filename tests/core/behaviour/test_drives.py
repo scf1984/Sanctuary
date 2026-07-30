@@ -13,6 +13,7 @@ from core.behaviour.drives import (
     Thirst,
     ThirstConfig,
 )
+from core.behaviour.exertion import Exertion, ExertionConfig
 from core.behaviour.service import Behaviour
 from core.ecology.cues import CueField, CueFieldConfig, Scent, ScentGenes
 from core.ecology.metabolism import Metabolism, MetabolismConfig
@@ -121,6 +122,9 @@ class World:
             Metabolism(self.vocabulary, METABOLISM_CONFIG),
         )
         self.behaviour = Behaviour(self.store, self.columns)
+        # Fatigue reads exertion as well as health (#107). These tests exercise the health term and
+        # the drive contest, so nothing below moves; test_exertion.py covers the other term.
+        self.exertion = Exertion(self.store, self.columns, ExertionConfig(recovery_rate=0.5))
         self.species_id = self.species.register(GENE_NAMES)
 
     def spawn(self, n, **columns):
@@ -436,14 +440,14 @@ class TestFatigue:
         world = World()
         selection = world.spawn(3, health=np.array([1.0, 0.25, 0.0], dtype=np.float32))
 
-        scores = Fatigue(world.store, FatigueConfig(weight=1.0)).score(selection)
+        scores = Fatigue(world.store, world.exertion, FatigueConfig(weight=1.0, exertion_saturation=1.0)).score(selection)
 
         assert scores == pytest.approx([0.0, 0.75, 1.0])
 
     def test_a_negative_weight_is_rejected(self):
         """A negative weight inverts a drive: the worse the injury, the less it wants to rest."""
         with pytest.raises(ValueError):
-            FatigueConfig(weight=-1.0)
+            FatigueConfig(weight=-1.0, exertion_saturation=1.0)
 
 
 class TestDrivesCompeting:
@@ -482,7 +486,7 @@ class TestDrivesCompeting:
                 ),
             )
         )
-        world.behaviour.register(Fatigue(world.store, FatigueConfig(weight=1.0)))
+        world.behaviour.register(Fatigue(world.store, world.exertion, FatigueConfig(weight=1.0, exertion_saturation=1.0)))
 
         world.behaviour.score(selection)
 
@@ -507,7 +511,7 @@ class TestDrivesCompeting:
                 HUNGER_CONFIG,
             )
         )
-        world.behaviour.register(Fatigue(world.store, FatigueConfig(weight=1.0)))
+        world.behaviour.register(Fatigue(world.store, world.exertion, FatigueConfig(weight=1.0, exertion_saturation=1.0)))
 
         world.behaviour.score(selection)
         breakdown = world.behaviour.breakdown(selection)
@@ -962,7 +966,7 @@ class TestAllFiveDrivesCompeting:
                 ),
             )
         )
-        world.behaviour.register(Fatigue(world.store, FatigueConfig(weight=1.0)))
+        world.behaviour.register(Fatigue(world.store, world.exertion, FatigueConfig(weight=1.0, exertion_saturation=1.0)))
 
     def test_a_hungry_creature_next_to_a_predator_flees_instead_of_feeding(self):
         """Fear outscoring hunger in a creature that is *also* hungry is the case the whole

@@ -5,12 +5,13 @@ The contract here is checkable in advance, so these were written before the impl
 (CLAUDE.md §8.1). What is *not* test-driven is what the coefficients should be — that is ecological
 tuning — so nothing below asserts a joule figure. Every assertion is either a geometric identity
 (where a step lands) or a direction (uphill costs more than downhill, sprinting costs more per
-metre than walking).
+world unit than walking).
 """
 
 import numpy as np
 import pytest
 
+from core.behaviour.exertion import Exertion, ExertionConfig
 from core.behaviour.movement import Movement, MovementConfig
 from core.ecology.metabolism import Metabolism, MetabolismConfig
 from core.ecology.service import Ecology
@@ -83,10 +84,14 @@ class World:
             self.climate,
             Metabolism(self.vocabulary, FREE_METABOLISM),
         )
+        # Exertion is where movement records effort (#107); nothing here asserts on it, so the
+        # recovery rate is arbitrary. `tests/core/behaviour/test_exertion.py` is what covers it.
+        self.exertion = Exertion(self.store, self.registry, ExertionConfig(recovery_rate=0.5))
         self.movement = Movement(
             self.store,
             self.registry,
             self.ecology,
+            self.exertion,
             self.genetics,
             self.terrain,
             self.vocabulary,
@@ -148,7 +153,7 @@ class TestConfigRejectsValuesThatWouldBreakTheEnergyBudget:
             )
 
     def test_a_negative_exertion_premium_is_rejected(self):
-        """Negative would make sprinting cheaper per metre than walking — the inverse of §2.5."""
+        """Negative would make sprinting cheaper per world unit than walking — the inverse of §2.5."""
         with pytest.raises(ValueError, match="exertion_premium"):
             MovementConfig(
                 speed_gene="speed",
@@ -319,7 +324,7 @@ class TestWhatAStepCosts:
 
     def test_sprinting_costs_more_per_metre_than_walking(self):
         """This is §2.5's "effort is charged, not just distance". Cost rising with *distance* alone
-        would make a chase merely long, not expensive; it is the per-metre premium that makes a
+        would make a chase merely long, not expensive; it is the per-unit premium that makes a
         predator pay for every chase it loses and prey pay for every escape.
         """
         world = World(flat_heights())

@@ -83,12 +83,13 @@ import order or from whatever sequence a test happened to use. Settled order, ow
 | 2 | cue field rebuild | must precede any sensing, or animals smell **last tick's** world |
 | 3 | drive scoring / option sampling | |
 | 4 | movement | acts on this tick's decision, not a stale one |
-| 5 | feeding | you eat where you arrived, not where you left |
-| 6 | metabolic upkeep | **after feeding**: an animal standing on a full meadow must not be killed by upkeep it could have paid. "Died on top of food" reads as a bug even when the arithmetic is right |
-| 7 | death and decomposition | starvation is only meaningful once the tick's upkeep is charged |
-| 8 | age increment | closes a whole tick of living, and runs **before** births — see below |
-| 9 | reproduction | **after death**, so rows freed this tick are immediately reusable and a world at capacity can still breed |
-| 10 | speciation | periodicity undecided; see #115 |
+| 5 | exertion recovery | immediately **after** movement, the only thing that adds to the column: the tick's effort is spent and then the tick's rest is taken. Whatever reads `exertion` therefore always reads a recovered value, never a raw one (#107) |
+| 6 | feeding | you eat where you arrived, not where you left |
+| 7 | metabolic upkeep | **after feeding**: an animal standing on a full meadow must not be killed by upkeep it could have paid. "Died on top of food" reads as a bug even when the arithmetic is right |
+| 8 | death and decomposition | starvation is only meaningful once the tick's upkeep is charged |
+| 9 | age increment | closes a whole tick of living, and runs **before** births — see below |
+| 10 | reproduction | **after death**, so rows freed this tick are immediately reusable and a world at capacity can still breed |
+| 11 | speciation | periodicity undecided; see #115 |
 
 Two rules the order exists to enforce, which outlive any particular sequence:
 
@@ -200,8 +201,8 @@ Two rules the order exists to enforce, which outlive any particular sequence:
   cost = size × (transport_cost × distance × (1 + exertion_premium × pace) + climb_cost × gain)
   ```
 
-  **The premium is a per-metre multiplier on `pace`, not a flag naming the drive.** Pricing
-  distance alone would make a chase merely long; it is the per-metre term that makes it expensive.
+  **The premium is a per-world-unit multiplier on `pace`, not a flag naming the drive.** Pricing
+  distance alone would make a chase merely long; it is the per-unit term that makes it expensive.
   `pace` is a fraction of top speed supplied per call, so `core.behaviour.movement` knows nothing
   about what fleeing *is* — a drive that wants urgency passes a higher number, and #19's chase and
   #24's flight are priced without that module changing. A `MovementConfig` therefore declares
@@ -257,6 +258,36 @@ Two rules the order exists to enforce, which outlive any particular sequence:
   Boldness, sociality, and parental investment therefore evolve rather than being designed.
   Behaviour stays explainable ("it fled because fear outscored hunger"), which the intervention
   gameplay depends on.
+- **Exertion is a column, and it is work per unit of body size** — decided in #107, which owned it.
+  Fatigue scored health deficit alone, so an animal that had sprinted across a ridge and one that
+  had stood still all tick were indistinguishable at equal health, and resting was selected for
+  only as recovery from injury. `core.behaviour.exertion.Exertion` owns the column; movement hands
+  over what a step took exactly as it hands `Ecology` the bill for it.
+
+  **Not joules, and not the energy pool.** The movement bill is `size × (haul + climb)` and what
+  accumulates is the parenthesised half, so one saturation constant means the same tiredness to a
+  mouse and to an elephant — raw joules would leave a large animal permanently exhausted by an
+  ordinary walk. Reading the pool instead was rejected outright: hunger already scores on exactly
+  that quantity, and two drives reading one number is how a drive contest becomes a coin flip.
+  Distance between position snapshots was rejected too, because `TickLoop` samples those once per
+  `advance()` call rather than once per tick, and §2.4 forbids batching from changing outcomes.
+
+  **Fatigue composes its two terms by noisy-OR**, the same rule §2.5 settles for fear's perception
+  channels, and for the same reasons: independent reasons to do one thing should compound, the
+  score stays in `[0, 1]` like every other drive, and a third reason to rest can be added later
+  without inflating this one past saturation and forcing every other drive's weight to be retuned.
+  The repository deliberately has *one* answer to "how do independent urgencies combine".
+
+  **Recovery is geometric and free.** A fixed subtraction would let a hard enough tick outrun
+  recovery without bound while an easy one floored at zero, so the same rate would mean "recovers
+  quickly" for a walker and "never recovers" for a sprinter; a fraction gives every animal the same
+  half-life and can never drive the column negative without a clamp. Resting costs nothing beyond
+  the upkeep of existing — charging for it would make rest a third way to starve rather than the
+  escape from exertion it exists to be.
+
+  This is what #23 needs in place first: once the fatigue weight is a gene, selection tunes it
+  against whatever fatigue reads, and adding the exertion term afterwards would change what that
+  gene means for every world already carrying it — a rules fork under §2.8 rather than a fix.
 - **Fear is a noisy-OR over perception channels** — decided in #22, which owns it. A *channel* is
   one sense, with its own physics, reporting a detection probability in `[0, 1]` per entity:
 
@@ -478,6 +509,33 @@ Two rules the order exists to enforce, which outlive any particular sequence:
 - **Heightmap terrain from the start.** Elevation drives movement cost, line-of-sight occlusion,
   downhill water flow and pooling, and temperature by altitude. Climate zones are *consequences of
   terrain*, not painted regions, and mountain ranges become natural isolation barriers.
+- **One length unit, and it is not a physical one** — decided in #112, which owned it. x, y, z,
+  elevation, water depth, cell size, speed, sight range and diffusion range are all *world units*.
+  Elevation was documented in metres while x and y were world units, which left
+  `climb_cost / transport_cost` — the ratio that decides whether a mountain range is a barrier at
+  all — resting on a conversion factor nothing declared and nothing checked. It read sensibly,
+  never raised, and was always wrong, exactly like the prototype's degree-valued sight angle
+  compared against a radian difference (§8.4).
+
+  The general rule, of which this is the first instance: **prefer floating units over grounding.**
+  The simulation does not need its lengths to be metres, its masses kilograms, or its energies
+  real joules. Grounding a unit invites Earth-calibrated constants that carry no meaning here and
+  cannot be tuned freely — `Climate.lapse_rate` defaulting to Earth's tropospheric value was the
+  first, and read against world units it cooled a peak by hundredths of a degree, quietly removing
+  altitude from climate. Only lengths are converted so far; energy is still denominated in joules
+  and is the obvious next instance (#123).
+
+  Two consequences worth stating, because they are what keep it fixed:
+
+  - **An absolute length gets no default; a ratio may.** `TerrainConfig.min_elevation` and
+    `max_elevation` are required, because relief only means something against a world extent the
+    caller chose — the range they replaced defaulted to a thousand cells' worth of climb and
+    nothing noticed. A default that is a *normalisation* (`cell_size = 1.0`, one cell is one world
+    unit) or a *reference point* (`sea_level_elevation = 0.0`) is fine; an arbitrary magnitude is
+    not.
+  - **A units mismatch cannot fail a test on its own**, since both sides are floats, so the check
+    is on prose: `tests/test_length_units.py` fails if anything under `core/` or `clients/` names
+    a physical length unit. It caught 17 declarations when it was written.
 - **Animals may leave the surface.** Flight and swimming depth are real mechanics, so positions
   carry a z coordinate and the spatial index is volumetric.
   > ⚠️ This is the most expensive decision in this document. It makes spatial indexing, sensing, and

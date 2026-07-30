@@ -5,6 +5,26 @@ from core.world.terrain import Terrain, TerrainConfig
 from core.world.water import Water
 
 
+def rolling(width, height, seed):
+    """Generated terrain whose relief is a tenth of its extent, per `TerrainConfig`.
+
+    Hydrology cares about the *shape* of the height field rather than its magnitude, so these
+    tests never asserted on elevation — which is exactly how they went on constructing a
+    `TerrainConfig` whose relief defaulted to a thousand cells' worth (#112). Deriving relief from
+    extent in one place keeps the ratio visible and stops the next test inventing another.
+    """
+    extent = (min(width, height) - 1) * 1.0
+    return Terrain.generate(
+        TerrainConfig(
+            width=width,
+            height=height,
+            seed=seed,
+            min_elevation=0.0,
+            max_elevation=extent / 10.0,
+        )
+    )
+
+
 def bowl(rows=7, cols=7, rim=10.0, cell_size=1.0):
     """A basin with a unique minimum (no flat bottom), so flow routing within it is unambiguous."""
     r, c = np.indices((rows, cols))
@@ -18,9 +38,7 @@ def bowl(rows=7, cols=7, rim=10.0, cell_size=1.0):
 
 class TestPooling:
     def test_global_maximum_never_pools_water(self):
-        terrain = Terrain.generate(
-            TerrainConfig(width=25, height=25, seed=3, min_elevation=0.0, max_elevation=800.0)
-        )
+        terrain = rolling(width=25, height=25, seed=3)
         water = Water.generate(terrain)
         peak_row, peak_col = np.unravel_index(np.argmax(terrain.heights), terrain.heights.shape)
         assert water.depth[peak_row, peak_col] == 0.0
@@ -44,7 +62,7 @@ class TestPooling:
         assert np.all(water.depth == 0.0)
 
     def test_depth_never_negative(self):
-        terrain = Terrain.generate(TerrainConfig(width=20, height=20, seed=11))
+        terrain = rolling(width=20, height=20, seed=11)
         water = Water.generate(terrain)
         assert np.all(water.depth >= 0.0)
 
@@ -81,7 +99,7 @@ class TestFlowDirection:
         assert np.all(water.flow_direction[1:7, 7] == -1)
 
     def test_every_cell_flows_to_equal_or_lower_ground(self):
-        terrain = Terrain.generate(TerrainConfig(width=15, height=15, seed=5))
+        terrain = rolling(width=15, height=15, seed=5)
         water = Water.generate(terrain)
         offsets = ((-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1))
         filled = terrain.heights + water.depth
@@ -97,7 +115,7 @@ class TestFlowDirection:
 
 class TestFlowAccumulation:
     def test_every_cell_accumulates_at_least_itself(self):
-        terrain = Terrain.generate(TerrainConfig(width=12, height=12, seed=9))
+        terrain = rolling(width=12, height=12, seed=9)
         water = Water.generate(terrain)
         assert np.all(water.flow_accumulation >= 1.0)
 
@@ -115,7 +133,7 @@ class TestFlowAccumulation:
         assert channel_accum > off_channel_accum
 
     def test_total_accumulation_bounded_by_grid_size(self):
-        terrain = Terrain.generate(TerrainConfig(width=10, height=10, seed=2))
+        terrain = rolling(width=10, height=10, seed=2)
         water = Water.generate(terrain)
         assert water.flow_accumulation.max() <= 100.0
 
