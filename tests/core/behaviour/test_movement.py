@@ -11,6 +11,7 @@ world unit than walking).
 import numpy as np
 import pytest
 
+from core.behaviour.exertion import Exertion, ExertionConfig
 from core.behaviour.movement import Movement, MovementConfig
 from core.ecology.metabolism import Metabolism, MetabolismConfig
 from core.ecology.service import Ecology
@@ -83,10 +84,14 @@ class World:
             self.climate,
             Metabolism(self.vocabulary, FREE_METABOLISM),
         )
+        # Exertion is where movement records effort (#107); nothing here asserts on it, so the
+        # recovery rate is arbitrary. `tests/core/behaviour/test_exertion.py` is what covers it.
+        self.exertion = Exertion(self.store, self.registry, ExertionConfig(recovery_rate=0.5))
         self.movement = Movement(
             self.store,
             self.registry,
             self.ecology,
+            self.exertion,
             self.genetics,
             self.terrain,
             self.vocabulary,

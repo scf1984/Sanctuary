@@ -83,12 +83,13 @@ import order or from whatever sequence a test happened to use. Settled order, ow
 | 2 | cue field rebuild | must precede any sensing, or animals smell **last tick's** world |
 | 3 | drive scoring / option sampling | |
 | 4 | movement | acts on this tick's decision, not a stale one |
-| 5 | feeding | you eat where you arrived, not where you left |
-| 6 | metabolic upkeep | **after feeding**: an animal standing on a full meadow must not be killed by upkeep it could have paid. "Died on top of food" reads as a bug even when the arithmetic is right |
-| 7 | death and decomposition | starvation is only meaningful once the tick's upkeep is charged |
-| 8 | age increment | closes a whole tick of living, and runs **before** births — see below |
-| 9 | reproduction | **after death**, so rows freed this tick are immediately reusable and a world at capacity can still breed |
-| 10 | speciation | periodicity undecided; see #115 |
+| 5 | exertion recovery | immediately **after** movement, the only thing that adds to the column: the tick's effort is spent and then the tick's rest is taken. Whatever reads `exertion` therefore always reads a recovered value, never a raw one (#107) |
+| 6 | feeding | you eat where you arrived, not where you left |
+| 7 | metabolic upkeep | **after feeding**: an animal standing on a full meadow must not be killed by upkeep it could have paid. "Died on top of food" reads as a bug even when the arithmetic is right |
+| 8 | death and decomposition | starvation is only meaningful once the tick's upkeep is charged |
+| 9 | age increment | closes a whole tick of living, and runs **before** births — see below |
+| 10 | reproduction | **after death**, so rows freed this tick are immediately reusable and a world at capacity can still breed |
+| 11 | speciation | periodicity undecided; see #115 |
 
 Two rules the order exists to enforce, which outlive any particular sequence:
 
@@ -257,6 +258,36 @@ Two rules the order exists to enforce, which outlive any particular sequence:
   Boldness, sociality, and parental investment therefore evolve rather than being designed.
   Behaviour stays explainable ("it fled because fear outscored hunger"), which the intervention
   gameplay depends on.
+- **Exertion is a column, and it is work per unit of body size** — decided in #107, which owned it.
+  Fatigue scored health deficit alone, so an animal that had sprinted across a ridge and one that
+  had stood still all tick were indistinguishable at equal health, and resting was selected for
+  only as recovery from injury. `core.behaviour.exertion.Exertion` owns the column; movement hands
+  over what a step took exactly as it hands `Ecology` the bill for it.
+
+  **Not joules, and not the energy pool.** The movement bill is `size × (haul + climb)` and what
+  accumulates is the parenthesised half, so one saturation constant means the same tiredness to a
+  mouse and to an elephant — raw joules would leave a large animal permanently exhausted by an
+  ordinary walk. Reading the pool instead was rejected outright: hunger already scores on exactly
+  that quantity, and two drives reading one number is how a drive contest becomes a coin flip.
+  Distance between position snapshots was rejected too, because `TickLoop` samples those once per
+  `advance()` call rather than once per tick, and §2.4 forbids batching from changing outcomes.
+
+  **Fatigue composes its two terms by noisy-OR**, the same rule §2.5 settles for fear's perception
+  channels, and for the same reasons: independent reasons to do one thing should compound, the
+  score stays in `[0, 1]` like every other drive, and a third reason to rest can be added later
+  without inflating this one past saturation and forcing every other drive's weight to be retuned.
+  The repository deliberately has *one* answer to "how do independent urgencies combine".
+
+  **Recovery is geometric and free.** A fixed subtraction would let a hard enough tick outrun
+  recovery without bound while an easy one floored at zero, so the same rate would mean "recovers
+  quickly" for a walker and "never recovers" for a sprinter; a fraction gives every animal the same
+  half-life and can never drive the column negative without a clamp. Resting costs nothing beyond
+  the upkeep of existing — charging for it would make rest a third way to starve rather than the
+  escape from exertion it exists to be.
+
+  This is what #23 needs in place first: once the fatigue weight is a gene, selection tunes it
+  against whatever fatigue reads, and adding the exertion term afterwards would change what that
+  gene means for every world already carrying it — a rules fork under §2.8 rather than a fix.
 - **Fear is a noisy-OR over perception channels** — decided in #22, which owns it. A *channel* is
   one sense, with its own physics, reporting a detection probability in `[0, 1]` per entity:
 

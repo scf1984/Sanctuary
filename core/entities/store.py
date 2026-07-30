@@ -21,15 +21,17 @@ _COLUMN_NAMES = (
     "energy",
     "age",
     "health",
+    "exertion",
     "species_id",
     "drive_scores",
     "genes",
     "alive",
 )
 
-# Callers seed these via allocate()'s initial_values kwargs; "alive" and "age" are set by
-# allocate() itself and are not caller-settable.
-_SEEDABLE_COLUMN_NAMES = frozenset(_COLUMN_NAMES) - {"alive", "age"}
+# Callers seed these via allocate()'s initial_values kwargs; "alive", "age" and "exertion" are set
+# by allocate() itself and are not caller-settable. The last two for the same reason: both count
+# something the entity itself did, and an entity that has just been allocated has done nothing.
+_SEEDABLE_COLUMN_NAMES = frozenset(_COLUMN_NAMES) - {"alive", "age", "exertion"}
 
 
 class EntityStoreFull(Exception):
@@ -59,6 +61,10 @@ class EntityStore:
       energy: float32, joules.
       age: int64, ticks lived — the tick is the only clock (CLAUDE.md §2.1).
       health: float32, unit-free fraction, 0 (dead) to 1 (full health).
+      exertion: float32, work per unit of expressed body size — recent effort, accumulated by
+          movement and shed each tick by `core.behaviour.exertion.Exertion`, which owns it. Not
+          joules: the size-independent half of the movement bill, so one saturation constant means
+          the same tiredness to a mouse and to an elephant.
       species_id: int32, opaque id into the species registry owned elsewhere; -1 means unset.
       drive_scores: ``(capacity, n_drives)`` float32, unit-free utility scores. Which drives
           exist is owned by the behaviour system (CLAUDE.md §8.3); this module only provides a
@@ -101,6 +107,7 @@ class EntityStore:
         self.energy = np.zeros(capacity, dtype=np.float32)
         self.age = np.zeros(capacity, dtype=np.int64)
         self.health = np.zeros(capacity, dtype=np.float32)
+        self.exertion = np.zeros(capacity, dtype=np.float32)
         self.species_id = np.full(capacity, -1, dtype=np.int32)
         self.drive_scores = np.zeros((capacity, self._n_drives), dtype=np.float32)
         self.genes = np.zeros((capacity, self._n_genes), dtype=np.float32)
@@ -130,7 +137,10 @@ class EntityStore:
     def allocate(self, n: int, **initial_values: np.ndarray) -> np.ndarray:
         """Allocate ``n`` new rows from the free list and return their stable ids.
 
-        Every column defaults to its zero value except ``alive`` (True) and ``age`` (0). Pass
+        Every column defaults to its zero value except ``alive`` (True), ``age`` (0) and
+        ``exertion`` (0) — the last two reset explicitly rather than relying on the row being
+        clean, since a reused row still holds its predecessor's years and its predecessor's
+        tiredness, and a newborn has neither. Pass
         column-name keyword arguments of length ``n`` to seed specific columns in the same
         vectorized write — e.g. ``allocate(3, x=..., energy=...)`` — since the ids this call
         returns are the only supported way to address these rows again.
@@ -158,6 +168,7 @@ class EntityStore:
 
         self.alive[rows] = True
         self.age[rows] = 0
+        self.exertion[rows] = 0.0
         self._row_to_id[rows] = ids
         for id_, row in zip(ids.tolist(), rows.tolist()):
             self._id_to_row[id_] = row
