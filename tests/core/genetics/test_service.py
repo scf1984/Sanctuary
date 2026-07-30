@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from core.entities.store import EntityStore
+from core.genetics.expression import ExpressionMode, GeneticsConfig
 from core.genetics.service import Genetics
 from core.genetics.species import SpeciesRegistry
 from core.genetics.vocabulary import GeneVocabulary
@@ -9,14 +10,27 @@ from core.selection import Selection
 from core.services import ColumnOwnershipError, ColumnRegistry
 
 
-GENE_NAMES = ("size", "speed", "sight", "camouflage")
+GENE_NAMES = ("size", "speed", "sight", "camouflage", "mutability")
+
+# Every gene declares how its stored value is read (#104). These are all quantities, so all fold
+# across zero; `mutability` is in the vocabulary because inheritance's spread floor is a gene, and
+# every world needs one even when — as here — nothing in these tests breeds.
+GENETICS_CONFIG = GeneticsConfig(
+    expression_modes={name: ExpressionMode.MAGNITUDE for name in GENE_NAMES},
+    mutability_gene="mutability",
+    drift_margin=2.0,
+)
+
+
+# One vocabulary for the file: it is immutable, and the tests below that build a second
+# `Genetics` against the same store need to name the same one.
+VOCABULARY = GeneVocabulary(GENE_NAMES)
 
 
 def make_world(initial_capacity=8):
     store = EntityStore(initial_capacity=initial_capacity, n_drives=1, n_genes=len(GENE_NAMES))
-    vocabulary = GeneVocabulary(GENE_NAMES)
-    species = SpeciesRegistry(vocabulary)
-    genetics = Genetics(store, ColumnRegistry(), species)
+    species = SpeciesRegistry(VOCABULARY)
+    genetics = Genetics(store, ColumnRegistry(), species, VOCABULARY, GENETICS_CONFIG)
     return store, species, genetics
 
 
@@ -29,20 +43,20 @@ class TestColumnOwnership:
     def test_claims_genes_and_species_id(self):
         store, species, _ = make_world()
         registry = ColumnRegistry()
-        Genetics(store, registry, species)
+        Genetics(store, registry, species, VOCABULARY, GENETICS_CONFIG)
         assert registry.owner_of("genes") == "Genetics"
         assert registry.owner_of("species_id") == "Genetics"
 
     def test_a_rival_service_cannot_also_claim_genes(self):
         store, species, _ = make_world()
         registry = ColumnRegistry()
-        Genetics(store, registry, species)
+        Genetics(store, registry, species, VOCABULARY, GENETICS_CONFIG)
 
         class RivalGenetics(Genetics):
             pass
 
         with pytest.raises(ColumnOwnershipError):
-            RivalGenetics(store, registry, species)
+            RivalGenetics(store, registry, species, VOCABULARY, GENETICS_CONFIG)
 
 
 class TestGenesReadWrite:
@@ -51,7 +65,9 @@ class TestGenesReadWrite:
         ids = store.allocate(2)
         selection = selection_for(store, ids)
 
-        values = np.array([[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0]], dtype=np.float32)
+        values = np.array(
+            [[1.0, 2.0, 3.0, 4.0, 0.5], [5.0, 6.0, 7.0, 8.0, 1.5]], dtype=np.float32
+        )
         genetics.set_genes(selection, values)
 
         assert genetics.genes(selection).tolist() == values.tolist()
@@ -64,15 +80,20 @@ class TestGenesReadWrite:
         selection = selection_for(store, ids)
 
         values = np.array(
-            [[1.0, 1.0, 1.0, 1.0], [2.0, 2.0, 2.0, 2.0], [3.0, 3.0, 3.0, 3.0]], dtype=np.float32
+            [
+                [1.0, 1.0, 1.0, 1.0, 1.0],
+                [2.0, 2.0, 2.0, 2.0, 2.0],
+                [3.0, 3.0, 3.0, 3.0, 3.0],
+            ],
+            dtype=np.float32,
         )
         genetics.set_genes(selection, values)
 
         expressed = genetics.expressed(selection)
         assert expressed.tolist() == [
-            [1.0, 1.0, 0.0, 0.0],
-            [0.0, 0.0, 2.0, 2.0],
-            [3.0, 3.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 2.0, 2.0, 0.0],
+            [3.0, 3.0, 0.0, 0.0, 0.0],
         ]
         # The genotype is untouched by masking -- only expressed() applies it.
         assert genetics.genes(selection).tolist() == values.tolist()
@@ -109,12 +130,12 @@ class TestUnexpressedGenesSurviveInheritance:
         [parent_id] = store.allocate(1, species_id=np.array([ancestor_species], dtype=np.int32))
         parent_selection = selection_for(store, [parent_id])
         # Exactly representable in float32 so equality assertions below aren't rounding-sensitive.
-        parent_genes = np.array([[0.5, 0.25, 0.125, 0.75]], dtype=np.float32)
+        parent_genes = np.array([[0.5, 0.25, 0.125, 0.75, 0.0625]], dtype=np.float32)
         genetics.set_genes(parent_selection, parent_genes)
 
         # camouflage (index 3) is unexpressed by the parent's species -- confirm the phenotype
         # hides it even though we just wrote a real value for it.
-        assert genetics.expressed(parent_selection).tolist() == [[0.5, 0.25, 0.0, 0.0]]
+        assert genetics.expressed(parent_selection).tolist() == [[0.5, 0.25, 0.0, 0.0, 0.0]]
 
         [offspring_id] = store.allocate(
             1, species_id=np.array([descendant_species], dtype=np.int32)
@@ -129,14 +150,14 @@ class TestUnexpressedGenesSurviveInheritance:
 
         # The descendant's species doesn't express camouflage or speed either, so the phenotype
         # still hides both -- but the genotype carrying speed=0.25 and camouflage=0.125 never left.
-        assert genetics.expressed(offspring_selection).tolist() == [[0.5, 0.0, 0.125, 0.0]]
+        assert genetics.expressed(offspring_selection).tolist() == [[0.5, 0.0, 0.125, 0.0, 0.0]]
 
         # Speciation is only ever an id write (CLAUDE.md §2.3): re-registering a species that
         # expresses camouflage and reassigning the offspring to it reveals the dormant value
         # unchanged -- no gene write happened between inheritance and now.
         camouflage_expressing_species = species.register(("size", "camouflage"))
         genetics.speciate(offspring_selection, camouflage_expressing_species)
-        assert genetics.expressed(offspring_selection).tolist() == [[0.5, 0.0, 0.0, 0.75]]
+        assert genetics.expressed(offspring_selection).tolist() == [[0.5, 0.0, 0.0, 0.75, 0.0]]
 
 
 class TestInherit:
@@ -147,7 +168,7 @@ class TestInherit:
         parent_b = selection_for(store, ids[:1])
 
         with pytest.raises(ValueError):
-            genetics.inherit(parent_a, parent_b, inherit_gain=1.5, rng=np.random.default_rng(0))
+            genetics.inherit(parent_a, parent_b, rng=np.random.default_rng(0))
 
     def test_returns_one_offspring_row_per_parent_pair_within_clamp_range(self):
         store, _, genetics = make_world()
@@ -156,23 +177,28 @@ class TestInherit:
         parent_b_selection = selection_for(store, ids[2:])
         genetics.set_genes(
             parent_a_selection,
-            np.array([[1.0, 2.0, 3.0, 4.0], [0.0, 0.0, 0.0, 0.0]], dtype=np.float32),
+            np.array([[1.0, 2.0, 3.0, 4.0, 0.1], [0.0, 0.0, 0.0, 0.0, 0.1]], dtype=np.float32),
         )
         genetics.set_genes(
             parent_b_selection,
-            np.array([[5.0, 6.0, 7.0, 8.0], [2.0, 2.0, 2.0, 2.0]], dtype=np.float32),
+            np.array([[5.0, 6.0, 7.0, 8.0, 0.1], [2.0, 2.0, 2.0, 2.0, 0.1]], dtype=np.float32),
         )
-        inherit_gain = 1.5
-
         offspring_genes = genetics.inherit(
-            parent_a_selection, parent_b_selection, inherit_gain, np.random.default_rng(0)
+            parent_a_selection, parent_b_selection, np.random.default_rng(0)
         )
 
         parent_a_genes = genetics.genes(parent_a_selection)
         parent_b_genes = genetics.genes(parent_b_selection)
-        low = np.minimum(parent_a_genes, parent_b_genes) / inherit_gain
-        high = np.maximum(parent_a_genes, parent_b_genes) * inherit_gain
-        assert offspring_genes.shape == (2, 4)
+        # The service's own clamp range, restated here from the config it was built with: additive
+        # in units of the draw's spread, which is parental disagreement floored by mutability
+        # (#104). The mutability column is 0.1 for every parent above, so the floor is 0.1.
+        spread = np.maximum(
+            np.abs(parent_a_genes - parent_b_genes) * 0.5, 0.1
+        )
+        margin = GENETICS_CONFIG.drift_margin * spread
+        low = np.minimum(parent_a_genes, parent_b_genes) - margin
+        high = np.maximum(parent_a_genes, parent_b_genes) + margin
+        assert offspring_genes.shape == (2, len(GENE_NAMES))
         assert (offspring_genes >= low).all()
         assert (offspring_genes <= high).all()
 
@@ -182,11 +208,15 @@ class TestInherit:
         [parent_b_id] = store.allocate(1)
         parent_a_selection = selection_for(store, [parent_a_id])
         parent_b_selection = selection_for(store, [parent_b_id])
-        genetics.set_genes(parent_a_selection, np.array([[1.0, 2.0, 3.0, 4.0]], dtype=np.float32))
-        genetics.set_genes(parent_b_selection, np.array([[5.0, 6.0, 7.0, 8.0]], dtype=np.float32))
+        genetics.set_genes(
+            parent_a_selection, np.array([[1.0, 2.0, 3.0, 4.0, 0.1]], dtype=np.float32)
+        )
+        genetics.set_genes(
+            parent_b_selection, np.array([[5.0, 6.0, 7.0, 8.0, 0.1]], dtype=np.float32)
+        )
 
         offspring_genes = genetics.inherit(
-            parent_a_selection, parent_b_selection, inherit_gain=1.5, rng=np.random.default_rng(0)
+            parent_a_selection, parent_b_selection, rng=np.random.default_rng(0)
         )
         [offspring_id] = store.allocate(1, genes=offspring_genes)
         offspring_selection = selection_for(store, [offspring_id])

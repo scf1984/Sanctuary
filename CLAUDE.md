@@ -18,8 +18,11 @@ reference and for the ideas worth carrying forward, not as a foundation.
 
 Carry forward:
 
-- **Trait genetics** (`traits.py`) — Gaussian inheritance around the parental mean, clamped to a
-  bounded drift range. Conceptually sound; this is the core of the game.
+- **Trait genetics** (`traits.py`) — a draw around the parental mean, clamped to a bounded drift
+  range. The *shape* is the thing worth carrying, and it is the core of the game; the arithmetic
+  was not sound and has since been re-derived (§2.5, #104). Its spread coefficient made a closed
+  pool's variance grow by half every generation, and its clamp was tight enough to crush that
+  back — two errors cancelling into something that looked like convergence.
 - **Entity indirection by id** — entities referenced by id and resolved through a central store,
   never by direct object pointer, so stale references to dead entities are detectable.
 - **Spatial hashing** (`InteractionGrid`) — cell size derived from the maximum sensing range.
@@ -205,6 +208,65 @@ a winner from any other drive stands still — which is a real problem rather th
   free random walk. Exactly one class deliberately is — cue signature (below) has no cost and
   nothing selecting on it, and that neutral drift is a molecular clock, which is precisely what
   makes two isolated populations recognisably different.
+
+- **Inheritance: a logistic draw, floored by a gene, bounded additively** — settled in #104, which
+  owned it. An offspring gene is drawn around the parental mean with a spread that is **half the
+  parents' gap or the offspring's own `mutability`, whichever is larger**, and clamped to
+  `drift_margin` spreads outside the parental min/max.
+
+  Each of those three parts replaced something that was wrong, and the middle one was a defect
+  rather than a preference. Spreading the draw by parental disagreement *alone* means identical
+  parents produce an identical offspring, so a closed population converges and the more alike its
+  members become the faster they become alike: an ending state where every birth is a copy and
+  nothing new appears again. [`docs/spikes/speciation-drift.md`](docs/spikes/speciation-drift.md)
+  measures both halves — an unfloored pool loses **99.5%** of its within-pool spread by generation
+  100 and is still falling, while a floored one settles and holds.
+
+  **The floor is a gene, so a lineage evolves its own evolvability.** Low in a stable world, higher
+  in a volatile one, and it needs no energy cost to bound it because high mutability already pays
+  for itself in unfit offspring — the one case where a gene's selective consequence is immediate
+  enough that the metabolic budget is not required (see the rule above).
+
+  **The draw is logistic**, which is the difference of two Gumbels and therefore the extreme-value
+  form: if a parent produces a hundred eggs and two survive, the survivors are that brood's
+  extremes, and §2.1 already compresses reproduction rather than simulating each egg. The *two-way*
+  form is the point — a one-sided Gumbel's mean sits above its mode, so every trait would ratchet
+  upward regardless of selection and the budget would be fighting a built-in bias. What it buys over
+  a Gaussian is fatter tails, so a lineage can leave a local optimum in one jump instead of only
+  crawling.
+
+  **The clamp is additive, in units of the draw's own spread**, because genes are signed (below) and
+  the multiplicative range it replaced *inverted* below zero: two parents at -3 and -2 produced
+  `low = -2, high = -3`. An additive margin is translation-invariant, so a gene at -5 drifts exactly
+  as one at +5.
+
+  **The coefficient relating spread to the parental gap is derived, not chosen.** For parents drawn
+  from a pool of variance `σ²`, their midpoint carries `σ²/2` and a draw of standard deviation
+  `k·|a−b|` adds `2k²σ²`, so one generation multiplies variance by `(1/2 + 2k²)` — which is 1 only at
+  `k = 1/2`. The legacy value was `1/√2`, inflating variance by half again every generation, and
+  **the old rule converged only because its tight multiplicative clamp crushed the excess**: two
+  errors cancelling, which is why §1 calling that formula "conceptually sound" was too generous. Any
+  future change here re-derives `k` rather than tuning it, because `k` decides whether a closed pool
+  freezes, holds, or explodes.
+
+- **Genes are signed, and every gene declares how it is read** — also #104. Storage is ℝ; a gene's
+  *expression mode* says what a stored value means, and `Genetics.expressed` applies it at the one
+  place a phenotype is produced (`core.genetics.expression`):
+
+  | mode | used by | why |
+  |---|---|---|
+  | magnitude (`abs`) | size, speed, acuity, camouflage, insulation, mutability | a quantity cannot be negative |
+  | raw, signed | cue signature, aversion | sign carries information and doubles the discriminating power of cue space |
+
+  A third reading — squashed to [0, 1], for #99's `sex_allocation` and `selfing_rate` — is named
+  here and deliberately **not implemented**, because those genes do not exist yet and a mode nothing
+  declares is §8.2's speculative generality.
+
+  Two consequences bind. **A mode is required, never defaulted**: an undeclared gene would be taken
+  as signed, and a signed `size` is a body with negative mass. And **the mode is what guarantees
+  upkeep is non-negative**, not inheritance — which is why a `SIGNED` gene carrying a non-zero cost
+  makes upkeep mint energy (#136). The expression mode table is half of #111's registry, which folds
+  it together with the cost table so the two cannot disagree.
 
   **Effort is charged, not just distance.** Fleeing and chasing both cost energy at a premium over
   walking, and hiding costs energy to suppress scent. This is what makes hunger close off options
@@ -414,6 +476,7 @@ a winner from any other drive stands still — which is a real problem rather th
   | `maturity_age` | ticks before an animal seeks a mate at all | 0 — late maturity is already paid for in generations forgone |
   | `senescence_resistance` | damps how fast performance traits degrade with age | **positive**, per the insulation rule |
   | `commitment` | how doggedly a drive holds a target across ticks (#100) | 0 — selection on what the persistence achieves |
+  | `mutability` | the floor under an offspring's inherited drift (#104) | 0 — an unfit brood is its own price; see the inheritance rule above |
 
   **Senescence is degradation, not a timer.** There is no `life_expectancy` gene and no death clock.
   Instead, *performance* traits decay with age — speed, sight and scent acuity — while identity

@@ -24,6 +24,7 @@ from core.behaviour.movement import MovementConfig
 from core.ecology.cues import CueFieldConfig, ScentGenes
 from core.ecology.metabolism import MetabolismConfig
 from core.ecology.plants import PlantsConfig
+from core.genetics.expression import ExpressionMode, GeneticsConfig
 from core.selection import Selection
 from core.world.assembly import (
     TICK_ORDER,
@@ -52,7 +53,11 @@ GENE_NAMES = (
     *SIGNATURE_GENES,
     *AVERSION_GENES[0],
     *AVERSION_GENES[1],
+    "mutability",
 )
+# Cue space is signed — a signature is a position in it, an aversion a direction through it — and
+# everything else here is a quantity that cannot go negative (#104).
+CUE_GENES = (*SIGNATURE_GENES, *AVERSION_GENES[0], *AVERSION_GENES[1])
 
 GRID = 24
 CELL_SIZE = 1.0
@@ -85,11 +90,24 @@ def world_config(**overrides):
         ),
         cue_field=CueFieldConfig(diffusion_range=3.0),
         metabolism=MetabolismConfig(
-            gene_costs={name: 0.01 for name in GENE_NAMES},
+            gene_costs={
+                **{name: 0.01 for name in GENE_NAMES},
+                # Mutability charges nothing: high mutability already pays for itself in unfit
+                # offspring, so a stable world selects it down with no energy price (#104).
+                "mutability": 0.0,
+            },
             basal_rate=0.05,
             thermoregulation_rate=0.01,
             neutral_temperature=20.0,
             insulation_gene="insulation",
+        ),
+        genetics=GeneticsConfig(
+            expression_modes={
+                name: ExpressionMode.SIGNED if name in CUE_GENES else ExpressionMode.MAGNITUDE
+                for name in GENE_NAMES
+            },
+            mutability_gene="mutability",
+            drift_margin=2.0,
         ),
         movement=MovementConfig(
             speed_gene="speed",
@@ -135,6 +153,10 @@ def world_config(**overrides):
             # here writes down what any lineage smells like or what frightens it (§2.5, #101).
             **{name: (0.0, 1.0) for name in SIGNATURE_GENES},
             **{name: (-1.0, 1.0) for name in AVERSION_GENES[0] + AVERSION_GENES[1]},
+            # Around the 0.02 the drift spike measured as a working mutation-drift balance, drawn
+            # rather than fixed so a founder population varies in its evolvability like anything
+            # else (docs/spikes/speciation-drift.md).
+            "mutability": (0.01, 0.03),
         },
         n_founders=40,
         founder_energy=180.0,
