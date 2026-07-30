@@ -232,21 +232,17 @@ class Movement(DomainService):
         # What the animal would do with an unlimited pool: go as far as its legs allow, or stop on
         # the target, whichever comes first.
         intended = np.minimum(reach, distance)
-        ground = self.terrain.elevation_at(x, y)
 
-        # Priced against where the whole step *would* land, so the bill covers the hill it would
-        # have climbed. The fraction is a linear read of a cost that is not quite linear —
-        # shortening a step changes where it ends and therefore how much of the hill it climbed —
-        # and the actual charge below re-prices the distance actually travelled against the
-        # elevation actually reached, so what is spent is always the true cost of the move that
-        # happened. An entity that still overpays on a concave slope is floored at zero by
-        # `Ecology.spend`: it spent everything it had getting there, which is honest.
-        intended_x, intended_y = self._landing(
-            x, y, unit_x, unit_y, intended, distance, target_x, target_y
+        # The budget is in work rather than energy, because `_walk` accumulates work per unit of
+        # body size (see `_work`). A species that does not express size pays nothing however far it
+        # goes, so nothing bounds its walk.
+        weightless = size <= 0.0
+        budget = np.where(
+            weightless, np.inf, self.ecology.energy(selection) / np.where(weightless, 1.0, size)
         )
-        intended_z = self.terrain.elevation_at(intended_x, intended_y)
-        full_cost = size * self._work(intended, intended_z - ground, pace)
-        travelled = intended * self._affordable_fraction(selection, full_cost)
+        travelled, ascent = self._walk(
+            x, y, unit_x, unit_y, intended, distance, target_x, target_y, budget, pace
+        )
 
         new_x, new_y = self._landing(
             x, y, unit_x, unit_y, travelled, distance, target_x, target_y
@@ -259,7 +255,7 @@ class Movement(DomainService):
         # The bill and the record of effort are the same quantity read two ways: `Ecology` is
         # charged the size-scaled cost, `Exertion` accumulates the per-size work, so a sprint up a
         # ridge is both expensive and tiring while a stroll over the same ground is neither (#107).
-        work = self._work(travelled, new_z - ground, pace)
+        work = self._work(travelled, ascent, pace)
         self.ecology.spend(selection, (size * work).astype(np.float32))
         self.exertion.accumulate(selection, work)
 
@@ -293,31 +289,141 @@ class Movement(DomainService):
             np.where(arrives, target_y, y + unit_y * travel),
         )
 
-    def _affordable_fraction(self, selection: Selection, full_cost: np.ndarray) -> np.ndarray:
-        """(n,) float64 in [0, 1]: how much of a step costing `full_cost` each entity can pay for.
+    def _walk(
+        self,
+        x: np.ndarray,
+        y: np.ndarray,
+        unit_x: np.ndarray,
+        unit_y: np.ndarray,
+        intended: np.ndarray,
+        distance: np.ndarray,
+        target_x: np.ndarray,
+        target_y: np.ndarray,
+        budget: np.ndarray,
+        pace: float,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """(travelled, ascent): how far each entity got, and how much it climbed getting there.
 
-        This is the gate that makes hunger close off options (§2.5): an animal that cannot cover the
-        bill travels the fraction it can, so an empty pool pins a creature in place and a nearly
-        empty one shuffles.
+        **Every cell the step crosses is visited** (#113). Sampling only the two ends nets a
+        descent against a climb, so a step that dropped into a ravine and hauled itself out read as
+        level ground and was charged for none of it. That is not a rounding error in a cost: since
+        impassable ground is expressed *entirely* through what it costs, terrain the cost function
+        never sees is not a barrier at all.
+
+        Elevation is bilinear (`Terrain.elevation_at`), so the profile along a straight line bends
+        only where the line crosses a grid line. Sampling at exactly those crossings therefore
+        captures every change of direction the field actually has — within one cell the profile is
+        a single arc, and a rise and fall inside one cell is below the terrain's own resolution.
+
+        **The iteration count is per tick, not per animal.** Each pass advances every still-moving
+        entity to its own next crossing, with the finished ones masked off, so the loop runs as many
+        times as the *longest* step in this selection needs rather than once per animal. That is
+        what keeps a cell walk vectorized (§2.3), and it is why no speed cap is needed: a lineage
+        that evolves an absurd top speed makes ticks slower, which #46's regression gates would say
+        out loud, rather than making the answer quietly wrong (§8.7).
+
+        **The budget is spent as it is walked**, which is what makes "where did it run out" a
+        well-defined question: an animal with barely enough energy stops at the foot of a wall
+        rather than partway up it in proportion to some flat average. Within the final cell the
+        remaining budget is spent linearly, since one cell is the resolution of everything here.
         """
-        # A zero-cost step is a zero-length one, or an animal whose species does not express size;
-        # either way there is nothing it could fail to afford. The same guard appears twice because
-        # the division is evaluated over the whole array before `where` selects, so the substitute
-        # denominator is what keeps a free step from raising on divide-by-zero.
-        payable = full_cost > 0.0
-        chargeable = np.where(payable, full_cost, 1.0)
-        fraction = np.clip(self.ecology.energy(selection) / chargeable, 0.0, 1.0)
-        return np.where(payable, fraction, 1.0)
+        cell_size = self.terrain.cell_size
+        haul_rate = self.config.transport_cost * (1.0 + self.config.exertion_premium * pace)
 
-    def _work(
-        self, distance: np.ndarray, elevation_change: np.ndarray, pace: float
+        travelled = np.zeros_like(intended)
+        ascent = np.zeros_like(intended)
+        spent = np.zeros_like(intended)
+        here_z = self.terrain.elevation_at(x, y)
+        # Nothing moving has anything to walk, and an exhausted animal has nothing to spend.
+        walking = (intended > 0.0) & (budget > 0.0)
+
+        # A step of length d crosses at most d/cell_size grid lines on each axis, so 2*ceil(...)
+        # bounds the crossings and the +2 covers the partial cell at each end. Derived from the
+        # population each tick rather than fixed, per #113.
+        longest = float(intended.max(initial=0.0))
+        passes = 2 * int(np.ceil(longest / cell_size)) + 2
+
+        for remaining_passes in range(passes, 0, -1):
+            if not walking.any():
+                break
+
+            at_x = x + unit_x * travelled
+            at_y = y + unit_y * travelled
+            # Distance along the ray to the next grid line on each axis; an axis the step does not
+            # move along is never crossed, and `inf` drops it out of the minimum below.
+            to_boundary = np.minimum(
+                self._to_next_grid_line(at_x, unit_x, cell_size),
+                self._to_next_grid_line(at_y, unit_y, cell_size),
+            )
+            left = intended - travelled
+            # On the final permitted pass, finish whatever is left in one segment rather than
+            # stopping short. Only reachable if float slivers at a grid line consumed passes the
+            # bound did not expect, and it costs accuracy within one cell rather than distance.
+            step = left if remaining_passes == 1 else np.minimum(to_boundary, left)
+
+            next_x, next_y = self._landing(
+                x, y, unit_x, unit_y, travelled + step, distance, target_x, target_y
+            )
+            next_z = self.terrain.elevation_at(next_x, next_y)
+            # Only the gain: descent is braking rather than lifting (see `_work`), and summing the
+            # gains rather than the net difference is the whole of this issue.
+            segment_ascent = np.maximum(next_z - here_z, 0.0)
+            segment_work = haul_rate * step + self.config.climb_cost * segment_ascent
+
+            affordable = budget - spent
+            unaffordable = walking & (segment_work > affordable)
+            # A fraction of a segment it cannot finish; the guard keeps a zero-cost segment (flat
+            # ground with a free transport cost cannot happen, but a zero-length one can) out of the
+            # division, which is evaluated over the whole array before `where` selects.
+            chargeable = np.where(segment_work > 0.0, segment_work, 1.0)
+            fraction = np.clip(affordable / chargeable, 0.0, 1.0)
+
+            advanced = np.where(unaffordable, step * fraction, step)
+            travelled = np.where(walking, travelled + advanced, travelled)
+            ascent = np.where(
+                walking,
+                ascent + np.where(unaffordable, segment_ascent * fraction, segment_ascent),
+                ascent,
+            )
+            spent = np.where(
+                walking, spent + np.where(unaffordable, affordable, segment_work), spent
+            )
+            # An entity that reached its own next crossing stands on it, so the cell it is about to
+            # enter starts from that elevation. One that ran out mid-cell is done and never reads
+            # `here_z` again.
+            here_z = np.where(walking & ~unaffordable, next_z, here_z)
+            walking = walking & ~unaffordable & (travelled < intended)
+
+        return travelled, ascent
+
+    @staticmethod
+    def _to_next_grid_line(
+        position: np.ndarray, direction: np.ndarray, cell_size: float
     ) -> np.ndarray:
-        """(n,) float64: what covering `distance` while rising `elevation_change` takes, per unit
-        of body size.
+        """(n,) float64: distance along a unit ray to the next cell boundary on one axis.
 
-        Hauling the body over the ground, plus raising it against gravity. Only the *gain* counts:
-        descent is braking rather than lifting, so it costs its horizontal distance and no more,
-        and that asymmetry alone is what makes a ridge a barrier and a valley a corridor.
+        `inf` where the ray does not move along this axis, so a minimum against the other axis
+        picks the crossing that actually happens. A position sitting exactly on a boundary returns
+        a whole cell rather than zero, which is what stops the walk stalling on a grid line.
+        """
+        cells = position / cell_size
+        forward = direction > 0.0
+        backward = direction < 0.0
+        boundary = np.where(
+            forward, (np.floor(cells) + 1.0) * cell_size, (np.ceil(cells) - 1.0) * cell_size
+        )
+        moves = forward | backward
+        return np.where(moves, (boundary - position) / np.where(moves, direction, 1.0), np.inf)
+
+    def _work(self, distance: np.ndarray, ascent: np.ndarray, pace: float) -> np.ndarray:
+        """(n,) float64: what covering `distance` while climbing `ascent` takes, per unit of body
+        size.
+
+        Hauling the body over the ground, plus raising it against gravity. `ascent` is the total
+        climbed along the path (`_walk`), never the net difference between the ends: descent is
+        braking rather than lifting, so it costs its horizontal distance and no more, and that
+        asymmetry alone is what makes a ridge a barrier and a valley a corridor. Netting the two
+        would hand back the climb out of every valley an animal fell into.
 
         Pace enters the horizontal term and not the climb: the premium is for moving urgently, and
         an animal that sprints up a hill has already paid for the sprint.
@@ -327,5 +433,4 @@ class Movement(DomainService):
         same ground but is not thereby more tired, and #107 needs both readings of one quantity.
         """
         haul = self.config.transport_cost * distance * (1.0 + self.config.exertion_premium * pace)
-        climb = self.config.climb_cost * np.maximum(elevation_change, 0.0)
-        return haul + climb
+        return haul + self.config.climb_cost * ascent

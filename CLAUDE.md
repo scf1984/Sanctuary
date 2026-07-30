@@ -228,6 +228,31 @@ a winner from any other drive stands still — which is a real problem rather th
   what makes a ridge a barrier and a valley a corridor, so §2.6's heightmap becomes the isolation
   mechanism #16 needs with nobody placing a barrier.
 
+  **`gain` is the total climbed along the path, never the difference between its ends** — settled
+  in #113, which owned it. A step is priced by walking every cell it crosses and summing each
+  crossing's rise; elevation is bilinear, so the profile bends only at grid lines, and those
+  crossings are exactly where it can change direction.
+
+  Sampling the two ends instead nets a descent against a climb, which is not a small error in a
+  number — it is the barrier disappearing. Impassable ground is expressed *entirely* through what
+  it costs, so terrain the cost function never looks at is not impassable at all: a rim-to-rim
+  stride over a gorge came out level, and one long step crossed for free what the same ground
+  charged for when walked in short ones. The property that pins it is that **path cost is additive
+  under subdivision** — one stride costs what the same journey costs in pieces, because it is the
+  same journey.
+
+  Two consequences worth keeping. **The iteration count is per tick, not per animal**: one pass
+  advances every mover to its own next crossing, so the walk stays vectorized (§2.3) and takes as
+  many passes as the *longest* step needs rather than one per animal. And therefore **no speed cap
+  is needed** — a lineage that evolves an absurd top speed makes ticks slower, which #46's gates
+  say out loud, rather than making the answer quietly wrong (§8.7). Capping was proposed and
+  rejected: top speed is a gene under selection, and an authored ceiling on an evolving trait is
+  precisely what "author the physics, not the outcomes" forbids.
+
+  The budget is spent *as* the path is walked, which is what makes "where did it run out" a
+  well-defined question: an animal with barely enough energy stops at the foot of a wall rather
+  than partway up it in proportion to a flat average.
+
   **The pool gates the step; it does not merely record it.** An animal that cannot pay for the
   whole step travels the fraction it can afford, and an empty one does not move at all. This is
   what turns "a starving animal can neither run nor hide" from a description into a mechanism, and
