@@ -1067,6 +1067,48 @@ Rules for filing:
 - **Report tooling and permission failures too.** A `gh` query that unexpectedly needs approval is
   a configuration bug worth an issue (§7.1), not a reason to work around it silently.
 
+### 7.5 Notions and decisions live in issues, not in conversation
+
+§7.4 is about *problems*. This is about **notions** — design questions, half-formed mechanics,
+"should we do X", options weighed and not chosen. They are the larger category and they are the one
+that evaporates.
+
+**Any idea raised in discussion becomes an issue before the discussion ends.** A design conversation
+produces a dozen notions, two get built, and the rest exist only in a transcript nobody reads again.
+They are then rediscovered months later by someone who assumes they are new, or re-litigated because
+nothing recorded why they were dropped. Chat is not a record; the issue tracker is.
+
+This applies to ideas that will never be built. An issue saying "we considered this and chose not
+to, here is why" costs a minute and saves the same argument being had twice.
+
+**An issue that poses a choice carries a decision gate**, and a gate is four things, not one:
+
+| part | why |
+|---|---|
+| the question, stated so it can be answered yes or no | "how should water work" is not a gate; "is water derived or integrated state" is |
+| the options | including the one nobody likes |
+| the consequence of each | what the world does differently |
+| **what each forecloses** | the part everyone omits, and the only part that is hard to reconstruct later |
+
+**A recommendation is not a gate.** Recording only the preferred answer hides the alternatives, so a
+later reader cannot tell whether the others were rejected or merely unimagined. Give the
+recommendation *and* the table.
+
+**Decisions in the negative are recorded with their reason.** "A toroidal world breaks the
+boundary-seeded priority flood in `Water`" is what stops the question being asked a third time. A
+rejected option with no recorded reason is not a decision, it is a gap that will be filled by
+whoever asks next.
+
+**A cluster of related decisions gets a register on its umbrella issue**, ordered by *when each must
+be decided* rather than by importance. Some decisions have real deadlines: anything binding a gene
+vocabulary or a rule set is free until #101 generates starting states and expensive afterwards,
+because from then on it migrates shipped content rather than code (§2.5, §2.8). A decision with a
+deadline and no date is a decision that will be made by accident.
+
+**Where a notion lands matters.** Put it on the issue that owns the abstraction (§7.2), not on a new
+one — a second issue about the same abstraction is how two designs for one thing get built. File
+separately only when the notion is genuinely its own scope.
+
 ---
 
 ## 8. Engineering practice
