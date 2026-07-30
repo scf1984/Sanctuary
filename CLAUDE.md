@@ -810,6 +810,29 @@ Non-determinism rules out golden-output tests. Use instead:
 - **Performance tests** as first-class: catch-up throughput must stay within the budget in §2.1, and
   regressions there are bugs, not nice-to-haves.
 
+**Coverage is a gate against untested modules, never a target** — decided in #47, which owned it.
+Safety here comes from the four kinds above; a line-coverage percentage measures none of them, so
+the gate's only job is catching a module that arrived with no tests at all.
+
+That job forces the shape. `tools/check_coverage.py` applies a floor **per module**, because a
+repository-wide percentage cannot detect what matters: `core/` holds ~1,600 statements at 98%, so a
+new untested 200-statement module pulls the total to about 87% and clears any threshold set with
+enough headroom for ordinary refactoring, while one module rotting to nothing is masked indefinitely
+by the others improving. A per-module floor cannot be averaged away.
+
+The floor is **70%, measured rather than chosen** (§8.5). Over the same suite, modules with real
+tests scored 93–100% and modules that were only ever imported scored 14–59% — `def` and `class`
+statements execute at import, so untested code never scores zero once something imports it. 70% sits
+in the empty band between the two populations, deliberately far below the weakest tested module so
+that refactoring never trips it. **A gate set just under the current figure is the failure mode**,
+because it manufactures exactly the pressure §8.1 warns about: tests written to move a number are
+tests nobody would miss.
+
+The known blind spot is recorded rather than patched over: `core/ecology/aging.py` scored **89% while
+completely untested**, because 8 of its 9 statements are imports and a `def`. No percentage can
+separate that from a tested module, so files under 12 statements are reported and not gated. This is
+the clearest possible illustration of why coverage carries no correctness weight here.
+
 ---
 
 ## 7. Working agreement for issues
