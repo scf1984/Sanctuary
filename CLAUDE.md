@@ -341,19 +341,42 @@ a winner from any other drive stands still — which is a real problem rather th
   plant (a fruiting tree an animal returns to), and as a new issue rather than a retrofit.
   Nutrients are conserved exactly, across soil, standing biomass, and a ledger of what grazing has
   carried out of the field and decomposition has yet to return.
-- **Foraging perception is a field query; foraging *choice* is a drive** — decided in #93, which
-  owned it. `Plants.perceive(x, y, radius)` reports every patch a forager can find and what stands
-  on it. It ranks nothing: which patch is worth walking to weighs payoff against the cost of the
-  walk, and that belongs to the hunger drive (#22), not to the field. The settled scoring rule the
-  drive implements is `biomass / (1 + distance / forage_reluctance)`, argmax — distance-discounted
-  rather than raw, because a grazer that crosses its whole sight range for a marginally richer cell
-  neither feeds efficiently nor produces the local grazing pressure the field model exists to
-  express. `forage_reluctance` is per-world config owned by the service that scores, never by
-  `Plants`, which would otherwise carry a coefficient it never reads (§8.2). Small values keep
-  grazers local and strip ground bare before they move; large ones spread pressure out.
-  **Sight range gates perception**, supplied as a caller-computed radius exactly as `SpatialIndex`
-  takes its cell size: the field knows nothing of genes, and unlimited perception would leave sight
+- **Foraging perception is a diffused field; foraging *choice* is the gradient of it** — decided in
+  #93, which owned it. `core.world.diffusion.CostAwareDiffusion` spreads standing crop over the
+  terrain, so every cell holds how much grazing is *reachable* from it, and a forager reads a
+  heading straight off the gradient. The field ranks nothing and gates nothing: it answers "which
+  way is better from here", and whether that reading is worth acting on belongs to the hunger drive
+  (#22).
+
+  **Directions, not targets.** An earlier version of this rule had the field report candidate
+  patches and the drive take the argmax of `biomass / (1 + distance / forage_reluctance)`. That is a
+  distance discount and nothing else, so a meadow across a gorge scored exactly as well as one on
+  open ground the same number of world units away — and terrain is supposed to be what shapes an
+  ecology. Diffusing the crop makes the distance discount fall out of the spreading, and making the
+  spreading **cost-aware** makes the climb discount the same mechanism rather than a second
+  coefficient beside the first. §2.1's warning about constants that must be tuned as a table is the
+  argument: two coefficients describing one preference will drift apart.
+
+  So `forage_reluctance` is gone, and the field's `range` is what it became — how far food
+  advertises itself; small values keep grazers local and strip ground bare before they move, large
+  ones spread pressure out. It costs passes *quadratically*, because diffusion widens with the
+  square root of time, so it is a knob with a real price rather than a free preference.
+
+  **A signal routes around a barrier rather than being attenuated through it**, because spreading is
+  a walk over the neighbour graph: what arrives behind a wall is whatever came round the end of it.
+  That is what will make a fence (#27) an intervention rather than a multiplier.
+
+  **Sight gates by threshold, not by radius.** One field serves the whole population, so a
+  per-animal radius is not expressible; acuity instead scales what is sampled, and a reading below
+  the drive's `detection_threshold` is nothing found. This is the identical rule §2.5 already
+  settles for scent, for the identical reason — sensitivity and range are the same parameter for a
+  diffused field — and without it every animal would detect every meadow faintly, leaving sight
   range charged by the metabolic budget while buying nothing but predator avoidance.
+
+  The operator is deliberately **not** plant-specific: `core.ecology.cues` wants exactly it, since
+  scent currently diffuses through a mountain unattenuated. Converting that is filed separately,
+  because `CueField.sample_excluding_self` subtracts the *exact* diagonal of its blur and that
+  factorisation exists only because a separable blur is separable — a per-edge conductance is not.
 - **Heritable drive weights.** Behaviour is a fixed set of authored drives (hunger, thirst, fear,
   lust, fatigue) competing each tick by utility score — but *the weights and thresholds are genes*.
   Boldness, sociality, and parental investment therefore evolve rather than being designed.

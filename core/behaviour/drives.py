@@ -63,28 +63,36 @@ class HungerConfig:
     satiation_energy: energy units. The pool level at or above which an animal wants no food at all.
         Hunger rises linearly as the pool falls below it, reaching `weight` at an empty pool, so
         this is also what decides how early in a decline feeding starts outranking everything else.
-    forage_reluctance: world units. How far an animal will walk for food, in the distance discount
-        CLAUDE.md §2.5 settles: small values keep grazers local and strip ground bare before they
-        move on, large ones spread grazing pressure out. Must be positive — zero would divide by
-        the distance alone and make the nearest non-empty cell infinitely preferable.
-    sight_gene: the gene whose expressed value is the forage perception radius, in world units.
-        Named here rather than assumed, exactly as `MetabolismConfig.insulation_gene` is, because
-        the vocabulary is per-world.
+    detection_threshold: the forage-field reading, scaled by expressed sight, below which an
+        animal notices nothing. **This is what gives the sight gene teeth** (#93): the forage field
+        is one field per world and cannot carry a per-animal radius, so acuity enters as a threshold
+        on what is sampled rather than as a range — exactly the rule §2.5 already settles for scent,
+        and for the same reason. Without it every animal would detect every meadow faintly, sight
+        range would be charged by the metabolic budget while buying nothing but predator avoidance,
+        and half the selection pressure on the trait would vanish. Must be positive; at zero the
+        faintest trace anywhere counts as food found.
+    sight_gene: the gene whose expressed value scales what an animal can detect. Named here rather
+        than assumed, exactly as `MetabolismConfig.insulation_gene` is, because the vocabulary is
+        per-world.
+
+    How far an animal will walk for food is no longer set here: it is the range of the plant
+    field's own diffusion (`PlantsConfig.forage_diffusion`), because the distance discount and the
+    spreading are one mechanism (#93).
     """
 
     weight: float
     satiation_energy: float
-    forage_reluctance: float
+    detection_threshold: float
     sight_gene: str
 
     def __post_init__(self) -> None:
         _check_weight(self.weight)
         if self.satiation_energy <= 0:
             raise ValueError(f"satiation_energy must be positive, got {self.satiation_energy}")
-        if self.forage_reluctance <= 0:
+        if self.detection_threshold <= 0:
             raise ValueError(
-                f"forage_reluctance must be positive, got {self.forage_reluctance}; see the "
-                "config docstring — zero makes the nearest crumb beat any distant meadow"
+                f"detection_threshold must be positive, got {self.detection_threshold}; see the "
+                "config docstring — at zero the faintest trace anywhere counts as food found"
             )
 
 
@@ -124,34 +132,48 @@ class Hunger:
     def forage_target(self, selection: Selection) -> tuple[np.ndarray, np.ndarray]:
         """Where each forager should go to eat: (x, y), each (len(selection),) float64.
 
-        This is the rule CLAUDE.md §2.5 settles and assigns to this drive: over every patch
-        `Plants.perceive` reports (#93), take the argmax of `biomass / (1 + distance /
-        forage_reluctance)`. Distance-discounted rather than raw, because a grazer that crosses its
-        whole sight range for a marginally richer cell neither feeds efficiently nor produces the
-        local grazing pressure the field model exists to express.
+        A heading read off the plant field's gradient (#93), turned into a point far enough away
+        that `Movement.step` spends the whole tick walking toward it. The field has already applied
+        the distance discount and the cost of the ground between, so there is nothing left here to
+        rank: the direction the reading rises fastest *is* the answer to "toward what".
 
-        Perception is gated by the expressed sight gene, so an animal only finds what it could pay
-        to see — the field itself knows nothing of genes, which is why the radius is computed here.
+        This replaces an argmax over candidate patches scored by `biomass / (1 + distance /
+        forage_reluctance)`. That rule could only discount distance, so a meadow across a gorge
+        scored as well as one on open ground; the gradient discounts the walk itself.
 
-        An animal that can see no food anywhere is returned its own position: there is no patch
-        worth walking to, and inventing one would send it marching toward an empty cell chosen by
-        whatever argmax broke the all-zero tie.
+        **Detection is a threshold, not a radius.** One field serves the whole population, so the
+        sight phenotype cannot narrow what is sampled — it scales what is sampled, and an animal
+        whose scaled reading falls below `detection_threshold` has found nothing (§2.5 settles the
+        identical rule for scent). Such an animal is returned its own position: there is nothing
+        worth walking to, and inventing a destination would send it marching at a cell chosen by
+        whichever way the numerical noise happened to lean.
         """
         mask = selection.to_mask()
         x = self.store.x[mask].astype(np.float64)
         y = self.store.y[mask].astype(np.float64)
-        radius = self.genetics.expressed(selection)[:, self._sight_index].astype(np.float64)
+        sight = self.genetics.expressed(selection)[:, self._sight_index].astype(np.float64)
 
-        patch_x, patch_y, biomass = self.plants.perceive(x, y, radius)
-        distance = np.hypot(patch_x - x[:, None], patch_y - y[:, None])
-        utility = biomass / (1.0 + distance / self.config.forage_reluctance)
+        field = self.plants.forage_field()
+        gradient_x, gradient_y, strength = self.plants.forage_gradient(field, x, y)
 
-        foragers = np.arange(len(selection))
-        best = np.argmax(utility, axis=1)
-        worth_walking = utility[foragers, best] > 0.0
+        slope = np.hypot(gradient_x, gradient_y)
+        found = (sight * strength >= self.config.detection_threshold) & (slope > 0.0)
+        # A unit heading, then one field-range's worth of travel along it. Any distance at least a
+        # tick's reach would move the animal identically — `Movement.step` stops at its own reach —
+        # and the range is the honest choice: past it the field carries nothing, so it is the
+        # furthest point this reading can actually vouch for.
+        pace_out = self.plants.config.forage_diffusion.range
+        scale = np.where(found, pace_out / np.where(slope > 0.0, slope, 1.0), 0.0)
+        # Clamped into the world, because a heading is a direction and a direction near the edge
+        # points out of it. `Movement.step` consumes targets without bounding them — deliberately,
+        # since a step never overshoots one — so an out-of-world destination raises out of the
+        # middle of a tick from `Terrain.elevation_at`. The contract this replaced returned real
+        # in-world cell centres and could not express the problem; a heading can, so the drive that
+        # invents it is where it stops.
+        terrain = self.plants.terrain
         return (
-            np.where(worth_walking, patch_x[foragers, best], x),
-            np.where(worth_walking, patch_y[foragers, best], y),
+            np.clip(x + gradient_x * scale, 0.0, terrain.world_width),
+            np.clip(y + gradient_y * scale, 0.0, terrain.world_height),
         )
 
 

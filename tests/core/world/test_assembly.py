@@ -25,6 +25,7 @@ from core.ecology.cues import CueFieldConfig, ScentGenes
 from core.ecology.metabolism import MetabolismConfig
 from core.ecology.plants import PlantsConfig
 from core.genetics.expression import ExpressionMode, GeneticsConfig
+from core.world.diffusion import DiffusionConfig
 from core.selection import Selection
 from core.world.assembly import (
     TICK_ORDER,
@@ -87,6 +88,7 @@ def world_config(**overrides):
             senescence_rate=0.02,
             saturation_accumulation=20.0,
             max_rooting_depth=0.5,
+            forage_diffusion=DiffusionConfig(range=4.0, climb_penalty=0.5),
         ),
         cue_field=CueFieldConfig(diffusion_range=3.0),
         metabolism=MetabolismConfig(
@@ -119,7 +121,7 @@ def world_config(**overrides):
         ),
         exertion=ExertionConfig(recovery_rate=0.2),
         hunger=HungerConfig(
-            weight=1.0, satiation_energy=200.0, forage_reluctance=4.0, sight_gene="sight"
+            weight=1.0, satiation_energy=200.0, detection_threshold=0.5, sight_gene="sight"
         ),
         # Thirst is deliberately the quietest drive here, and the reason is a finding rather than
         # a preference: a drive that *wins* with no mechanic behind it leaves the animal standing

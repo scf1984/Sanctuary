@@ -36,6 +36,7 @@ from core.ecology.cues import CueFieldConfig, ScentGenes
 from core.ecology.metabolism import MetabolismConfig
 from core.ecology.plants import PlantsConfig
 from core.genetics.expression import ExpressionMode, GeneticsConfig
+from core.world.diffusion import DiffusionConfig
 from core.world.assembly import World, WorldConfig, build_world
 from core.world.climate import ClimateConfig
 from core.world.terrain import TerrainConfig
@@ -95,6 +96,7 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
             senescence_rate=0.02,
             saturation_accumulation=20.0,
             max_rooting_depth=0.5,
+            forage_diffusion=DiffusionConfig(range=4.0, climb_penalty=0.5),
         ),
         cue_field=CueFieldConfig(diffusion_range=3.0),
         metabolism=MetabolismConfig(
@@ -127,7 +129,7 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
         ),
         exertion=ExertionConfig(recovery_rate=0.2),
         hunger=HungerConfig(
-            weight=1.0, satiation_energy=200.0, forage_reluctance=4.0, sight_gene="sight"
+            weight=1.0, satiation_energy=200.0, detection_threshold=0.5, sight_gene="sight"
         ),
         # Thirst is held quiet on purpose, and this is a workaround rather than a tuning choice: a
         # drive that *wins* with no mechanic behind it leaves the animal standing still, and hunger
