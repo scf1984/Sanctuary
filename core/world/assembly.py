@@ -72,7 +72,7 @@ from core.entities.store import EntityStore
 from core.genetics.expression import GeneticsConfig
 from core.genetics.service import Genetics
 from core.genetics.species import SpeciesRegistry
-from core.genetics.vocabulary import GeneVocabulary
+from core.genetics.registry import GeneRegistry, GeneSpec
 from core.invariants import default_registry
 from core.selection import Selection
 from core.services import ColumnRegistry
@@ -111,12 +111,13 @@ class SystemOrderError(Exception):
 class WorldConfig:
     """Everything a world needs to exist, per world and never as constants in `core/` (§2.1).
 
-    gene_names: the world's gene vocabulary, in column order. Per-world because §2.3 makes the
-        vocabulary versioned and additive-only, and because every config below that names a gene
-        (`MovementConfig.speed_gene`, `FearConfig.aversion_genes`, …) indexes into it.
+    genes: the world's genes, in column order, each declaring its cost, expression mode, unit and
+        meaning (`core.genetics.registry`, #111). Per-world because §2.3 makes the vocabulary
+        versioned and additive-only, and because every config below that names a gene
+        (`MovementConfig.speed_gene`, `FearConfig.aversion_genes`, …) resolves against it — and now
+        against the *unit* it expects, which is what makes the declaration load-bearing.
     founder_gene_ranges: per-gene ``(low, high)`` for the uniform draw that seeds founders. **Every
-        gene in `gene_names` must appear**, and a missing one raises: the same rule
-        `MetabolismConfig` applies to costs, for the same reason — a gene left out would silently
+        gene must appear**, and a missing one raises, for the same reason a gene left out would silently
         found the world at zero, which for a signature gene means every creature smelling
         identical and for a speed gene means a population that cannot move.
     n_founders: how many creatures the world begins with. The store is sized to hold exactly them;
@@ -137,13 +138,13 @@ class WorldConfig:
     lust: LustConfig
     fatigue: FatigueConfig
     scent_genes: ScentGenes
-    gene_names: tuple[str, ...]
+    genes: tuple[GeneSpec, ...]
     founder_gene_ranges: Mapping[str, tuple[float, float]]
     n_founders: int
     founder_energy: float
 
     def __post_init__(self) -> None:
-        missing = set(self.gene_names) - set(self.founder_gene_ranges)
+        missing = {gene.name for gene in self.genes} - set(self.founder_gene_ranges)
         if missing:
             raise ValueError(
                 f"founder_gene_ranges omits {sorted(missing)}; every gene needs a founding range "
@@ -176,7 +177,7 @@ class World:
     plants: Plants
     store: EntityStore
     columns: ColumnRegistry
-    vocabulary: GeneVocabulary
+    genes: GeneRegistry
     species: SpeciesRegistry
     genetics: Genetics
     ecology: Ecology
@@ -202,31 +203,29 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
     climate = Climate(terrain, config.climate)
     plants = Plants(terrain, climate, water, config.plants)
 
-    vocabulary = GeneVocabulary(config.gene_names)
+    genes = GeneRegistry(config.genes)
     # The store's two column blocks are sized from what is actually registered below, so a drive
     # added without widening the block fails in `Behaviour.register` at assembly time rather than
     # overwriting a neighbour's score.
     store = EntityStore(
         initial_capacity=config.n_founders,
         n_drives=len(_DRIVE_NAMES),
-        n_genes=len(config.gene_names),
+        n_genes=len(genes),
     )
     columns = ColumnRegistry()
 
-    species = SpeciesRegistry(vocabulary)
-    genetics = Genetics(store, columns, species, vocabulary, config.genetics)
+    species = SpeciesRegistry(genes.vocabulary)
+    genetics = Genetics(store, columns, species, genes, config.genetics)
     ecology = Ecology(
         store,
         columns,
         genetics,
         climate,
-        # The cost table and the expression modes are two halves of one rule, and this is the only
-        # place a world declares both — so it is where they are checked against each other (#136).
-        Metabolism(vocabulary, config.metabolism, config.genetics.expression_modes),
+        Metabolism(genes, config.metabolism),
     )
     exertion = Exertion(store, columns, config.exertion)
     movement = Movement(
-        store, columns, ecology, exertion, genetics, terrain, vocabulary, config.movement
+        store, columns, ecology, exertion, genetics, terrain, genes, config.movement
     )
     behaviour = Behaviour(store, columns)
     aging = Aging(store, columns)
@@ -234,15 +233,15 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
         store,
         genetics,
         CueField(terrain, len(config.scent_genes.signature_genes), config.cue_field),
-        vocabulary,
+        genes,
         config.scent_genes,
     )
 
-    hunger = Hunger(store, ecology, genetics, plants, vocabulary, config.hunger)
+    hunger = Hunger(store, ecology, genetics, plants, genes, config.hunger)
     drives = (
         hunger,
         Thirst(store, climate, config.thirst),
-        Fear(store, genetics, scent, vocabulary, config.fear),
+        Fear(store, genetics, scent, genes, config.fear),
         Lust(store, ecology, config.lust),
         Fatigue(store, exertion, config.fatigue),
     )
@@ -286,7 +285,7 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
         plants=plants,
         store=store,
         columns=columns,
-        vocabulary=vocabulary,
+        genes=genes,
         species=species,
         genetics=genetics,
         ecology=ecology,
@@ -387,7 +386,7 @@ def _found(
 
     x = rng.uniform(0.0, terrain.world_width, n).astype(np.float32)
     y = rng.uniform(0.0, terrain.world_height, n).astype(np.float32)
-    species_id = species.register(config.gene_names)
+    species_id = species.register(tuple(gene.name for gene in config.genes))
     store.allocate(
         n,
         x=x,
@@ -403,9 +402,10 @@ def _found(
     # translating ids to rows also keeps row indices inside the store, where §2.3 requires them.
     founders = Selection.from_mask(store.alive)
 
-    low = np.array([config.founder_gene_ranges[name][0] for name in config.gene_names])
-    high = np.array([config.founder_gene_ranges[name][1] for name in config.gene_names])
-    genes = rng.uniform(low, high, (n, len(config.gene_names))).astype(np.float32)
+    names = tuple(gene.name for gene in config.genes)
+    low = np.array([config.founder_gene_ranges[name][0] for name in names])
+    high = np.array([config.founder_gene_ranges[name][1] for name in names])
+    genes = rng.uniform(low, high, (n, len(names))).astype(np.float32)
     genetics.set_genes(founders, genes)
     # z is the ground under (x, y): a freshly allocated row holds z = 0, which is underground
     # anywhere the terrain rises above it.

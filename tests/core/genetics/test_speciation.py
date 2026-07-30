@@ -5,7 +5,7 @@ import pytest
 
 from core.entities.store import EntityStore
 from core.genetics.inheritance import inherit_genes
-from core.genetics.expression import ExpressionMode, GeneticsConfig
+from core.genetics.expression import GeneticsConfig
 from core.genetics.service import Genetics
 from core.genetics.speciation import (
     Lineage,
@@ -15,9 +15,10 @@ from core.genetics.speciation import (
     split,
 )
 from core.genetics.species import SpeciesRegistry
-from core.genetics.vocabulary import GeneVocabulary
 from core.selection import Selection
 from core.services import ColumnRegistry
+
+from tests.support.genes import gene_registry
 
 GENE_NAMES = ("size", "speed", "sight", "camouflage", "clutch_size", "gestation", "mutability")
 
@@ -25,10 +26,10 @@ GENE_NAMES = ("size", "speed", "sight", "camouflage", "clutch_size", "gestation"
 # across zero; `mutability` is in the vocabulary because inheritance's spread floor is a gene, and
 # every world needs one even when — as here — nothing in these tests breeds.
 GENETICS_CONFIG = GeneticsConfig(
-    expression_modes={name: ExpressionMode.MAGNITUDE for name in GENE_NAMES},
     mutability_gene="mutability",
     drift_margin=2.0,
 )
+GENE_REGISTRY = gene_registry(GENE_NAMES)
 
 
 def make_world(n_entities, expressed=GENE_NAMES, capacity=None):
@@ -39,7 +40,7 @@ def make_world(n_entities, expressed=GENE_NAMES, capacity=None):
     """
     capacity = capacity if capacity is not None else n_entities
     store = EntityStore(initial_capacity=capacity, n_drives=1, n_genes=len(GENE_NAMES))
-    vocabulary = GeneVocabulary(GENE_NAMES)
+    vocabulary = GENE_REGISTRY
     species = SpeciesRegistry(vocabulary)
     genetics = Genetics(store, ColumnRegistry(), species, vocabulary, GENETICS_CONFIG)
     species_id = species.register(expressed)

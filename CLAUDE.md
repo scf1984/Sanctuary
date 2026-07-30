@@ -194,11 +194,25 @@ a winner from any other drive stands still — which is a real problem rather th
   that makes climate zones matter genetically.
   Upkeep is charged from the **expressed** phenotype, so a gene's cost and its benefit are
   inseparable — an unexpressed gene is carried and inherited but neither paid for nor gained from.
-  Cost coefficients are a per-world table (`core.ecology.metabolism.MetabolismConfig`), never
-  constants in `core/`, and **every gene in the vocabulary must declare a cost, zero included**: a
-  gene added without one would silently become a free trait, which defeats the whole budget. Any
-  gene that *reduces* upkeep — insulation damping thermoregulation cost is the first — must itself
-  charge a positive cost, or it is unbounded free benefit and runs away in every climate.
+  Cost coefficients are a per-world table, never constants in `core/`, and **every gene in the
+  vocabulary must declare a cost, zero included**: a gene added without one would silently become a
+  free trait, which defeats the whole budget. Any gene that *reduces* upkeep — insulation damping
+  thermoregulation cost is the first — must itself charge a positive cost, or it is unbounded free
+  benefit and runs away in every climate.
+
+  **A gene declares its cost, expression mode and unit in one place** — `core.genetics.registry`,
+  settled in #111, which owned it. A `GeneSpec` carries all three, and the registry it builds is
+  what `Metabolism` and `ExpressionTable` both read, so the two can no longer disagree. Note what
+  this does to the completeness rule above: it stops being a *check* and becomes structural, since
+  a gene without a cost or a mode is not something the type can express. That is §8.7's preference
+  for an unrepresentable failure over a validated one, and it deleted both checks rather than
+  moving them.
+
+  **The unit is consulted, not documented.** `GeneRegistry.index_of` takes the unit its caller
+  expects, so a config naming a gene it will read as a length is handed a length or an error —
+  the check that would have caught #112, where both sides of the mismatch were floats and nothing
+  could notice. A gene map is generated from the registry by `describe()` rather than maintained
+  as prose here, because a table in this document drifts from the code within two issues.
 
   **The clamp in `inherit_genes` is a numerical backstop, not the mechanism that bounds traits.**
   Energy and selection are the mechanism: a trait that drifts upward costs more upkeep, so its
@@ -279,9 +293,9 @@ a winner from any other drive stands still — which is a real problem rather th
 
   Both failures are one misconfiguration, and it is knowable from the two config tables alone —
   which is why it is rejected at construction rather than guarded against per tick (§8.2, §8.7).
-  The expression mode table is half of #111's registry, which folds it together with the cost table
-  so the two cannot disagree; until that lands they are two mappings that must agree, and
-  `Metabolism.__init__` is where they are made to.
+  #111 folded the expression mode and the cost onto one `GeneSpec`, so this is now checked where
+  both facts first meet — `core.genetics.registry` — rather than by `Metabolism` taking a modes
+  mapping it consulted once and never read again.
 
   **Effort is charged, not just distance.** Fleeing and chasing both cost energy at a premium over
   walking, and hiding costs energy to suppress scent. This is what makes hunger close off options

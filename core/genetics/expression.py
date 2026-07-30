@@ -13,55 +13,35 @@ The mode is therefore a property of the vocabulary, alongside a gene's cost, and
 rather than merely declared** (§4): `Genetics.expressed` applies it, so nothing downstream has to
 know or care that storage is signed.
 
-**This is half of #111's registry, deliberately.** #111 will carry cost, expression mode and unit for
-every gene in one place, generated into a readable map so the three cannot drift apart. It is blocked
-on this issue for exactly that reason — the modes have to exist before something can hold them — so
-`expression_modes` here mirrors the shape `MetabolismConfig.gene_costs` already uses (a per-world
-mapping, every gene named, validated against the vocabulary at construction) and #111 folds the two
-into one table rather than inventing a third shape.
-
-**There is no unit-interval mode yet.** #104 names a third reading, a squash to [0, 1], for
-`sex_allocation` and `selfing_rate` — genes that do not exist until #99, which is blocked by #20.
-Adding the member now would be a mode nothing declares (§8.2), and adding one later is additive.
+**The modes are declared in `core.genetics.registry` and applied here** (#111). That split is the
+layering: a `GeneSpec` states a gene's mode alongside its cost and unit, so the three cannot drift
+apart, and this module is where a stored value actually becomes a phenotype. Nothing here validates
+that every gene has a mode any more, because a gene without one cannot be constructed.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
-from typing import Mapping
 
 import numpy as np
 
-from core.genetics.vocabulary import GeneVocabulary
-
-
-class ExpressionMode(Enum):
-    """How one gene's stored value is read as a phenotype."""
-
-    MAGNITUDE = "magnitude"
-    """A quantity: read as `abs(value)`. Negative storage is meaningless for a body, so drift across
-    zero folds back rather than producing a negative size."""
-
-    SIGNED = "signed"
-    """A direction in cue space: read as stored. Sign is information, not a mistake."""
+from core.genetics.registry import ExpressionMode, GeneRegistry, Unit
 
 
 @dataclass(frozen=True)
 class GeneticsConfig:
     """Per-world genetics rules — never constants in `core/` (§2.1).
 
-    expression_modes: gene name -> how it is read. Must name every gene in the vocabulary exactly
-        once; absence raises, because a gene with no declared reading would silently be taken as
-        signed, and a signed `size` is a body with negative mass that also earns upkeep back (#136).
     mutability_gene: the gene whose value floors the spread of an offspring's draw
         (`core.genetics.inheritance`). Must be declared `MAGNITUDE`: it is the width of a
         distribution, so what matters is its size and not its sign.
     drift_margin: how far outside the parental min/max an offspring may land, in units of the draw's
         own spread. Must be positive; zero forbids drift outright.
+
+    The modes themselves are not here: they are per-gene declarations and live on each `GeneSpec`
+    in `core.genetics.registry` (#111).
     """
 
-    expression_modes: Mapping[str, ExpressionMode]
     mutability_gene: str
     drift_margin: float
 
@@ -71,38 +51,23 @@ class GeneticsConfig:
 
 
 class ExpressionTable:
-    """A `GeneticsConfig`'s modes resolved against one vocabulary into vectorized column masks.
+    """A registry's modes, applied to phenotype blocks.
 
     magnitude_columns: (n_genes,) bool, True where the gene is read as a magnitude, in vocabulary
         column order — so applying every mode to a phenotype block is a handful of whole-array
-        operations rather than a per-gene loop (§2.3).
+        operations rather than a per-gene loop (§2.3). Taken from the registry rather than rebuilt,
+        since a second copy resolved separately is the disagreement #111 exists to prevent.
     mutability_index: int, the column `inherit()` reads the draw's spread floor from.
     """
 
-    def __init__(self, vocabulary: GeneVocabulary, config: GeneticsConfig) -> None:
-        declared = set(config.expression_modes)
-        known = set(vocabulary.names)
-        unknown = sorted(declared - known)
-        if unknown:
-            raise ValueError(f"expression modes name genes outside the vocabulary: {unknown}")
-        undeclared = sorted(known - declared)
-        if undeclared:
-            raise ValueError(
-                f"every gene must declare an expression mode; missing: {undeclared}"
-            )
-
+    def __init__(self, registry: GeneRegistry, config: GeneticsConfig) -> None:
         self.config = config
-        self.magnitude_columns = np.array(
-            [
-                config.expression_modes[name] is ExpressionMode.MAGNITUDE
-                for name in vocabulary.names
-            ],
-            dtype=bool,
-        )
+        self.magnitude_columns = registry.magnitude_columns
 
-        # Raises KeyError naming the vocabulary version if the gene does not exist.
-        self.mutability_index = vocabulary.index_of(config.mutability_gene)
-        if config.expression_modes[config.mutability_gene] is not ExpressionMode.MAGNITUDE:
+        # Raises KeyError naming the vocabulary version if the gene does not exist. The spread of
+        # a distribution is a bare number, hence dimensionless.
+        self.mutability_index = registry.index_of(config.mutability_gene, unit=Unit.DIMENSIONLESS)
+        if registry.spec(config.mutability_gene).expression_mode is not ExpressionMode.MAGNITUDE:
             raise ValueError(
                 f"mutability gene '{config.mutability_gene}' must be read as a magnitude; "
                 "a signed spread would make an offspring's draw scale negative"

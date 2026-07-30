@@ -2,12 +2,13 @@ import numpy as np
 import pytest
 
 from core.entities.store import EntityStore
-from core.genetics.expression import ExpressionMode, GeneticsConfig
+from core.genetics.expression import GeneticsConfig
 from core.genetics.service import Genetics
 from core.genetics.species import SpeciesRegistry
-from core.genetics.vocabulary import GeneVocabulary
 from core.selection import Selection
 from core.services import ColumnOwnershipError, ColumnRegistry
+
+from tests.support.genes import gene_registry
 
 
 GENE_NAMES = ("size", "speed", "sight", "camouflage", "mutability")
@@ -16,15 +17,15 @@ GENE_NAMES = ("size", "speed", "sight", "camouflage", "mutability")
 # across zero; `mutability` is in the vocabulary because inheritance's spread floor is a gene, and
 # every world needs one even when — as here — nothing in these tests breeds.
 GENETICS_CONFIG = GeneticsConfig(
-    expression_modes={name: ExpressionMode.MAGNITUDE for name in GENE_NAMES},
     mutability_gene="mutability",
     drift_margin=2.0,
 )
+GENE_REGISTRY = gene_registry(GENE_NAMES)
 
 
 # One vocabulary for the file: it is immutable, and the tests below that build a second
 # `Genetics` against the same store need to name the same one.
-VOCABULARY = GeneVocabulary(GENE_NAMES)
+VOCABULARY = GENE_REGISTRY
 
 
 def make_world(initial_capacity=8):

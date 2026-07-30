@@ -40,21 +40,19 @@ scattered as literals.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping
 
 import numpy as np
 
-from core.genetics.expression import ExpressionMode
-from core.genetics.vocabulary import GeneVocabulary
+from core.genetics.registry import GeneRegistry, Unit
 
 
 @dataclass(frozen=True)
 class MetabolismConfig:
     """Per-world metabolic cost table. Every rate is energy units per tick.
 
-    gene_costs: gene name -> energy units per tick charged per unit of that gene's *expressed*
-        value. Must name every gene in the vocabulary exactly once; zero is a legal cost, absence
-        is not (see module docstring).
+    Per-gene costs are not here: they are per-gene declarations and live on each `GeneSpec` in
+    `core.genetics.registry` (#111), beside the expression mode they have to agree with.
+
     basal_rate: energy units per tick charged to every entity regardless of phenotype. Without it,
         a species expressing only zero-cost genes would pay nothing to stay alive and could never
         starve, which is a free lunch reached by expressing less rather than by evolving more.
@@ -68,7 +66,6 @@ class MetabolismConfig:
         including the ones it does nothing for.
     """
 
-    gene_costs: Mapping[str, float]
     basal_rate: float
     thermoregulation_rate: float
     neutral_temperature: float
@@ -81,72 +78,31 @@ class MetabolismConfig:
             raise ValueError(
                 f"thermoregulation_rate must be non-negative, got {self.thermoregulation_rate}"
             )
-        negative = sorted(name for name, cost in self.gene_costs.items() if cost < 0)
-        if negative:
-            # A negative cost is energy created out of a trait, which §2.5's closed loop forbids
-            # outright — sunlight is the only income (#18).
-            raise ValueError(f"gene costs must be non-negative; negative for {negative}")
 
 
 class Metabolism:
-    """A cost table resolved against one gene vocabulary into vectorized coefficients.
+    """A gene registry's costs, plus the whole-body rates, applied to phenotype blocks.
 
     gene_cost: (n_genes,) float32, energy units per tick per unit of expressed gene value, in
         vocabulary column order — so trait upkeep for any number of entities is one matrix-vector
-        product rather than a per-gene or per-species loop (CLAUDE.md §2.3).
+        product rather than a per-gene or per-species loop (CLAUDE.md §2.3). Taken from the
+        registry rather than rebuilt from a second table.
 
-    expression_modes: how each gene is read as a phenotype (`core.genetics.expression`). Consulted
-        once here, to reject a cost this table cannot keep non-negative (#136); never read again.
-        Only genes that actually carry a cost need a mode, because a gene charging nothing cannot
-        contribute a term of any sign — a vocabulary-wide completeness check belongs to
-        `ExpressionTable`, which owns the modes, and duplicating it here would mean two places to
-        change when #111 folds the tables together.
+    The checks that used to run here are gone rather than moved (#111). A gene cannot omit a cost
+    or declare a negative one, because a `GeneSpec` carries both a cost and its own validation; and
+    the costed-but-signed check (#136) now runs where the two facts live together, instead of this
+    module taking a modes mapping it consulted once and never read again.
     """
 
-    def __init__(
-        self,
-        vocabulary: GeneVocabulary,
-        config: MetabolismConfig,
-        expression_modes: Mapping[str, ExpressionMode],
-    ) -> None:
-        declared = set(config.gene_costs)
-        known = set(vocabulary.names)
-        unknown = sorted(declared - known)
-        if unknown:
-            raise ValueError(f"gene costs name genes outside the vocabulary: {unknown}")
-        undeclared = sorted(known - declared)
-        if undeclared:
-            raise ValueError(
-                f"every gene must declare a cost (zero is allowed); missing: {undeclared}"
-            )
-
-        # A cost only ever charges if the value it multiplies cannot go negative, and MAGNITUDE is
-        # the only mode that promises that. Checked before the coefficient array is built so the
-        # message names the config the caller wrote rather than a column index.
-        costed = sorted(name for name, cost in config.gene_costs.items() if cost != 0)
-        not_magnitude = {
-            name: expression_modes.get(name)
-            for name in costed
-            if expression_modes.get(name) is not ExpressionMode.MAGNITUDE
-        }
-        if not_magnitude:
-            offenders = ", ".join(
-                f"{name} ({mode.value if mode else 'no declared mode'})"
-                for name, mode in not_magnitude.items()
-            )
-            raise ValueError(
-                f"only genes read as a magnitude may carry a cost; costed but not a magnitude: "
-                f"{offenders}. A signed phenotype times a positive cost is a negative term in "
-                "upkeep, which discounts the bill instead of charging it (#136)"
-            )
-
+    def __init__(self, registry: GeneRegistry, config: MetabolismConfig) -> None:
         self.config = config
-        self.gene_cost = np.zeros(len(vocabulary), dtype=np.float32)
-        for name, cost in config.gene_costs.items():
-            self.gene_cost[vocabulary.index_of(name)] = cost
+        self.gene_cost = registry.cost
 
-        # Raises KeyError naming the vocabulary version if the gene does not exist.
-        self._insulation_index = vocabulary.index_of(config.insulation_gene)
+        # Raises KeyError naming the vocabulary version if the gene does not exist. Insulation is a
+        # bare damping factor on a cost, so it carries no dimension of its own.
+        self._insulation_index = registry.index_of(
+            config.insulation_gene, unit=Unit.DIMENSIONLESS
+        )
         if self.gene_cost[self._insulation_index] <= 0:
             raise ValueError(
                 f"insulation gene '{config.insulation_gene}' must carry a positive cost; "
