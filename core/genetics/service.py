@@ -61,22 +61,42 @@ class Genetics(DomainService):
         """(len(selection), n_genes) float32: raw gene values, expressed or not."""
         return self.store.genes[selection.to_mask()]
 
+    def genes_at(self, rows: np.ndarray) -> np.ndarray:
+        """(len(rows), n_genes) float32: gene rows **in the order given**.
+
+        `genes()` reads through a `Selection`, which is a mask, so what comes back is always in
+        ascending row order and the caller's own ordering is lost. That is fine for the unary
+        reads everything else does and impossible for a *pairing*: a set of couples cannot be
+        expressed as two masks unless sorting one side happens to sort the other, and a pairing
+        driven by anything positional does not (#20).
+
+        So pairs are addressed by explicit index arrays. This is the same row space `Selection`
+        already exposes through `to_indices`, not a new leak of storage layout (§2.3) — what is
+        new is that the *order* is the caller's to state rather than something a mask silently
+        decides for it."""
+        return self.store.genes[np.asarray(rows, dtype=np.int64)]
+
+    def species_ids_at(self, rows: np.ndarray) -> np.ndarray:
+        """(len(rows),) int32: species ids in the order given, for the reason `genes_at` gives."""
+        return self.store.species_id[np.asarray(rows, dtype=np.int64)]
+
     def set_genes(self, selection: Selection, values: np.ndarray) -> None:
         """Vectorized write of full gene rows for `selection` — e.g. seeding a new population."""
         self.write("genes", selection, values)
 
     def inherit(
         self,
-        parent_a: Selection,
-        parent_b: Selection,
+        parent_a: np.ndarray,
+        parent_b: np.ndarray,
         rng: np.random.Generator,
     ) -> np.ndarray:
         """(len(parent_a), n_genes) float32: one offspring gene row per parent pair.
 
-        Pairs rows by ascending row-index order within each selection -- the same order `genes()`
-        itself reads in -- so `parent_a` and `parent_b` must have equal length and it is the
-        caller's responsibility to construct them so row i of one is the intended mate of row i
-        of the other.
+        `parent_a` and `parent_b` are **row index arrays**, paired elementwise: row `parent_a[i]`
+        breeds with row `parent_b[i]`. They take indices rather than `Selection`s because a
+        selection is a mask and cannot carry an order — two masks can only ever express a pairing
+        whose couples happen not to cross in row space, and a pairing built from *position* crosses
+        constantly. The old form silently rewired such a pairing rather than refusing it (#20).
 
         Reads full genotypes via `genes()`, not `expressed()`: an unexpressed gene inherits (and
         can mutate) exactly like an expressed one (CLAUDE.md §2.3, #13's "done when"). This only
@@ -90,12 +110,14 @@ class Genetics(DomainService):
         mean — mutability at +1 and -1 is two mutable parents, and averaging before folding would
         cancel them into an offspring that cannot vary at all.
         """
-        if len(parent_a) != len(parent_b):
+        parent_a = np.asarray(parent_a, dtype=np.int64)
+        parent_b = np.asarray(parent_b, dtype=np.int64)
+        if parent_a.shape != parent_b.shape:
             raise ValueError(
-                f"parent selections must have equal length: {len(parent_a)} vs {len(parent_b)}"
+                f"parent rows must pair elementwise: {parent_a.shape} vs {parent_b.shape}"
             )
-        genes_a = self.genes(parent_a)
-        genes_b = self.genes(parent_b)
+        genes_a = self.genes_at(parent_a)
+        genes_b = self.genes_at(parent_b)
         column = self.expression.mutability_index
         mutability = (np.abs(genes_a[:, column]) + np.abs(genes_b[:, column])) / 2.0
         return inherit_genes(
@@ -133,7 +155,11 @@ class Genetics(DomainService):
         species. Mode first, mask second: the mask is what makes an unexpressed gene contribute
         nothing, so it must have the last word on the value handed out (#104).
         """
-        mask = selection.to_mask()
-        phenotype = self.expression.phenotype(self.store.genes[mask])
-        species_mask = self.species.masks_for(self.store.species_id[mask])
+        return self.expressed_at(selection.to_indices())
+
+    def expressed_at(self, rows: np.ndarray) -> np.ndarray:
+        """`expressed`, for row indices **in the order given** — see `genes_at` for why."""
+        rows = np.asarray(rows, dtype=np.int64)
+        phenotype = self.expression.phenotype(self.store.genes[rows])
+        species_mask = self.species.masks_for(self.store.species_id[rows])
         return np.where(species_mask, phenotype, 0.0).astype(np.float32)

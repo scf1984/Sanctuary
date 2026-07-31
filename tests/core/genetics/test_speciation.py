@@ -249,21 +249,21 @@ class TestInterbreedingProbability:
         store, genetics, rows = self.two_creatures([[1.0] * len(GENE_NAMES), [1.0] * len(GENE_NAMES)])
         a, b = selection_of(store, rows, [0]), selection_of(store, rows, [1])
 
-        assert interbreeding_probability(genetics, a, b, threshold=1.0)[0] == pytest.approx(1.0)
+        assert interbreeding_probability(genetics, a.to_indices(), b.to_indices(), threshold=1.0)[0] == pytest.approx(1.0)
 
     def test_compatibility_falls_linearly_and_reaches_zero_at_the_threshold(self):
         store, genetics, rows = self.two_creatures([[0.0] * len(GENE_NAMES), [1.0, *([0.0] * (len(GENE_NAMES) - 1))]])
         a, b = selection_of(store, rows, [0]), selection_of(store, rows, [1])
 
-        assert interbreeding_probability(genetics, a, b, threshold=4.0)[0] == pytest.approx(0.75)
-        assert interbreeding_probability(genetics, a, b, threshold=2.0)[0] == pytest.approx(0.5)
-        assert interbreeding_probability(genetics, a, b, threshold=1.0)[0] == pytest.approx(0.0)
+        assert interbreeding_probability(genetics, a.to_indices(), b.to_indices(), threshold=4.0)[0] == pytest.approx(0.75)
+        assert interbreeding_probability(genetics, a.to_indices(), b.to_indices(), threshold=2.0)[0] == pytest.approx(0.5)
+        assert interbreeding_probability(genetics, a.to_indices(), b.to_indices(), threshold=1.0)[0] == pytest.approx(0.0)
 
     def test_beyond_the_threshold_compatibility_stays_at_zero(self):
         store, genetics, rows = self.two_creatures([[0.0] * len(GENE_NAMES), [10.0, *([0.0] * (len(GENE_NAMES) - 1))]])
         a, b = selection_of(store, rows, [0]), selection_of(store, rows, [1])
 
-        assert interbreeding_probability(genetics, a, b, threshold=1.0)[0] == 0.0
+        assert interbreeding_probability(genetics, a.to_indices(), b.to_indices(), threshold=1.0)[0] == 0.0
 
     def test_the_split_removes_an_already_vanishing_probability(self):
         """The no-cliff-edge property (#16): a pair close enough to the threshold that their
@@ -273,11 +273,11 @@ class TestInterbreedingProbability:
         store, genetics, rows = self.two_creatures([[0.0] * len(GENE_NAMES), [0.98, *([0.0] * (len(GENE_NAMES) - 1))]])
         a, b = selection_of(store, rows, [0]), selection_of(store, rows, [1])
 
-        before_split = interbreeding_probability(genetics, a, b, threshold)[0]
+        before_split = interbreeding_probability(genetics, a.to_indices(), b.to_indices(), threshold)[0]
         assert before_split < 0.05
 
         split(genetics, Lineage(), a)
-        after_split = interbreeding_probability(genetics, a, b, threshold)[0]
+        after_split = interbreeding_probability(genetics, a.to_indices(), b.to_indices(), threshold)[0]
 
         assert after_split == 0.0
         assert before_split - after_split < 0.05  # the discontinuity at the split is negligible
@@ -289,7 +289,7 @@ class TestInterbreedingProbability:
 
         # Phenotypically identical, so distance alone would say fully compatible -- the recorded
         # split is what makes them incompatible.
-        assert interbreeding_probability(genetics, a, b, threshold=1.0)[0] == 0.0
+        assert interbreeding_probability(genetics, a.to_indices(), b.to_indices(), threshold=1.0)[0] == 0.0
 
     def test_is_evaluated_per_pair_over_a_whole_selection(self):
         store, genetics, rows = make_world(4)
@@ -306,14 +306,14 @@ class TestInterbreedingProbability:
         b = selection_of(store, rows, [2, 3])
 
         np.testing.assert_allclose(
-            interbreeding_probability(genetics, a, b, threshold=2.0), [1.0, 0.5]
+            interbreeding_probability(genetics, a.to_indices(), b.to_indices(), threshold=2.0), [1.0, 0.5]
         )
 
     def test_a_non_positive_threshold_raises(self):
         store, genetics, rows = make_world(2)
         a, b = selection_of(store, rows, [0]), selection_of(store, rows, [1])
         with pytest.raises(ValueError):
-            interbreeding_probability(genetics, a, b, threshold=0.0)
+            interbreeding_probability(genetics, a.to_indices(), b.to_indices(), threshold=0.0)
 
     @pytest.mark.parametrize("seed", range(10))
     def test_compatibility_never_increases_with_distance(self, seed):
@@ -327,8 +327,8 @@ class TestInterbreedingProbability:
 
         probability = interbreeding_probability(
             genetics,
-            selection_of(store, rows, range(12)),
-            selection_of(store, rows, range(12, 24)),
+            selection_of(store, rows, range(12)).to_indices(),
+            selection_of(store, rows, range(12, 24)).to_indices(),
             threshold=2.0,
         )
         assert (np.diff(probability) <= 1e-6).all()
@@ -433,5 +433,5 @@ class TestIsolationCausesSpeciation:
 
         assert lineage.ancestry(new_species_id) == (parent_species_id, new_species_id)
         assert (genetics.species_ids(right) == parent_species_id).all()
-        cross_pairs = interbreeding_probability(genetics, left, right, SPECIATION_THRESHOLD)
+        cross_pairs = interbreeding_probability(genetics, left.to_indices(), right.to_indices(), SPECIATION_THRESHOLD)
         assert (cross_pairs == 0.0).all()

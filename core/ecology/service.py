@@ -152,6 +152,43 @@ class Ecology(DomainService):
             )
         self.write("energy", selection, self.energy(selection) + energy)
 
+    def transfer(
+        self, donors: Selection, recipients: Selection, energy: np.ndarray
+    ) -> None:
+        """Move `energy` from each donor to the recipient in the same position, burning none of it.
+
+        Paired positionally, row i of `donors` against row i of `recipients`.
+
+        This is the third thing that can happen to the pool and it is neither of the other two.
+        `spend` destroys energy and excretes the nutrients it was carried in (#21); `gain` is income
+        from outside. A transfer does neither: the energy stays inside the population and only
+        changes owner, which is what gestation is (#20). Routing a gestation cost through `spend`
+        would return the nutrients to the soil *and* hand the energy to the offspring — inventing
+        it — which is the kind of double entry §2.5's closed loop cannot survive.
+
+        Raises if a donor cannot afford its share. Flooring at zero would credit a recipient more
+        than the donor gave up, and energy created is a §6 invariant rather than a preference. The
+        caller is the one that knows who can afford to breed, so it does the filtering (§8.7).
+        """
+        if len(donors) != len(recipients):
+            raise ValueError(
+                f"donor and recipient selections must have equal length: "
+                f"{len(donors)} vs {len(recipients)}"
+            )
+        energy = np.asarray(energy, dtype=np.float32)
+        if np.any(energy < 0.0):
+            raise ValueError("transfer() moves energy and cannot be negative; see spend()")
+
+        available = self.energy(donors)
+        if np.any(energy > available):
+            raise ValueError(
+                "cannot transfer more energy than a donor holds; filter to those that can afford "
+                "it before calling, because flooring here would create energy (§6)"
+            )
+
+        self.write("energy", donors, available - energy)
+        self.write("energy", recipients, self.energy(recipients) + energy)
+
     def starving(self, selection: Selection) -> Selection:
         """The entities in `selection` whose pool has run out — energy at or below zero.
 

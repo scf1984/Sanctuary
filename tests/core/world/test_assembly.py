@@ -22,6 +22,7 @@ from core.behaviour.drives import (
 from core.behaviour.exertion import ExertionConfig
 from core.behaviour.service import BehaviourConfig
 from core.behaviour.movement import MovementConfig
+from core.ecology.conception import ConceptionConfig
 from core.ecology.cues import CueFieldConfig, ScentGenes
 from core.ecology.diet import DietConfig
 from core.ecology.feeding import FeedingConfig
@@ -64,6 +65,7 @@ GENE_NAMES = (
     "commitment",
     "diet_animal_derived",
     "maturity_age",
+    "gestation_length",
 )
 # Cue space is signed — a signature is a position in it, an aversion a direction through it — and
 # everything else here is a quantity that cannot go negative (#104).
@@ -108,6 +110,19 @@ def world_config(**overrides):
             saturation_accumulation=20.0,
             max_rooting_depth=0.5,
             forage_diffusion=DiffusionConfig(range=4.0, climb_penalty=0.5),
+        ),
+        conception=ConceptionConfig(
+            # World units. A contact distance, not a search radius: finding each other is the lust
+            # drive's business (#188), and by the time two animals are this close they have walked.
+            contact_range=2.0,
+            # Energy units, moved out of the parents rather than charged and burned. Under a
+            # founder's 180 so a healthy adult can breed more than once before feeding back up —
+            # the breeding interval is emergent from that rather than being a constant.
+            offspring_energy=60.0,
+            maturity_gene="maturity_age",
+            gestation_gene="gestation_length",
+            # Genetic distance at which interbreeding reaches zero; #16 reads the same number.
+            speciation_threshold=8.0,
         ),
         diet=DietConfig(animal_derived_gene="diet_animal_derived", frontier_exponent=2.0),
         feeding=FeedingConfig(intake_rate=0.6, assimilation_max=0.5, size_gene="size"),
@@ -192,6 +207,8 @@ def world_config(**overrides):
             # split: founders are undecided about what they eat rather than declared herbivores.
             "diet_animal_derived": (-1.0, 1.0),
             "maturity_age": (5.0, 15.0),
+            # Ticks. Short against a lifetime, and drawn so founders differ from generation one.
+            "gestation_length": (20.0, 60.0),
         },
         n_founders=40,
         founder_energy=180.0,
@@ -295,6 +312,34 @@ class TestABuiltWorldRuns:
 
         assert world.store.alive.sum() == 1
         assert reused.shape == (1,)
+
+    def test_a_gestating_row_does_not_act(self):
+        """§2.1's rule stated as a condition rather than an ordering: an unborn animal is not
+        half-simulated, it is simply not a participant. One exclusion in `living()` keeps it out of
+        sensing, movement, feeding, upkeep, death and scent at once (#20)."""
+        world = build_world(world_config(), seed=11)
+        row = int(np.flatnonzero(world.store.alive)[0])
+        world.store.age[row] = -5
+        before = (world.store.x[row], world.store.y[row], world.store.energy[row])
+
+        world.loop.advance(1)
+
+        assert world.store.x[row] == before[0]
+        assert world.store.y[row] == before[1]
+        # Not fed, and not charged upkeep either — it is outside every system.
+        assert world.store.energy[row] == before[2]
+        # But it did age, because `Aging` is the gestation clock.
+        assert world.store.age[row] == -4
+
+    def test_a_gestating_row_is_born_when_its_term_is_up(self):
+        world = build_world(world_config(), seed=12)
+        row = int(np.flatnonzero(world.store.alive)[0])
+        world.store.age[row] = -2
+
+        world.loop.advance(2)
+
+        assert world.store.age[row] == 0
+        assert world.store.alive[row]
 
     def test_the_world_is_populated_and_aging(self):
         world = build_world(world_config(), seed=4)

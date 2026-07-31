@@ -33,6 +33,7 @@ from core.behaviour.drives import (
 from core.behaviour.exertion import ExertionConfig
 from core.behaviour.service import BehaviourConfig
 from core.behaviour.movement import MovementConfig
+from core.ecology.conception import ConceptionConfig
 from core.ecology.cues import CueFieldConfig, ScentGenes
 from core.ecology.diet import DietConfig
 from core.ecology.feeding import FeedingConfig
@@ -182,6 +183,19 @@ _GENES = (
         ),
     ),
     GeneSpec(
+        name="gestation_length",
+        cost=0.0,
+        expression_mode=ExpressionMode.MAGNITUDE,
+        unit=Unit.DIMENSIONLESS,
+        description=(
+            "Ticks between conception and birth, carried as a negative starting age until the "
+            "young is born (#20). A gene because life-history theory puts it under exactly the "
+            "selection this world applies: a short gestation returns a parent to breeding sooner. "
+            "Read as a magnitude, so a lineage drifting below zero is born at once rather than "
+            "never. Free: a hurried young is its own price."
+        ),
+    ),
+    GeneSpec(
         name="mutability",
         cost=0.0,
         expression_mode=ExpressionMode.MAGNITUDE,
@@ -223,6 +237,19 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
             saturation_accumulation=20.0,
             max_rooting_depth=0.5,
             forage_diffusion=DiffusionConfig(range=4.0, climb_penalty=0.5),
+        ),
+        conception=ConceptionConfig(
+            # World units. A contact distance, not a search radius: finding each other is the lust
+            # drive's business (#188), and by the time two animals are this close they have walked.
+            contact_range=2.0,
+            # Energy units, moved out of the parents rather than charged and burned. Under a
+            # founder's 180 so a healthy adult can breed more than once before feeding back up —
+            # the breeding interval is emergent from that rather than being a constant.
+            offspring_energy=60.0,
+            maturity_gene="maturity_age",
+            gestation_gene="gestation_length",
+            # Genetic distance at which interbreeding reaches zero; #16 reads the same number.
+            speciation_threshold=8.0,
         ),
         diet=DietConfig(
             animal_derived_gene="diet_animal_derived",
@@ -333,6 +360,8 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
             # Ticks. Wide, and low relative to a lifetime, so founders differ in how soon they
             # breed and selection has something to act on from the first generation.
             "maturity_age": (40.0, 120.0),
+            # Ticks. Short against a lifetime, and drawn so founders differ from generation one.
+            "gestation_length": (20.0, 60.0),
         },
         n_founders=n_entities,
         founder_energy=180.0,
