@@ -30,10 +30,20 @@ _COLUMN_NAMES = (
     "alive",
 )
 
-# Callers seed these via allocate()'s initial_values kwargs; "alive", "age" and "exertion" are set
-# by allocate() itself and are not caller-settable. The last three for the same reason: each records
-# something the entity itself did, and an entity that has just been allocated has done nothing.
-_SEEDABLE_COLUMN_NAMES = frozenset(_COLUMN_NAMES) - {"alive", "age", "exertion", "choice_heading", "choice_moving"}
+# Callers seed these via allocate()'s initial_values kwargs. "alive" is set by allocate() itself;
+# the rest of the exclusions each record something the entity *did*, and an entity that has just
+# been allocated has done nothing, so a reused row must not inherit its predecessor's tiredness
+# or the direction it was last walking.
+#
+# `age` is seedable, and deliberately so: a gestating entity is allocated at conception with a
+# **negative** age and is born when `Aging` counts it up to zero (#20). It still defaults to 0,
+# so an ordinary allocation is unaffected and a recycled row never keeps its predecessor's years.
+_SEEDABLE_COLUMN_NAMES = frozenset(_COLUMN_NAMES) - {
+    "alive",
+    "exertion",
+    "choice_heading",
+    "choice_moving",
+}
 
 
 class EntityStoreFull(Exception):
@@ -166,7 +176,8 @@ class EntityStore:
     def allocate(self, n: int, **initial_values: np.ndarray) -> np.ndarray:
         """Allocate ``n`` new rows from the free list and return their stable ids.
 
-        Every column defaults to its zero value except ``alive`` (True), ``age`` (0),
+        Every column defaults to its zero value except ``alive`` (True), ``age`` (0, and
+        seedable — see `_SEEDABLE_COLUMN_NAMES` on why gestation seeds it negative),
         ``exertion`` (0), ``choice_heading`` (0) and ``choice_moving`` (False) — the last four reset
         explicitly rather than relying on the row being clean, since a reused row still holds its
         predecessor's years, its tiredness and the direction it was last walking, and a newborn has

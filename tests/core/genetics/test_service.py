@@ -169,7 +169,7 @@ class TestInherit:
         parent_b = selection_for(store, ids[:1])
 
         with pytest.raises(ValueError):
-            genetics.inherit(parent_a, parent_b, rng=np.random.default_rng(0))
+            genetics.inherit(parent_a.to_indices(), parent_b.to_indices(), rng=np.random.default_rng(0))
 
     def test_returns_one_offspring_row_per_parent_pair_within_clamp_range(self):
         store, _, genetics = make_world()
@@ -185,7 +185,9 @@ class TestInherit:
             np.array([[5.0, 6.0, 7.0, 8.0, 0.1], [2.0, 2.0, 2.0, 2.0, 0.1]], dtype=np.float32),
         )
         offspring_genes = genetics.inherit(
-            parent_a_selection, parent_b_selection, np.random.default_rng(0)
+            parent_a_selection.to_indices(),
+            parent_b_selection.to_indices(),
+            np.random.default_rng(0),
         )
 
         parent_a_genes = genetics.genes(parent_a_selection)
@@ -216,8 +218,7 @@ class TestInherit:
             parent_b_selection, np.array([[5.0, 6.0, 7.0, 8.0, 0.1]], dtype=np.float32)
         )
 
-        offspring_genes = genetics.inherit(
-            parent_a_selection, parent_b_selection, rng=np.random.default_rng(0)
+        offspring_genes = genetics.inherit(parent_a_selection.to_indices(), parent_b_selection.to_indices(), rng=np.random.default_rng(0)
         )
         [offspring_id] = store.allocate(1, genes=offspring_genes)
         offspring_selection = selection_for(store, [offspring_id])

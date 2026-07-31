@@ -85,7 +85,7 @@ class TestBetweenBasics:
 
         a = selection_of(store, rows, [0])
         b = selection_of(store, rows, [1])
-        assert between(genetics, a, b)[0] == pytest.approx(5.0)  # 3-4-5 triangle
+        assert between(genetics, a.to_indices(), b.to_indices())[0] == pytest.approx(5.0)  # 3-4-5 triangle
 
     def test_mismatched_length_selections_raise(self):
         rng = np.random.default_rng(1)
@@ -93,7 +93,7 @@ class TestBetweenBasics:
         a = selection_of(store, rows, [0, 1])
         b = selection_of(store, rows, [2])
         with pytest.raises(ValueError):
-            between(genetics, a, b)
+            between(genetics, a.to_indices(), b.to_indices())
 
     def test_unexpressed_genes_do_not_affect_distance(self):
         store = EntityStore(initial_capacity=2, n_drives=1, n_genes=len(GENE_NAMES))
@@ -116,7 +116,7 @@ class TestBetweenBasics:
         # Only "size" and "speed" are expressed by this species, and both creatures agree on
         # those -- so distance is zero even though "sight"/"camouflage" differ wildly, because
         # those slots are unexpressed and never enter the comparison.
-        assert between(genetics, a, b)[0] == pytest.approx(0.0)
+        assert between(genetics, a.to_indices(), b.to_indices())[0] == pytest.approx(0.0)
 
 
 class TestCentroidBetweenBasics:
@@ -133,17 +133,17 @@ class TestCentroidBetweenBasics:
 class TestMetricProperties:
     def test_between_is_symmetric(self, seed):
         genetics, a, b, _ = three_populations(seed)
-        np.testing.assert_allclose(between(genetics, a, b), between(genetics, b, a))
+        np.testing.assert_allclose(between(genetics, a.to_indices(), b.to_indices()), between(genetics, b.to_indices(), a.to_indices()))
 
     def test_between_satisfies_triangle_inequality(self, seed):
         genetics, a, b, c = three_populations(seed)
-        direct = between(genetics, a, c)
-        via_b = between(genetics, a, b) + between(genetics, b, c)
+        direct = between(genetics, a.to_indices(), c.to_indices())
+        via_b = between(genetics, a.to_indices(), b.to_indices()) + between(genetics, b.to_indices(), c.to_indices())
         assert (direct <= via_b + 1e-4).all()
 
     def test_between_a_selection_and_itself_is_zero(self, seed):
         genetics, a, _, _ = three_populations(seed)
-        np.testing.assert_allclose(between(genetics, a, a), 0.0, atol=1e-5)
+        np.testing.assert_allclose(between(genetics, a.to_indices(), a.to_indices()), 0.0, atol=1e-5)
 
     def test_centroid_between_is_symmetric(self, seed):
         genetics, a, b, _ = three_populations(seed)

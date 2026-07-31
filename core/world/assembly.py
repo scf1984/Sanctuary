@@ -19,13 +19,18 @@ yet and are absent rather than stubbed (§8.2):
 
 | settled step | inserted by |
 |---|---|
-| reproduction, after death | #20 |
 | speciation, last; periodicity still open | #16 |
 
-Their absence is visible in what the world does. Energy enters an animal and animals now die of
-running out of it, so a population *falls* — but nothing is born, so it can only ever fall, and a
-world left running long enough empties. That is the honest shape of a half-closed loop: selection
-can finally remove the badly-adapted, and nothing yet passes on what worked.
+Energy enters an animal, animals die of running out of it, and animals now breed — so a
+population can rise as well as fall, and for the first time a gene can be *passed on* rather than
+only filtered. `core.genetics.inheritance` had been built and tested since #14 and had never once
+been called by a running world.
+
+Conception runs after `age_increment` for the reason §2.1 gives: `age` counts whole ticks lived, and
+incrementing after birth would hand a newborn an age of one having lived none. Note the two
+populations the loop distinguishes — `living()` is what *acts*, and excludes the unborn by their
+negative age; `gestating_or_living()` is what `Aging` advances, because ageing an unborn row toward
+zero is precisely how gestation is timed (#20).
 
 **Decomposition is not in this step**, despite §2.1 naming it there. An animal's nutrient debt is
 exactly its energy and starvation empties that, so a starved carcass is worth nothing and there is
@@ -68,6 +73,7 @@ from core.behaviour.exertion import Exertion, ExertionConfig
 from core.behaviour.movement import Movement, MovementConfig
 from core.behaviour.service import Behaviour, BehaviourConfig
 from core.ecology.aging import Aging
+from core.ecology.conception import Conception, ConceptionConfig
 from core.ecology.cues import CueField, CueFieldConfig, Scent, ScentGenes
 from core.ecology.death import Death
 from core.ecology.diet import Diet, DietConfig
@@ -98,6 +104,7 @@ TICK_ORDER: tuple[str, ...] = (
     "metabolic_upkeep",
     "death",
     "age_increment",
+    "conception",
 )
 """The order systems run within a tick — a rule, not an implementation detail (CLAUDE.md §2.1).
 
@@ -136,6 +143,7 @@ class WorldConfig:
     terrain: TerrainConfig
     climate: ClimateConfig
     plants: PlantsConfig
+    conception: ConceptionConfig
     diet: DietConfig
     feeding: FeedingConfig
     cue_field: CueFieldConfig
@@ -195,6 +203,7 @@ class World:
     ecology: Ecology
     feeding: Feeding
     death: Death
+    conception: Conception
     exertion: Exertion
     movement: Movement
     behaviour: Behaviour
@@ -248,6 +257,7 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
         config.feeding,
     )
     death = Death(store, ecology)
+    conception = Conception(store, ecology, genetics, genes, config.conception)
     exertion = Exertion(store, columns, config.exertion)
     movement = Movement(
         store, columns, ecology, exertion, genetics, terrain, genes, config.movement
@@ -302,6 +312,7 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
         feeding,
         death,
         aging,
+        conception,
         rng,
         config.movement.walking_pace,
     )
@@ -327,6 +338,7 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
         ecology=ecology,
         feeding=feeding,
         death=death,
+        conception=conception,
         exertion=exertion,
         movement=movement,
         behaviour=behaviour,
@@ -371,6 +383,7 @@ def _build_systems(
     feeding: Feeding,
     death: Death,
     aging: Aging,
+    conception: Conception,
     rng: np.random.Generator,
     walking_pace: float,
 ) -> dict[str, Callable[[], None]]:
@@ -387,6 +400,22 @@ def _build_systems(
     """
 
     def living() -> Selection:
+        """Everything that acts this tick: allocated, and born.
+
+        A gestating row is allocated and holds a **negative age** until its term is up (#20), so
+        excluding it here keeps it out of sensing, movement, feeding, upkeep, death and scent at
+        once — one condition rather than six. It is also the sharpest statement of §2.1's rule that
+        a newborn does not act in the tick it is born: an unborn animal is not half-simulated, it is
+        simply not yet a participant.
+        """
+        return Selection.from_mask(store.alive & (store.age >= 0))
+
+    def gestating_or_living() -> Selection:
+        """Everything allocated, born or not — the only population `age` itself advances over.
+
+        `Aging` is the gestation clock. It counts an unborn row up toward zero exactly as it counts
+        a living one up from it, which is why gestation needs no countdown of its own (#20).
+        """
         return Selection.from_mask(store.alive)
 
     def move_chosen() -> None:
@@ -406,7 +435,8 @@ def _build_systems(
         "feeding": lambda: feeding.feed(living()),
         "metabolic_upkeep": lambda: ecology.drain(living()),
         "death": lambda: death.reap(living()),
-        "age_increment": lambda: aging.advance(living()),
+        "age_increment": lambda: aging.advance(gestating_or_living()),
+        "conception": lambda: conception.conceive(living(), rng),
     }
 
 

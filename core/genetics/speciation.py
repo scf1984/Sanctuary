@@ -126,12 +126,13 @@ def split(genetics: Genetics, lineage: Lineage, diverged: Selection) -> int:
 
 
 def interbreeding_probability(
-    genetics: Genetics, a: Selection, b: Selection, threshold: float
+    genetics: Genetics, a: np.ndarray, b: np.ndarray, threshold: float
 ) -> np.ndarray:
     """(len(a),) float32 in [0, 1]: how readily each paired (a[i], b[i]) couple can produce young.
 
-    `a` and `b` are paired positionally, row i against row i, exactly as `distance.between` pairs
-    them. Both consulted signals appear here:
+    `a` and `b` are **row index arrays**, paired elementwise, exactly as `distance.between` pairs
+    them and for the same reason: a `Selection` is a mask and cannot carry a pairing that crosses
+    in row space (#20). Both consulted signals appear here:
 
     - **species id** -- a pair from two different species scores 0. Once a split has been recorded
       the isolation is a fact of the world, not something re-derived from where two individuals
@@ -151,5 +152,5 @@ def interbreeding_probability(
         raise ValueError(f"threshold must be > 0, got {threshold}")
 
     compatibility = 1.0 - between(genetics, a, b) / threshold
-    same_species = genetics.species_ids(a) == genetics.species_ids(b)
+    same_species = genetics.species_ids_at(a) == genetics.species_ids_at(b)
     return np.where(same_species, np.clip(compatibility, 0.0, 1.0), 0.0).astype(np.float32)

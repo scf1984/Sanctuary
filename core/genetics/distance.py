@@ -26,16 +26,20 @@ from core.genetics.service import Genetics
 from core.selection import Selection
 
 
-def between(genetics: Genetics, a: Selection, b: Selection) -> np.ndarray:
+def between(genetics: Genetics, a: np.ndarray, b: np.ndarray) -> np.ndarray:
     """(len(a),) float32: Euclidean distance between each row of `a` and the paired row of `b`.
 
-    `a` and `b` must select the same number of rows; row i of `a` is paired with row i of `b` in
-    each selection's own ascending row-index order (how `Selection`/boolean-mask indexing always
-    yields rows) — this is a positional pairing of two equal-size selections, not a claim that the
-    two entities at position i are otherwise related.
+    `a` and `b` are **row index arrays**, paired elementwise: row `a[i]` against row `b[i]`. They
+    take indices rather than `Selection`s because a selection is a mask and therefore carries no
+    order — two masks can only express a pairing whose couples do not cross in row space, and a
+    pairing built from position crosses constantly. The old form rewired such a pairing silently
+    instead of refusing it (#20).
+
+    This is a positional pairing of two equal-length arrays, not a claim that the two entities at
+    position i are otherwise related.
     """
-    phenotype_a = genetics.expressed(a)
-    phenotype_b = genetics.expressed(b)
+    phenotype_a = genetics.expressed_at(a)
+    phenotype_b = genetics.expressed_at(b)
     if phenotype_a.shape[0] != phenotype_b.shape[0]:
         raise ValueError(
             f"a and b must select the same number of rows "
