@@ -63,6 +63,7 @@ GENE_NAMES = (
     "choice_temperature",
     "commitment",
     "diet_animal_derived",
+    "maturity_age",
 )
 # Cue space is signed — a signature is a position in it, an aversion a direction through it — and
 # everything else here is a quantity that cannot go negative (#104).
@@ -147,7 +148,7 @@ def world_config(**overrides):
             saturation=1.0,
         ),
         lust=LustConfig(
-            weight=1.0, maturity_age=20, breeding_energy=120.0, abundant_energy=250.0
+            weight=1.0, maturity_gene="maturity_age", breeding_energy=120.0, abundant_energy=250.0
         ),
         fatigue=FatigueConfig(weight=1.0, exertion_saturation=20.0),
         behaviour=BehaviourConfig(
@@ -185,6 +186,7 @@ def world_config(**overrides):
             # Spread across zero, which the squash reads as allocations either side of an even
             # split: founders are undecided about what they eat rather than declared herbivores.
             "diet_animal_derived": (-1.0, 1.0),
+            "maturity_age": (5.0, 15.0),
         },
         n_founders=40,
         founder_energy=180.0,

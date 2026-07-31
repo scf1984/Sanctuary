@@ -219,8 +219,13 @@ class LustConfig:
     """Per-world tuning for the lust drive.
 
     weight: multiplier on the drive's 0-1 shape.
-    maturity_age: ticks. Below this an animal does not seek a mate at any energy level — the tick
-        counter is the only clock (CLAUDE.md §2.1), so this is in ticks and never in real time.
+    maturity_gene: the gene whose expressed value is how many ticks an animal must live before it
+        seeks a mate at all. A **gene** rather than a constant (§2.5, #20): age at first
+        reproduction is among the most strongly selected life-history traits there is, and a world
+        that fixes it decides by hand what the environment should be deciding. Read as a magnitude,
+        so a lineage that drifts below zero matures at once rather than never.
+        The tick counter is the only clock (§2.1), so what it expresses is a count of ticks and
+        never a span of real time.
     breeding_energy: energy units. The pool level below which reproduction is not attempted at all.
         Gestation charges upkeep like any other trait (§2.5), so an animal that cannot afford it
         must not want it, or selection would favour breeding itself to death.
@@ -228,14 +233,12 @@ class LustConfig:
     """
 
     weight: float
-    maturity_age: int
+    maturity_gene: str
     breeding_energy: float
     abundant_energy: float
 
     def __post_init__(self) -> None:
         _check_weight(self.weight)
-        if self.maturity_age < 0:
-            raise ValueError(f"maturity_age must be non-negative, got {self.maturity_age}")
         if self.abundant_energy <= self.breeding_energy:
             raise ValueError(
                 "abundant_energy must exceed breeding_energy, got "
@@ -253,10 +256,21 @@ class Lust:
 
     name = "lust"
 
-    def __init__(self, store: EntityStore, ecology: Ecology, config: LustConfig) -> None:
+    def __init__(
+        self,
+        store: EntityStore,
+        ecology: Ecology,
+        genetics: Genetics,
+        genes: GeneRegistry,
+        config: LustConfig,
+    ) -> None:
         self.store = store
         self.ecology = ecology
+        self.genetics = genetics
         self.config = config
+        # A count of ticks, so dimensionless: §2.1 makes the tick the only clock, and nothing here
+        # is a length or an energy.
+        self._maturity_index = genes.index_of(config.maturity_gene, unit=Unit.DIMENSIONLESS)
 
     def appeal(self, selection: Selection, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """(n, n_options) float32: flat — nothing can perceive a mate yet.
@@ -269,8 +283,14 @@ class Lust:
         return np.ones_like(x, dtype=np.float32)
 
     def urgency(self, selection: Selection) -> np.ndarray:
-        """(len(selection),) float32: weighted energy surplus, zero before maturity."""
-        mature = self.store.age[selection.to_mask()] >= self.config.maturity_age
+        """(len(selection),) float32: weighted energy surplus, zero before maturity.
+
+        Maturity is per-entity because it is a gene (#20): two animals of the same age can differ
+        in whether they are looking yet, which is what lets selection tune age at first
+        reproduction against the world rather than a designer choosing it.
+        """
+        maturity = self.genetics.expressed(selection)[:, self._maturity_index]
+        mature = self.store.age[selection.to_mask()] >= maturity
         headroom = self.config.abundant_energy - self.config.breeding_energy
         surplus = (self.ecology.energy(selection) - self.config.breeding_energy) / headroom
         return (self.config.weight * np.where(mature, np.clip(surplus, 0.0, 1.0), 0.0)).astype(
