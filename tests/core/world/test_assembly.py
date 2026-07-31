@@ -66,6 +66,11 @@ GENE_NAMES = (
     "commitment",
     "diet_animal_derived",
     "maturity_age",
+    "hunger_weight",
+    "thirst_weight",
+    "fear_weight",
+    "lust_weight",
+    "fatigue_weight",
     "gestation_length",
 )
 # Cue space is signed — a signature is a position in it, an aversion a direction through it — and
@@ -155,30 +160,30 @@ def world_config(**overrides):
         ),
         exertion=ExertionConfig(recovery_rate=0.2),
         hunger=HungerConfig(
-            weight=1.0, satiation_energy=200.0, detection_threshold=0.5, sight_gene="sight"
+            weight_gene="hunger_weight", satiation_energy=200.0, detection_threshold=0.5, sight_gene="sight"
         ),
         # Thirst is deliberately the quietest drive here, and the reason is a finding rather than
         # a preference: a drive that *wins* with no mechanic behind it leaves the animal standing
         # still, and hunger is the only drive that can act today (see the assembly's docstring).
         # At equal weights thirst outscored hunger 0.30 to 0.10 in this world's climate and nothing
         # in it ever moved. Filed as #126; until then a world has to be tuned around it.
-        thirst=ThirstConfig(weight=0.2, onset_temperature=25.0, saturation_temperature=40.0),
+        thirst=ThirstConfig(weight_gene="thirst_weight", onset_temperature=25.0, saturation_temperature=40.0),
         fear=FearConfig(
-            weight=1.0,
+            weight_gene="fear_weight",
             scent_acuity_gene="scent_acuity",
             aversion_genes=AVERSION_GENES,
             detection_threshold=0.05,
             saturation=1.0,
         ),
         lust=LustConfig(
-            weight=1.0,
+            weight_gene="lust_weight",
             maturity_gene="maturity_age",
             scent_acuity_gene="scent_acuity",
             detection_threshold=1e-4,
             breeding_energy=120.0,
             abundant_energy=250.0,
         ),
-        fatigue=FatigueConfig(weight=1.0, exertion_saturation=20.0),
+        fatigue=FatigueConfig(weight_gene="fatigue_weight", exertion_saturation=20.0),
         behaviour=BehaviourConfig(
             # Eight headings is enough that a forager can follow a gradient without the walk
             # visibly staircasing, and the per-entity jitter makes the effective resolution
@@ -211,6 +216,13 @@ def world_config(**overrides):
             "mutability": (0.01, 0.03),
             "choice_temperature": (-0.3, 0.3),
             "commitment": (0.05, 0.25),
+            # Drive weights, drawn around 1 so founders differ in temperament from the first
+            # generation and selection has something to act on (§2.5, #23).
+            "hunger_weight": (0.6, 1.4),
+            "thirst_weight": (0.6, 1.4),
+            "fear_weight": (0.6, 1.4),
+            "lust_weight": (0.6, 1.4),
+            "fatigue_weight": (0.6, 1.4),
             # Spread across zero, which the squash reads as allocations either side of an even
             # split: founders are undecided about what they eat rather than declared herbivores.
             "diet_animal_derived": (-1.0, 1.0),

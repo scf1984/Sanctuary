@@ -56,6 +56,11 @@ GENE_NAMES = (
     "choice_temperature",
     "commitment",
     "maturity_age",
+    "hunger_weight",
+    "thirst_weight",
+    "fear_weight",
+    "lust_weight",
+    "fatigue_weight",
 )
 GENE_REGISTRY = gene_registry(GENE_NAMES, {"size": 2.0, "speed": 3.0, "sight": 1.0, "insulation": 1.0, "scent_acuity": 0.5})
 SCENT_GENES = ScentGenes(emission_gene="scent_emission", signature_genes=SIGNATURE_GENES)
@@ -90,7 +95,7 @@ PLANTS_CONFIG = PlantsConfig(
 )
 
 HUNGER_CONFIG = HungerConfig(
-    weight=1.0,
+    weight_gene="hunger_weight",
     satiation_energy=100.0,
     # Low enough that an ordinary sight gene notices an ordinary meadow, high enough that a
     # near-blind animal does not. `test_sight_gates_what_a_forager_notices` is what pins it.
@@ -183,16 +188,29 @@ class World:
         self.species_id = self.species.register(GENE_NAMES)
 
     def spawn(self, n, **columns):
-        """Allocate `n` entities of the single registered species and return their Selection."""
+        """Allocate `n` entities of the single registered species and return their Selection.
+
+        Drive weights are genes now (#23), so an entity spawned with a zeroed gene row wants
+        nothing at all. These fixtures were written against a scalar weight of 1.0, so that is what
+        an unspecified weight gene means here.
+        """
         columns.setdefault("species_id", np.full(n, self.species_id, dtype=np.int32))
+        if "genes" not in columns:
+            columns["genes"] = gene_rows(*[{}] * n)
         ids = self.store.allocate(n, **columns)
         rows = [self.store._id_to_row[i] for i in ids.tolist()]
         return Selection.from_indices(np.array(rows, dtype=np.int64), self.store.capacity)
 
 
 def gene_rows(*rows):
-    """Stack gene rows given as {name: value} dicts into a (n, n_genes) float32 matrix."""
+    """Stack gene rows given as {name: value} dicts into a (n, n_genes) float32 matrix.
+
+    Drive weights default to 1.0 rather than 0: they are genes now (#23) and a zero weight is an
+    animal that wants nothing, which is not the neutral starting point these fixtures assume.
+    """
     matrix = np.zeros((len(rows), len(GENE_NAMES)), dtype=np.float32)
+    for drive in ("hunger", "thirst", "fear", "lust", "fatigue"):
+        matrix[:, GENE_NAMES.index(f"{drive}_weight")] = 1.0
     for i, genes in enumerate(rows):
         for name, value in genes.items():
             matrix[i, GENE_NAMES.index(name)] = value
@@ -223,17 +241,25 @@ class TestHungerScore:
 
         assert hunger.urgency(selection) == pytest.approx([0.0])
 
-    def test_weight_scales_the_whole_drive(self):
+    def test_weight_scales_the_whole_drive_and_is_per_entity(self):
+        """The weight is a gene now (#23), so two equally starving animals can want food to
+        different degrees — which is the whole mechanism by which temperament evolves."""
         world = World()
-        selection = world.spawn(1, energy=np.array([0.0], dtype=np.float32))
+        selection = world.spawn(2, energy=np.array([0.0, 0.0], dtype=np.float32))
+        world.genetics.set_genes(
+            selection, gene_rows({"hunger_weight": 3.0}, {"hunger_weight": 1.0})
+        )
         config = HungerConfig(
-            weight=3.0, satiation_energy=100.0, detection_threshold=1.0, sight_gene="sight"
+            weight_gene="hunger_weight",
+            satiation_energy=100.0,
+            detection_threshold=1.0,
+            sight_gene="sight",
         )
         hunger = Hunger(
             world.store, world.ecology, world.genetics, world.plants, world.genes, config
         )
 
-        assert hunger.urgency(selection) == pytest.approx([3.0])
+        assert hunger.urgency(selection) == pytest.approx([3.0, 1.0])
 
 
 EAST, WEST, NULL = 0, 1, 2
@@ -478,13 +504,13 @@ class TestHungerAppeal:
 
 class TestThirst:
     def test_thirst_rises_with_ambient_heat(self):
-        config = ThirstConfig(weight=1.0, onset_temperature=20.0, saturation_temperature=40.0)
+        config = ThirstConfig(weight_gene="thirst_weight", onset_temperature=20.0, saturation_temperature=40.0)
 
         scores = []
         for temperature in (15.0, 30.0, 50.0):
             world = World(temperature=temperature)
             selection = world.spawn(1)
-            scores.append(Thirst(world.store, world.climate, config).urgency(selection)[0])
+            scores.append(Thirst(world.store, world.climate, world.genetics, world.genes, config).urgency(selection)[0])
 
         # Below onset, halfway up the span, and clamped at saturation.
         assert scores == pytest.approx([0.0, 0.5, 1.0])
@@ -503,16 +529,16 @@ class TestThirst:
             x=np.array([0.0, 0.0], dtype=np.float32),
             y=np.array([0.0, 20.0], dtype=np.float32),
         )
-        config = ThirstConfig(weight=1.0, onset_temperature=20.0, saturation_temperature=40.0)
+        config = ThirstConfig(weight_gene="thirst_weight", onset_temperature=20.0, saturation_temperature=40.0)
 
-        scores = Thirst(world.store, world.climate, config).urgency(selection)
+        scores = Thirst(world.store, world.climate, world.genetics, world.genes, config).urgency(selection)
 
         # y=0 sits at 40 degC (saturated); y=20 sits at 20 degC, exactly at onset.
         assert scores == pytest.approx([1.0, 0.0])
 
     def test_saturation_must_exceed_onset(self):
         with pytest.raises(ValueError):
-            ThirstConfig(weight=1.0, onset_temperature=30.0, saturation_temperature=30.0)
+            ThirstConfig(weight_gene="thirst_weight", onset_temperature=30.0, saturation_temperature=30.0)
 
     def test_thirst_rates_every_option_alike_because_nothing_can_find_water(self):
         """A drive with no perception is *indifferent*, which is the whole of #126's fix.
@@ -528,7 +554,9 @@ class TestThirst:
         thirst = Thirst(
             world.store,
             world.climate,
-            ThirstConfig(weight=1.0, onset_temperature=20.0, saturation_temperature=40.0),
+            world.genetics,
+            world.genes,
+            ThirstConfig(weight_gene="thirst_weight", onset_temperature=20.0, saturation_temperature=40.0),
         )
         x, y = options_at(world, selection)
 
@@ -547,7 +575,7 @@ class TestLust:
         world.genetics.set_genes(selection, gene_rows({"maturity_age": 100.0}))
         world.store.age[selection.to_indices()] = 5
         config = LustConfig(
-            weight=1.0,
+            weight_gene="lust_weight",
             maturity_gene="maturity_age",
             scent_acuity_gene="scent_acuity",
             detection_threshold=1e-4,
@@ -566,7 +594,7 @@ class TestLust:
         world.genetics.set_genes(selection, gene_rows({"maturity_age": 100.0}))
         world.store.age[selection.to_indices()] = 200
         config = LustConfig(
-            weight=1.0,
+            weight_gene="lust_weight",
             maturity_gene="maturity_age",
             scent_acuity_gene="scent_acuity",
             detection_threshold=1e-4,
@@ -582,7 +610,7 @@ class TestLust:
         world.genetics.set_genes(selection, gene_rows(*[{"maturity_age": 100.0}] * 3))
         world.store.age[selection.to_indices()] = 200
         config = LustConfig(
-            weight=1.0,
+            weight_gene="lust_weight",
             maturity_gene="maturity_age",
             scent_acuity_gene="scent_acuity",
             detection_threshold=1e-4,
@@ -602,7 +630,7 @@ class TestLust:
         world.genetics.set_genes(selection, gene_rows(*[{"maturity_age": 100.0}] * 2))
         world.store.age[selection.to_indices()] = [99, 100]
         config = LustConfig(
-            weight=1.0,
+            weight_gene="lust_weight",
             maturity_gene="maturity_age",
             scent_acuity_gene="scent_acuity",
             detection_threshold=1e-4,
@@ -616,7 +644,7 @@ class TestLust:
 
     def lust(self, world, **overrides):
         params = dict(
-            weight=1.0,
+            weight_gene="lust_weight",
             maturity_gene="maturity_age",
             scent_acuity_gene="scent_acuity",
             detection_threshold=1e-4,
@@ -720,14 +748,35 @@ class TestFatigue:
         world = World()
         selection = world.spawn(3, health=np.array([1.0, 0.25, 0.0], dtype=np.float32))
 
-        scores = Fatigue(world.store, world.exertion, FatigueConfig(weight=1.0, exertion_saturation=1.0)).urgency(selection)
+        scores = Fatigue(world.store, world.exertion, world.genetics, world.genes, FatigueConfig(weight_gene="fatigue_weight", exertion_saturation=1.0)).urgency(selection)
 
         assert scores == pytest.approx([0.0, 0.75, 1.0])
 
-    def test_a_negative_weight_is_rejected(self):
-        """A negative weight inverts a drive: the worse the injury, the less it wants to rest."""
-        with pytest.raises(ValueError):
-            FatigueConfig(weight=-1.0, exertion_saturation=1.0)
+    def test_a_negative_weight_gene_cannot_invert_the_drive(self):
+        """A negative weight would invert a drive — the worse the injury, the less it wants rest.
+
+        `LustConfig` and friends used to reject one at construction. They no longer can, because a
+        weight is a gene now and genes drift freely (#23). The check is *deleted* rather than moved:
+        the weight is read as a magnitude, so a lineage whose stored value has drifted below zero
+        expresses a positive weight and the inversion is unrepresentable (§8.7, the same move #111
+        made for gene costs).
+        """
+        world = World()
+        selection = world.spawn(2, health=np.float32([0.5, 0.5]))
+        world.genetics.set_genes(
+            selection, gene_rows({"fatigue_weight": -2.0}, {"fatigue_weight": 2.0})
+        )
+        fatigue = Fatigue(
+            world.store,
+            world.exertion,
+            world.genetics,
+            world.genes,
+            FatigueConfig(weight_gene="fatigue_weight", exertion_saturation=1.0),
+        )
+
+        scores = fatigue.urgency(selection)
+        assert (scores >= 0.0).all()
+        assert scores[0] == pytest.approx(scores[1])
 
     def test_fatigue_puts_all_of_its_appeal_on_the_null_option(self):
         """Rest needs no mode, no flag and no state column — it is an option in the same contest.
@@ -740,7 +789,11 @@ class TestFatigue:
         world = World()
         selection = world.spawn(2, health=np.float32([0.5, 1.0]))
         fatigue = Fatigue(
-            world.store, world.exertion, FatigueConfig(weight=1.0, exertion_saturation=1.0)
+            world.store,
+            world.exertion,
+            world.genetics,
+            world.genes,
+            FatigueConfig(weight_gene="fatigue_weight", exertion_saturation=1.0),
         )
         x, y = options_at(world, selection)
 
@@ -767,7 +820,9 @@ def register_four(world):
         Thirst(
             world.store,
             world.climate,
-            ThirstConfig(weight=1.0, onset_temperature=25.0, saturation_temperature=40.0),
+            world.genetics,
+            world.genes,
+            ThirstConfig(weight_gene="thirst_weight", onset_temperature=25.0, saturation_temperature=40.0),
         )
     )
     world.behaviour.register(
@@ -777,7 +832,7 @@ def register_four(world):
             world.genetics,
             world.scent,
             world.genes,
-            LustConfig(weight=1.0,
+            LustConfig(weight_gene="lust_weight",
             maturity_gene="maturity_age",
             scent_acuity_gene="scent_acuity",
             detection_threshold=1e-4,
@@ -786,7 +841,7 @@ def register_four(world):
         )
     )
     world.behaviour.register(
-        Fatigue(world.store, world.exertion, FatigueConfig(weight=1.0, exertion_saturation=1.0))
+        Fatigue(world.store, world.exertion, world.genetics, world.genes, FatigueConfig(weight_gene="fatigue_weight", exertion_saturation=1.0))
     )
 
 
@@ -845,7 +900,7 @@ class TestDrivesCompeting:
                 HUNGER_CONFIG,
             )
         )
-        world.behaviour.register(Fatigue(world.store, world.exertion, FatigueConfig(weight=1.0, exertion_saturation=1.0)))
+        world.behaviour.register(Fatigue(world.store, world.exertion, world.genetics, world.genes, FatigueConfig(weight_gene="fatigue_weight", exertion_saturation=1.0)))
 
         world.behaviour.choose(selection, np.random.default_rng(0))
         breakdown = world.behaviour.breakdown(selection)
@@ -857,7 +912,7 @@ class TestDrivesCompeting:
 
 
 FEAR_CONFIG = FearConfig(
-    weight=1.0,
+    weight_gene="fear_weight",
     scent_acuity_gene="scent_acuity",
     aversion_genes=AVERSION_GENES,
     detection_threshold=0.01,
@@ -888,9 +943,9 @@ def dangerous(emission=1.0):
     return {"scent_emission": emission, "signature_0": 1.0}
 
 
-def timid(acuity=50.0):
+def timid(acuity=50.0, **extra):
     """Genes for a creature that fears channel 0 and broadcasts nothing."""
-    return {"scent_acuity": acuity, "aversion0_0": 1.0}
+    return {"scent_acuity": acuity, "aversion0_0": 1.0, **extra}
 
 
 class TestFearScore:
@@ -1020,16 +1075,11 @@ class TestFearScore:
         world.genetics.set_genes(predator, gene_rows(dangerous()))
         world.scent.rebuild(prey | predator)
 
-        loud = FearConfig(
-            weight=3.0,
-            scent_acuity_gene="scent_acuity",
-            aversion_genes=AVERSION_GENES,
-            detection_threshold=0.01,
-            saturation=1.0,
-        )
-        assert world.fear(loud).urgency(prey) == pytest.approx(
-            3.0 * world.fear().urgency(prey), rel=1e-5
-        )
+        baseline = world.fear().urgency(prey)
+        # Weight is a gene now (#23), so scaling it means changing the animal, not the world.
+        world.genetics.set_genes(prey, gene_rows(timid(1000.0, fear_weight=3.0)))
+
+        assert world.fear().urgency(prey) == pytest.approx(3.0 * baseline, rel=1e-5)
 
 
 class TestEmergentBehaviour:
@@ -1228,7 +1278,7 @@ class TestFearConfig:
     def test_rejects_a_zero_detection_threshold(self):
         with pytest.raises(ValueError):
             FearConfig(
-                weight=1.0,
+                weight_gene="fear_weight",
                 scent_acuity_gene="scent_acuity",
                 aversion_genes=AVERSION_GENES,
                 detection_threshold=0.0,
@@ -1238,7 +1288,7 @@ class TestFearConfig:
     def test_rejects_saturation_at_or_below_the_threshold(self):
         with pytest.raises(ValueError):
             FearConfig(
-                weight=1.0,
+                weight_gene="fear_weight",
                 scent_acuity_gene="scent_acuity",
                 aversion_genes=AVERSION_GENES,
                 detection_threshold=0.5,
@@ -1251,7 +1301,7 @@ class TestFearConfig:
         """
         world = FearWorld(grid=21)
         mismatched = FearConfig(
-            weight=1.0,
+            weight_gene="fear_weight",
             scent_acuity_gene="scent_acuity",
             aversion_genes=(AVERSION_GENES[0][:1],),
             detection_threshold=0.01,
@@ -1278,7 +1328,9 @@ class TestAllFiveDrivesCompeting:
             Thirst(
                 world.store,
                 world.climate,
-                ThirstConfig(weight=1.0, onset_temperature=25.0, saturation_temperature=40.0),
+                world.genetics,
+                world.genes,
+                ThirstConfig(weight_gene="thirst_weight", onset_temperature=25.0, saturation_temperature=40.0),
             )
         )
         world.behaviour.register(world.fear())
@@ -1290,7 +1342,7 @@ class TestAllFiveDrivesCompeting:
                 world.scent,
                 world.genes,
                 LustConfig(
-                    weight=1.0,
+                    weight_gene="lust_weight",
             maturity_gene="maturity_age",
             scent_acuity_gene="scent_acuity",
             detection_threshold=1e-4,
@@ -1299,7 +1351,7 @@ class TestAllFiveDrivesCompeting:
                 ),
             )
         )
-        world.behaviour.register(Fatigue(world.store, world.exertion, FatigueConfig(weight=1.0, exertion_saturation=1.0)))
+        world.behaviour.register(Fatigue(world.store, world.exertion, world.genetics, world.genes, FatigueConfig(weight_gene="fatigue_weight", exertion_saturation=1.0)))
 
     def _terrified_and_hungry(self, with_predator):
         world = FearWorld(grid=21, capacity=16)
@@ -1400,7 +1452,7 @@ class TestTwoAversionDirections:
     def test_one_direction_cannot_tell_a_blend_from_the_real_thing(self):
         """The limitation the second direction exists to remove."""
         single = FearConfig(
-            weight=1.0,
+            weight_gene="fear_weight",
             scent_acuity_gene="scent_acuity",
             aversion_genes=(AVERSION_GENES[0],),
             detection_threshold=0.01,
