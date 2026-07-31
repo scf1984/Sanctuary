@@ -84,7 +84,17 @@ class CueField:
         self.config = config
         self._half_width = max(1, int(round(config.diffusion_range / terrain.cell_size)))
         self.concentration = np.zeros((n_channels, *terrain.heights.shape), dtype=np.float32)
-        self.self_response = _self_response(terrain.heights.shape, self._half_width)
+        # The full 1-D diffusion operator per axis, kept rather than reduced to its diagonal.
+        # The diagonal answers "how much of my own deposit do I read back **here**"; the whole
+        # matrix answers it for any pair of cells, which is what sampling at a candidate needs
+        # (#188). `_axis_diagonal` already built these and discarded them, so keeping them
+        # costs memory and no time: two float32 squares of the grid's own axes, 512 KB on a
+        # 256x256 world.
+        self._row_operator = _axis_operator(terrain.heights.shape[0], self._half_width)
+        self._col_operator = _axis_operator(terrain.heights.shape[1], self._half_width)
+        self.self_response = np.outer(
+            np.diagonal(self._row_operator), np.diagonal(self._col_operator)
+        )
 
     def rebuild(
         self, x: np.ndarray, y: np.ndarray, emission: np.ndarray, signature: np.ndarray
@@ -142,7 +152,10 @@ class CueField:
         nothing new.
         """
         grid_rows, grid_cols = self._cell_indices(x, y)
-        return self.concentration[:, grid_rows, grid_cols].T
+        # `moveaxis` rather than `.T`, which reverses *every* axis: a caller sampling an
+        # (n_entities, n_options) block of candidates would get entities and options
+        # transposed silently, and #114 scores options as exactly such a block.
+        return np.moveaxis(self.concentration[:, grid_rows, grid_cols], 0, -1)
 
     def sample_excluding_self(
         self, x: np.ndarray, y: np.ndarray, emission: np.ndarray, signature: np.ndarray
@@ -164,6 +177,67 @@ class CueField:
         grid_rows, grid_cols = self._cell_indices(x, y)
         own = self.self_response[grid_rows, grid_cols]
         return self.sample(x, y) - own[:, None] * emission[:, None] * signature
+
+    def sample_excluding_source(
+        self,
+        x: np.ndarray,
+        y: np.ndarray,
+        source_x: np.ndarray,
+        source_y: np.ndarray,
+        emission: np.ndarray,
+        signature: np.ndarray,
+    ) -> np.ndarray:
+        """`sample` at (x, y), minus what a broadcaster at (source_x, source_y) contributes there.
+
+        x, y:                (n, ...) world units, where to read. Any trailing shape, so a whole
+                             (n_entities, n_options) block of candidates costs one call (#114).
+        source_x, source_y:  (n,) where the *sampler* stands, whose deposit is being subtracted.
+        emission, signature: (n,) and (n, n_channels), as passed to `rebuild` for those samplers.
+        returns              (n, ..., n_channels).
+
+        **This is what lets a drive steer by smell.** `sample_excluding_self` answers only at the
+        sampler's own cell, so a drive could know it was frightened but not which way was safer —
+        `Fear.appeal` and `Lust.appeal` both return flat scores because of it. Lust needs it most:
+        its vector is the animal's *own* signature (CLAUDE.md §2.5), so its own plume is the
+        strongest match to it anywhere in the world, and without exclusion at candidates every
+        animal is maximally attracted to the cell it already occupies — a rule that says never move.
+
+        Exact, by the same derivation the diagonal uses. Diffusion is linear, so a source's
+        contribution at any cell is its deposit times the operator entry between the two cells; the
+        blur is a **separable** normalized box, so that entry is the product of the two 1-D
+        operators' entries. `sample_excluding_self` is precisely the `source == sample` case, and
+        the tests assert the two agree rather than trusting it.
+
+        Note what this rests on: #139 would spread cues through a *cost-aware* operator, whose
+        weight between two cells depends on the elevation difference between exactly those two, so
+        it separates neither on the diagonal nor off it. Whatever recovers the diagonal there has
+        to recover arbitrary offsets too, or this method has no exact form.
+        """
+        emission = np.asarray(emission, dtype=np.float32)
+        signature = np.asarray(signature, dtype=np.float32)
+        sample_rows, sample_cols = self._cell_indices(x, y)
+        source_rows, source_cols = self._cell_indices(source_x, source_y)
+
+        # Line the per-sampler arrays up against whatever trailing shape the sample points carry,
+        # so one sampler's own deposit is subtracted from every candidate it is considering.
+        trailing = sample_rows.ndim - source_rows.ndim
+        if trailing < 0:
+            raise ValueError(
+                "sample positions must carry at least one entry per source; got shapes "
+                f"{sample_rows.shape} and {source_rows.shape}"
+            )
+        pad = (1,) * trailing
+        source_rows = source_rows.reshape(source_rows.shape + pad)
+        source_cols = source_cols.reshape(source_cols.shape + pad)
+
+        response = (
+            self._row_operator[sample_rows, source_rows]
+            * self._col_operator[sample_cols, source_cols]
+        )
+        own = emission.reshape(emission.shape + pad)[..., None] * signature.reshape(
+            signature.shape[:1] + pad + signature.shape[1:]
+        )
+        return self.sample(x, y) - response[..., None] * own
 
     def _cell_indices(self, x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Grid (row, col) of the cell containing each world position.
@@ -262,6 +336,32 @@ class Scent:
             self.store.x[mask], self.store.y[mask], emission, signature
         )
 
+    def perceived_at(
+        self, selection: Selection, x: np.ndarray, y: np.ndarray
+    ) -> np.ndarray:
+        """Cue concentration at arbitrary points, minus each sampler's own plume.
+
+        x, y: (n, ...) world units, one leading entry per entity in `selection`. A whole
+        (n_entities, n_options) block of candidates costs one call (#114).
+
+        `perceived` answers where the animal already stands; this answers anywhere, which is what a
+        drive needs in order to *steer* rather than merely to be alarmed (#188).
+        """
+        mask = selection.to_mask()
+        emission, signature = self._broadcast(selection)
+        return self.field.sample_excluding_source(
+            x, y, self.store.x[mask], self.store.y[mask], emission, signature
+        )
+
+    def signature_of(self, selection: Selection) -> np.ndarray:
+        """(len(selection), n_channels) float32: each creature's own expressed cue signature.
+
+        Exposed because §2.5 settles that mate-finding is this field read with the searcher's *own*
+        signature as the vector, and a caller that resolved the signature genes itself would be the
+        second place they are named — which is the disagreement this class exists to prevent.
+        """
+        return self._broadcast(selection)[1]
+
     def _broadcast(self, selection: Selection) -> tuple[np.ndarray, np.ndarray]:
         """Each creature's (emission, signature) from its *expressed* phenotype.
 
@@ -322,29 +422,22 @@ def _box_axis(field: np.ndarray, half_width: int, axis: int) -> np.ndarray:
     return np.take(cumulative, hi, axis=axis) - np.take(cumulative, lo, axis=axis)
 
 
-def _self_response(shape: tuple[int, int], half_width: int) -> np.ndarray:
-    """(height, width) float32: the diagonal of the diffusion operator.
+def _axis_operator(length: int, half_width: int) -> np.ndarray:
+    """(length, length) float32: the 1-D normalized-box operator after `_BLUR_PASSES` passes.
 
-    How much of a unit deposit made in a cell is still readable *in that same cell* after blurring.
-    `sample_excluding_self` subtracts exactly this share so that nothing perceives itself.
+    `operator[i, j]` is what a unit impulse at `j` reads as at `i`. The diagonal is the `i == j`
+    case — how much of its own deposit a creature reads back where it stands — and the off-diagonal
+    entries are that same quantity for any other cell, which is what sampling at a candidate
+    position needs (#188).
 
-    Computed per axis and multiplied, which is exact rather than an approximation: `_box_blur` is a
-    normalized box along each axis independently, so the 2-D operator is the outer product of two
-    1-D operators and its diagonal is the outer product of their diagonals. Each 1-D operator is
-    built by blurring an identity matrix — O(length²) once at construction, against a grid axis in
+    Kept whole rather than reduced to its diagonal, because the 2-D operator is the outer product
+    of two of these: `_box_blur` is a normalized box along each axis independently, so the response
+    between any two cells factorises per axis and is **exact** rather than an approximation. Built
+    by blurring an identity matrix — O(length squared) once at construction, against a grid axis in
     the hundreds.
-    """
-    return np.outer(_axis_diagonal(shape[0], half_width), _axis_diagonal(shape[1], half_width))
-
-
-def _axis_diagonal(length: int, half_width: int) -> np.ndarray:
-    """(length,) float32: the 1-D normalized-box operator's diagonal, after `_BLUR_PASSES` passes.
-
-    Column j of `operator` is the response to a unit impulse at j, so the diagonal is what an
-    impulse reads back at its own position.
     """
     counts = _box_axis(np.ones(length, dtype=np.float32), half_width, -1)
     operator = np.eye(length, dtype=np.float32)
     for _ in range(_BLUR_PASSES):
         operator = _box_axis(operator, half_width, 0) / counts[:, None]
-    return np.diagonal(operator).copy()
+    return operator

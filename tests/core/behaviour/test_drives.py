@@ -114,6 +114,7 @@ class World:
         heights=None,
         forage_range=4.0,
         climb_penalty=0.5,
+        diffusion_range=3.0,
     ):
         self.store = EntityStore(initial_capacity=capacity, n_drives=5, n_genes=len(GENE_NAMES))
         self.columns = ColumnRegistry()
@@ -172,6 +173,12 @@ class World:
         # Fatigue reads exertion as well as health (#107). These tests exercise the health term and
         # the drive contest, so nothing below moves; test_exertion.py covers the other term.
         self.exertion = Exertion(self.store, self.columns, ExertionConfig(recovery_rate=0.5))
+        self.cue_field = CueField(
+            self.terrain, CHANNELS, CueFieldConfig(diffusion_range=diffusion_range)
+        )
+        self.scent = Scent(
+            self.store, self.genetics, self.cue_field, self.genes, SCENT_GENES
+        )
         self.species_id = self.species.register(GENE_NAMES)
 
     def spawn(self, n, **columns):
@@ -538,10 +545,15 @@ class TestLust:
         selection = world.spawn(1, energy=np.array([100.0], dtype=np.float32))
         world.store.age[selection.to_indices()] = 5
         config = LustConfig(
-            weight=1.0, maturity_age=100, breeding_energy=20.0, abundant_energy=70.0
+            weight=1.0,
+            maturity_age=100,
+            scent_acuity_gene="scent_acuity",
+            detection_threshold=1e-4,
+            breeding_energy=20.0,
+            abundant_energy=70.0,
         )
 
-        assert Lust(world.store, world.ecology, config).urgency(selection) == pytest.approx([0.0])
+        assert Lust(world.store, world.ecology, world.genetics, world.scent, world.genes, config).urgency(selection) == pytest.approx([0.0])
 
     def test_a_mature_animal_below_breeding_energy_wants_no_mate(self):
         """Gestation charges upkeep like any other trait (§2.5); wanting what you cannot afford
@@ -551,20 +563,30 @@ class TestLust:
         selection = world.spawn(1, energy=np.array([10.0], dtype=np.float32))
         world.store.age[selection.to_indices()] = 200
         config = LustConfig(
-            weight=1.0, maturity_age=100, breeding_energy=20.0, abundant_energy=70.0
+            weight=1.0,
+            maturity_age=100,
+            scent_acuity_gene="scent_acuity",
+            detection_threshold=1e-4,
+            breeding_energy=20.0,
+            abundant_energy=70.0,
         )
 
-        assert Lust(world.store, world.ecology, config).urgency(selection) == pytest.approx([0.0])
+        assert Lust(world.store, world.ecology, world.genetics, world.scent, world.genes, config).urgency(selection) == pytest.approx([0.0])
 
     def test_lust_rises_with_energy_above_the_breeding_floor(self):
         world = World()
         selection = world.spawn(3, energy=np.array([20.0, 45.0, 90.0], dtype=np.float32))
         world.store.age[selection.to_indices()] = 200
         config = LustConfig(
-            weight=1.0, maturity_age=100, breeding_energy=20.0, abundant_energy=70.0
+            weight=1.0,
+            maturity_age=100,
+            scent_acuity_gene="scent_acuity",
+            detection_threshold=1e-4,
+            breeding_energy=20.0,
+            abundant_energy=70.0,
         )
 
-        scores = Lust(world.store, world.ecology, config).urgency(selection)
+        scores = Lust(world.store, world.ecology, world.genetics, world.scent, world.genes, config).urgency(selection)
 
         # At the floor, halfway to abundance, and clamped above it.
         assert scores == pytest.approx([0.0, 0.5, 1.0])
@@ -575,31 +597,117 @@ class TestLust:
         selection = world.spawn(2, energy=np.array([70.0, 70.0], dtype=np.float32))
         world.store.age[selection.to_indices()] = [99, 100]
         config = LustConfig(
-            weight=1.0, maturity_age=100, breeding_energy=20.0, abundant_energy=70.0
+            weight=1.0,
+            maturity_age=100,
+            scent_acuity_gene="scent_acuity",
+            detection_threshold=1e-4,
+            breeding_energy=20.0,
+            abundant_energy=70.0,
         )
 
-        assert Lust(world.store, world.ecology, config).urgency(selection) == pytest.approx(
+        assert Lust(world.store, world.ecology, world.genetics, world.scent, world.genes, config).urgency(selection) == pytest.approx(
             [0.0, 1.0]
         )
 
-    def test_lust_rates_every_option_alike_because_nothing_can_find_a_mate(self):
-        """§2.5 settles that finding a mate is the cue field read with the searcher's own signature
-        as the vector, but there is no mating mechanic to act on it (#20). Flat until then — see
-        `test_thirst_rates_every_option_alike_because_nothing_can_find_water` for why that is the
-        correct degenerate case rather than a stub (§8.2).
+    def lust(self, world, **overrides):
+        params = dict(
+            weight=1.0,
+            maturity_age=100,
+            scent_acuity_gene="scent_acuity",
+            detection_threshold=1e-4,
+            breeding_energy=20.0,
+            abundant_energy=70.0,
+        )
+        params.update(overrides)
+        return Lust(
+            world.store, world.ecology, world.genetics, world.scent, world.genes, LustConfig(**params)
+        )
+
+    def ready(self, world, n, **columns):
+        selection = world.spawn(n, energy=np.full(n, 70.0, dtype=np.float32), **columns)
+        world.store.age[selection.to_indices()] = 200
+        return selection
+
+    def test_an_animal_alone_in_the_world_prefers_nowhere(self):
+        """All zeros rather than a flat score, so lust drops out of the utility sum entirely and
+        the null option can win — the same reason `Hunger.appeal` normalises. An animal that senses
+        nobody rests instead of marching whichever way the numerical noise leaned.
         """
         world = World()
-        selection = world.spawn(1, energy=np.float32([70.0]))
-        world.store.age[selection.to_indices()] = 200
-        lust = Lust(
-            world.store,
-            world.ecology,
-            LustConfig(weight=1.0, maturity_age=100, breeding_energy=20.0, abundant_energy=70.0),
-        )
+        selection = self.ready(world, 1, x=np.float32([4.0]), y=np.float32([4.0]))
+        world.genetics.set_genes(selection, gene_rows({"scent_emission": 1.0, "signature_0": 1.0,
+                                                       "scent_acuity": 1.0}))
+        world.scent.rebuild(selection)
         x, y = options_at(world, selection)
 
-        assert lust.appeal(selection, x, y) == pytest.approx(np.ones((1, 3)))
-        assert lust.urgency(selection) == pytest.approx([1.0])
+        assert self.lust(world).appeal(selection, x, y) == pytest.approx(np.zeros((1, 3)))
+
+    def test_it_does_not_smell_itself_and_stay_put(self):
+        """Lust's vector is the animal's *own* signature (§2.5), so its own plume is the strongest
+        match to it anywhere in the world. Without exclusion at candidates this would be a rule
+        that says never move (#188).
+        """
+        world = World()
+        selection = self.ready(world, 1, x=np.float32([4.0]), y=np.float32([4.0]))
+        world.genetics.set_genes(selection, gene_rows({"scent_emission": 5.0, "signature_0": 1.0,
+                                                       "scent_acuity": 1.0}))
+        world.scent.rebuild(selection)
+        x, y = options_at(world, selection)
+
+        # Its own cell is among the candidates and must not be the winner — nothing is.
+        assert self.lust(world).appeal(selection, x, y).max() == pytest.approx(0.0)
+
+    def test_it_is_drawn_toward_something_that_smells_like_it(self):
+        world = World(grid=17)
+        pair = self.ready(
+            world, 2, x=np.float32([4.0, 10.0]), y=np.float32([8.0, 8.0])
+        )
+        world.genetics.set_genes(
+            pair,
+            gene_rows(
+                {"scent_emission": 4.0, "signature_0": 1.0, "scent_acuity": 1.0},
+                {"scent_emission": 4.0, "signature_0": 1.0, "scent_acuity": 1.0},
+            ),
+        )
+        world.scent.rebuild(pair)
+        seeker = Selection.from_indices(pair.to_indices()[:1], world.store.capacity)
+
+        # Two candidates for the first animal: one step toward its partner, one step away.
+        toward = np.float32([[5.0, 3.0]])
+        same_y = np.float32([[8.0, 8.0]])
+        appeal = self.lust(world).appeal(seeker, toward, same_y)
+
+        assert appeal[0, 0] > appeal[0, 1]
+
+    def test_a_stranger_smelling_of_something_else_is_no_draw(self):
+        """The vector is the searcher's own signature, so attraction tracks similarity — which is
+        what makes it follow speciation for free, with nothing told that a split happened."""
+        world = World(grid=17)
+        pair = self.ready(
+            world, 2, x=np.float32([4.0, 10.0]), y=np.float32([8.0, 8.0])
+        )
+        world.genetics.set_genes(
+            pair,
+            gene_rows(
+                {"scent_emission": 4.0, "signature_0": 1.0, "scent_acuity": 1.0},
+                {"scent_emission": 4.0, "signature_1": 1.0, "scent_acuity": 1.0},
+            ),
+        )
+        world.scent.rebuild(pair)
+        seeker = Selection.from_indices(pair.to_indices()[:1], world.store.capacity)
+
+        appeal = self.lust(world).appeal(
+            seeker, np.float32([[5.0, 3.0]]), np.float32([[8.0, 8.0]])
+        )
+
+        assert appeal == pytest.approx(np.zeros((1, 2)))
+
+    def test_urgency_is_unchanged_by_any_of_this(self):
+        """Appeal says which way; urgency says how badly. They stay separate."""
+        world = World()
+        selection = self.ready(world, 1)
+
+        assert self.lust(world).urgency(selection) == pytest.approx([1.0])
 
 
 class TestFatigue:
@@ -661,7 +769,15 @@ def register_four(world):
         Lust(
             world.store,
             world.ecology,
-            LustConfig(weight=1.0, maturity_age=100, breeding_energy=20.0, abundant_energy=70.0),
+            world.genetics,
+            world.scent,
+            world.genes,
+            LustConfig(weight=1.0,
+            maturity_age=100,
+            scent_acuity_gene="scent_acuity",
+            detection_threshold=1e-4,
+            breeding_energy=20.0,
+            abundant_energy=70.0,),
         )
     )
     world.behaviour.register(
@@ -751,15 +867,6 @@ class FearWorld(World):
     *signature* sits in channel 0, and a frightened creature is one whose *aversion* points there.
     Both are ordinary genes, which is the whole point (CLAUDE.md §2.5).
     """
-
-    def __init__(self, diffusion_range=3.0, **kwargs):
-        super().__init__(**kwargs)
-        self.cue_field = CueField(
-            self.terrain, CHANNELS, CueFieldConfig(diffusion_range=diffusion_range)
-        )
-        self.scent = Scent(
-            self.store, self.genetics, self.cue_field, self.genes, SCENT_GENES
-        )
 
     def fear(self, config=FEAR_CONFIG):
         return Fear(self.store, self.genetics, self.scent, self.genes, config)
@@ -1174,8 +1281,16 @@ class TestAllFiveDrivesCompeting:
             Lust(
                 world.store,
                 world.ecology,
+                world.genetics,
+                world.scent,
+                world.genes,
                 LustConfig(
-                    weight=1.0, maturity_age=100, breeding_energy=20.0, abundant_energy=70.0
+                    weight=1.0,
+            maturity_age=100,
+            scent_acuity_gene="scent_acuity",
+            detection_threshold=1e-4,
+            breeding_energy=20.0,
+            abundant_energy=70.0,
                 ),
             )
         )
