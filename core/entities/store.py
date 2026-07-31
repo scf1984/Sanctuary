@@ -70,10 +70,12 @@ class EntityStore:
       species_id: int32, opaque id into the species registry owned elsewhere; -1 means unset.
       choice_moving: ``(capacity,)`` bool: whether the option chosen last tick proposed a
         displacement at all. Separate from the heading because a resting animal *keeps* its
-        heading — change-aversion needs something to continue — so the heading alone cannot say
-        whether it moved (#114).
+        heading — the commitment bonus needs something to continue — so the heading alone cannot
+        say whether it moved (#114). It is also what says *which* incumbent that bonus defends,
+        since standing still is one too and has no heading of its own (#100).
       choice_heading: ``(capacity,)`` float32, radians in [0, 2pi): the direction each entity
-        chose to move last tick, which change-aversion biases the next choice toward (#114).
+        chose to move last tick, which the commitment bonus biases the next choice toward
+        (#114, #100).
         Stored as a heading rather than an option index because an index would silently mean a
         different direction if the candidate count were retuned.
       drive_scores: ``(capacity, n_drives)`` float32, unit-free utility scores. Which drives

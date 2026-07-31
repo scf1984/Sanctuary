@@ -270,7 +270,7 @@ by" hunger and no animal stands still merely because the drive that won has no m
 
   | mode | used by | why |
   |---|---|---|
-  | magnitude (`abs`) | size, speed, acuity, camouflage, insulation, mutability | a quantity cannot be negative |
+  | magnitude (`abs`) | size, speed, acuity, camouflage, insulation, mutability, commitment (#100) | a quantity cannot be negative |
   | raw, signed | cue signature, aversion | sign carries information and doubles the discriminating power of cue space |
   | exponential (`exp`) | choice temperature (#114) | a **scale**, which must stay strictly positive and multiply rather than add |
 
@@ -473,15 +473,80 @@ by" hunger and no animal stands still merely because the drive that won has no m
 
   **The chosen heading is stored, not returned.** Behavioural momentum needs a choice that persists
   across ticks, so `choice_heading` and `choice_moving` are columns `Behaviour` owns. Two columns
-  rather than one because a resting animal *keeps* its heading — change-aversion needs something to
-  continue — so the heading alone cannot also say whether it moved. Neither is inherited and both
-  are reset on row reuse: a newborn has made no choices. Storing a **heading** rather than an option
-  index is what lets change-aversion reward how *well* a direction is continued (`cos` of the turn)
-  rather than testing an index for equality, and it survives a change to `N`, which an index would
-  not — it would silently mean a different direction. Change-aversion is a per-world constant today
-  and becomes the `commitment` gene at #100, which should follow immediately: the constant is that
-  gene's degenerate case rather than a different mechanism, so nothing here changes shape when it
-  lands.
+  rather than one because a resting animal *keeps* its heading — the commitment bonus below needs
+  something to continue — so the heading alone cannot also say whether it moved. Neither is
+  inherited and both are reset on row reuse: a newborn has made no choices. Storing a **heading**
+  rather than an option index is what lets the bonus reward how *well* a direction is continued
+  (`cos` of the turn) rather than testing an index for equality, and it survives a change to `N`,
+  which an index would not — it would silently mean a different direction.
+
+- **What is held across ticks is a bearing, and how hard it is held is a gene** — decided in #100,
+  which owned it, over the term #114 had already built as a per-world constant. An option earns a
+  bonus in proportion to how well it continues what the animal was already doing, and that bonus is
+  the expressed `commitment` gene:
+
+  ```
+  utility(option) += commitment × continuation(option, last tick's choice)
+  ```
+
+  where `continuation` is `cos` of the turn for a travelling option and 1 for staying put when the
+  animal was already stopped — see "Standing still is an incumbent too" below, which is not a
+  special case but the same rule applied to the one option that has no heading.
+
+  **"Target" was the wrong noun and is gone.** #100 was written when a drive picked a coordinate and
+  held it; the design has since moved to gradients and headings (#93, #114), so what persists is a
+  *bearing*. That makes commitment more important rather than less — pure gradient-following dithers
+  and oscillates in a way target-seeking does not, and momentum is the standard fix.
+
+  **The bonus is hysteresis, not a weight, and the difference is which thing it attaches to.**
+  Because it favours the *incumbent* bearing rather than any particular drive, holding a heading
+  requires a challenger to stay under `+commitment` while turning requires one to exceed
+  `−commitment` — two thresholds separated by `2 × commitment`, which is exactly hysteresis with the
+  band set by the gene. A bonus attached to a fixed drive would not be: that is only a weight
+  change. So no second mechanism, no override path, and no explicit "give up" rule is needed; the
+  earlier proposal to add one was withdrawn on exactly this ground.
+
+  **A gene rather than a constant, because both failure modes are lethal and neither is the
+  designer's to place.** A lineage that dithers re-decides every tick and never gets anywhere; a
+  lineage that cannot be interrupted walks into whatever it stopped noticing. Selection is what
+  finds the band between them, and it finds a *different* one per environment — which is the whole
+  argument of "author the physics, not the outcomes". It costs no upkeep for the same reason
+  `mutability` does not: being wrong at either extreme is its own price.
+
+  **Standing still is an incumbent too, and it needs its own term.** `cos` is the dot product of two
+  unit headings and rest is the zero vector, so the travelling term hands the null option nothing —
+  *by construction, not by decision*. Left there, an animal could never hold a rest across ticks:
+  it would settle, shed one tick of exertion, and be back on its feet before recovery amounted to
+  anything, so resting would be a duty cycle no lineage could evolve away from. The travelling block
+  is therefore shifted down by `commitment` exactly when rest was the last choice:
+
+  ```
+  travelling(option) += commitment × (cos(option − heading) − rested)
+  staying            += commitment × rested
+  ```
+
+  so **getting up costs precisely what stopping costs**, and the two states sit in one symmetric
+  band of the same width as the one between opposite bearings. A resting animal keeps its heading,
+  so the travelling term still ranks the ways it *could* resume — it prefers the way it was facing,
+  one band below staying put.
+
+  **What stops an animal dozing through a predator is selection, not the encoding.** This is where
+  #100's second comment was going and it is worth stating plainly, because the opposite was tried
+  first: leaving rest un-holdable does close the failure mode, and it closes it by *authoring the
+  outcome* — deleting the trait rather than pricing it. A lineage whose commitment is high enough to
+  sleep through an approaching threat is eaten; one whose commitment is too low never recovers and
+  is run down. The band is therefore expected to evolve **small but non-zero**, and where it settles
+  is a reading of how dangerous a given world is — which is a result worth having rather than a
+  constant worth choosing. Fear needing to clear the band is the mechanism, not a bug in it.
+
+  **It is read as a magnitude**, so a stored value drifting below zero is a *strongly* committed
+  animal rather than one paid to reverse. A signed bonus would reward the option pointing backwards,
+  which is a spin rather than a preference, and the world is refused at construction if the gene's
+  mode could ever express one (§8.7) — asked as `ExpressionMode.always_non_negative` rather than as
+  a list of modes, which is #136's rule reaching its second consumer. Magnitude and not the
+  exponential its neighbour `choice_temperature` uses, because zero is a *reachable and meaningful*
+  value here — an animal that decides afresh every tick — where a zero temperature is a division by
+  zero. That is the distinction the mode table draws, applied.
 
   The cost is `N × n_drives × n_entities` field reads per tick, and §8.5 required it measured rather
   than asserted: [`docs/spikes/option-sampling-cost.md`](docs/spikes/option-sampling-cost.md) finds
@@ -633,7 +698,7 @@ by" hunger and no animal stands still merely because the drive that won has no m
   | `sex_allocation`, `selfing_rate` | reproduction, continuously (#20) | #20's to set |
   | `maturity_age` | ticks before an animal seeks a mate at all | 0 — late maturity is already paid for in generations forgone |
   | `senescence_resistance` | damps how fast performance traits degrade with age | **positive**, per the insulation rule |
-  | `commitment` | how doggedly a drive holds a target across ticks (#100) | 0 — selection on what the persistence achieves |
+  | `commitment` | how doggedly last tick's *bearing* is held — half the width of the band a rival drive must clear (#100) | 0 — dithering and tunnel vision are each their own price |
   | `choice_temperature` | how much an animal explores rather than taking its best option (#114) | 0 — exploring badly is its own price, exactly as `mutability` above |
   | `mutability` | the floor under an offspring's inherited drift (#104) | 0 — an unfit brood is its own price; see the inheritance rule above |
 

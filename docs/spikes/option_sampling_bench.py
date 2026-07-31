@@ -84,6 +84,7 @@ GENES = (
     _spec("insulation", cost=0.01),
     _spec("mutability"),
     _spec("choice_temperature", mode=ExpressionMode.EXPONENTIAL),
+    _spec("commitment"),
 )
 GENE_NAMES = tuple(gene.name for gene in GENES)
 
@@ -137,7 +138,7 @@ class Bench:
         self.behaviour = Behaviour(
             self.store, columns, self.genetics, genes, terrain,
             BehaviourConfig(
-                n_candidates=n_candidates, look_ahead=4.0, change_aversion=0.15,
+                n_candidates=n_candidates, look_ahead=4.0, commitment_gene="commitment",
                 choice_temperature_gene="choice_temperature",
             ),
         )

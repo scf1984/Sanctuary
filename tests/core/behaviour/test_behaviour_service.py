@@ -12,7 +12,7 @@ from core.world.terrain import Terrain
 
 from tests.support.genes import gene_registry
 
-GENE_NAMES = ("mutability", "choice_temperature")
+GENE_NAMES = ("mutability", "choice_temperature", "commitment")
 GENE_REGISTRY = gene_registry(GENE_NAMES)
 GENETICS_CONFIG = GeneticsConfig(mutability_gene="mutability", drift_margin=2.0)
 
@@ -36,9 +36,7 @@ class World:
     and terrain, for the bounds candidate positions are clipped into.
     """
 
-    def __init__(
-        self, capacity=8, n_drives=4, grid=9, change_aversion=0.0, n_candidates=N_CANDIDATES
-    ):
+    def __init__(self, capacity=8, n_drives=4, grid=9, n_candidates=N_CANDIDATES):
         self.store = EntityStore(
             initial_capacity=capacity, n_drives=n_drives, n_genes=len(GENE_NAMES)
         )
@@ -59,12 +57,12 @@ class World:
             BehaviourConfig(
                 n_candidates=n_candidates,
                 look_ahead=LOOK_AHEAD,
-                change_aversion=change_aversion,
+                commitment_gene="commitment",
                 choice_temperature_gene="choice_temperature",
             ),
         )
 
-    def spawn(self, n, temperature=DECISIVE, **columns):
+    def spawn(self, n, temperature=DECISIVE, commitment=0.0, **columns):
         """Allocate `n` entities at the world centre unless placed, at `temperature`."""
         columns.setdefault("species_id", np.full(n, self.species_id, dtype=np.int32))
         columns.setdefault("x", np.full(n, 4.0, dtype=np.float32))
@@ -74,8 +72,23 @@ class World:
         selection = Selection.from_indices(np.array(rows, dtype=np.int64), self.store.capacity)
         genes = np.zeros((n, len(GENE_NAMES)), dtype=np.float32)
         genes[:, GENE_NAMES.index("choice_temperature")] = temperature
+        genes[:, GENE_NAMES.index("commitment")] = commitment
         self.genetics.set_genes(selection, genes)
         return selection
+
+    def travelling(self, selection, heading):
+        """Put `selection` mid-journey on `heading`, as a tick that ended in a step leaves it.
+
+        Both columns, never just the heading: `choice_moving` is what says which incumbent the
+        commitment bonus is defending, and a freshly spawned row reads as *resting* (#100).
+        """
+        self.store.choice_heading[selection.to_indices()] = heading
+        self.store.choice_moving[selection.to_indices()] = True
+
+    def resting(self, selection, heading):
+        """Put `selection` at a standstill, still facing `heading`."""
+        self.store.choice_heading[selection.to_indices()] = heading
+        self.store.choice_moving[selection.to_indices()] = False
 
 
 class ConstantDrive:
@@ -106,6 +119,11 @@ def wanting(option, urgency=1.0):
     appeal = np.zeros(N_CANDIDATES + 1, dtype=np.float32)
     appeal[option] = 1.0
     return ConstantDrive(f"wants_{option}", urgency=urgency, appeal=appeal)
+
+
+def uncommitted(selection):
+    """A commitment column of zeros — the degenerate case, where every tick decides afresh."""
+    return np.zeros(len(selection), dtype=np.float64)
 
 
 def per_row(store, **row_values):
@@ -298,7 +316,9 @@ class TestUtilities:
         headings = world.behaviour.candidate_headings(selection, np.random.default_rng(0))
         x, y = world.behaviour.candidate_positions(selection, headings)
 
-        total, contributions = world.behaviour.utilities(selection, headings, x, y)
+        total, contributions = world.behaviour.utilities(
+            selection, headings, x, y, uncommitted(selection)
+        )
 
         expected = np.zeros(N_CANDIDATES + 1)
         expected[0] = 0.5
@@ -324,7 +344,9 @@ class TestUtilities:
         headings = world.behaviour.candidate_headings(selection, np.random.default_rng(0))
         x, y = world.behaviour.candidate_positions(selection, headings)
 
-        total, _ = world.behaviour.utilities(selection, headings, x, y)
+        total, _ = world.behaviour.utilities(
+            selection, headings, x, y, uncommitted(selection)
+        )
 
         assert total[0, 0] == pytest.approx(1.0)
         assert total[1, 0] == pytest.approx(0.1)
@@ -421,54 +443,245 @@ class TestChoosing:
         assert world.behaviour.scores(bystander) == pytest.approx(np.zeros((1, 4)))
 
 
-class TestChangeAversion:
+def turn_from(world, selection, previous):
+    """The absolute angle between each entity's stored heading and `previous`, wrapped to [0, pi]."""
+    delta = world.store.choice_heading[selection.to_indices()] - previous
+    return np.abs(np.arctan2(np.sin(delta), np.cos(delta)))
+
+
+class TestCommitment:
+    """The bonus for continuing last tick's bearing, and the fact that it is a gene (#100).
+
+    #114 built the term with a per-world constant; this is what makes its width a heritable trait,
+    so a dithering lineage and a lineage that cannot be interrupted are both selected against
+    rather than one coefficient being tuned to sit between them.
+    """
+
     def test_an_option_continuing_last_tick_is_worth_more_than_one_reversing_it(self):
-        """Rewarded by *how well* the heading is continued rather than by an equality test: `cos`
+        """Rewarded by *how well* the bearing is continued rather than by an equality test: `cos`
         of the turn falls off smoothly, so a slight correction keeps almost all of the bonus and a
         reversal loses it. An option-index comparison could not express that, which is why the
         column stores a heading (#114).
         """
         # Three candidates rather than eight, so the turn each one represents can be named exactly:
         # straight on, a right angle, and a reversal.
-        world = World(change_aversion=0.5, n_candidates=3)
+        world = World(n_candidates=3)
         selection = world.spawn(1)
-        world.store.choice_heading[selection.to_indices()] = 0.0
+        world.travelling(selection, 0.0)
         headings = np.array([[0.0, np.pi / 2, np.pi]])
         x, y = world.behaviour.candidate_positions(selection, headings)
 
-        total, _ = world.behaviour.utilities(selection, headings, x, y)
+        total, _ = world.behaviour.utilities(selection, headings, x, y, np.array([0.5]))
 
         assert total[0, 0] == pytest.approx(0.5)  # straight on: the whole bonus
         assert total[0, 1] == pytest.approx(0.0, abs=1e-9)  # a right-angle turn: none of it
         assert total[0, 2] == pytest.approx(-0.5)  # a reversal: the bonus paid back
-        assert total[0, 3] == pytest.approx(0.0)  # the null option continues no direction
+        assert total[0, 3] == pytest.approx(0.0)  # stopping: rest is not the incumbent here
 
-    def test_change_aversion_holds_an_animal_on_a_heading_a_weak_drive_would_break(self):
-        world = World(change_aversion=1.0)
-        selection = world.spawn(1)
-        world.behaviour.register(wanting(3))
-        world.behaviour.choose(selection, np.random.default_rng(7))
-        held = world.store.choice_heading[selection.to_indices()[0]]
+    def test_each_animal_holds_its_bearing_by_its_own_commitment(self):
+        """The whole of #100: the band is per-entity, so two animals in one vectorized pass weigh
+        the same turn differently. A constant could not express a dogged animal beside a flighty
+        one, which is what selection needs something to act on.
+        """
+        world = World(n_candidates=3)
+        selection = world.spawn(2)
+        world.travelling(selection, 0.0)
+        headings = np.zeros((2, 3))
+        x, y = world.behaviour.candidate_positions(selection, headings)
 
-        # A second tick in which nothing at all is preferred: only the bonus is left to decide.
-        world.behaviour._drives.clear()
+        total, _ = world.behaviour.utilities(
+            selection, headings, x, y, np.array([0.9, 0.1])
+        )
+
+        assert total[0, 0] == pytest.approx(0.9)
+        assert total[1, 0] == pytest.approx(0.1)
+
+    def test_a_challenger_must_clear_the_whole_band_to_break_a_held_bearing(self):
+        """Commitment is **hysteresis, not a weight**, because the bonus is applied to the
+        *incumbent* bearing rather than to a fixed drive. Holding a heading needs the challenger to
+        stay under `+c`, and taking it needs the challenger to exceed `-c`, so the two thresholds
+        are separated by `2c` and `commitment` is what sets the band width (#100).
+
+        Asserted on a perpendicular challenger, where the incumbent keeps the whole bonus and the
+        challenger gets none of it, so the crossing point is exactly the drive's own urgency.
+        """
+        band = 0.5
+        sideways = np.array([0.0, 1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+        headings = np.array([[0.0, np.pi / 2, np.pi, 3.0 * np.pi / 2]])
+
+        for urgency, holds in ((0.4, True), (0.6, False)):
+            world = World(n_candidates=4)
+            selection = world.spawn(1)
+            world.travelling(selection, 0.0)
+            world.behaviour.register(ConstantDrive("sideways", urgency=urgency, appeal=sideways))
+            x, y = world.behaviour.candidate_positions(selection, headings)
+
+            total, _ = world.behaviour.utilities(selection, headings, x, y, np.array([band]))
+
+            assert bool(total[0, 0] > total[0, 1]) is holds, (
+                f"a challenger scoring {urgency} against a band of {band} should "
+                f"{'not ' if holds else ''}have taken the turn"
+            )
+
+    def test_choose_reads_the_bonus_from_the_gene(self):
+        """The wiring, asserted as a distribution rather than as a draw (§2.2). Nothing is
+        preferred, so only the stored bearing is left to decide: a dogged cohort keeps to the
+        candidates flanking the way it was already going, while an uncommitted one draws uniformly
+        and scatters over the circle.
+
+        Not "every animal takes the nearest candidate" — the choice is *sampled*, so an animal
+        whose two nearest candidates are nearly equidistant sometimes takes the further one. That
+        is the temperature doing its job, not the bonus failing to (#114).
+        """
+        world = World(capacity=512)
+        previous = 1.0
+        dogged = world.spawn(200, commitment=5.0)
+        flighty = world.spawn(200, commitment=0.0)
+        world.travelling(dogged, previous)
+        world.travelling(flighty, previous)
         world.behaviour.register(ConstantDrive("nothing", urgency=0.0))
-        world.behaviour.choose(selection, np.random.default_rng(7))
 
-        turn = abs(np.arctan2(
-            np.sin(world.store.choice_heading[selection.to_indices()[0]] - held),
-            np.cos(world.store.choice_heading[selection.to_indices()[0]] - held),
-        ))
-        assert turn < SPACING
+        world.behaviour.choose(dogged, np.random.default_rng(3))
+        world.behaviour.choose(flighty, np.random.default_rng(3))
 
-    def test_a_negative_change_aversion_is_rejected(self):
-        """It would reward reversing, which is a spin rather than a preference."""
-        with pytest.raises(ValueError):
-            BehaviourConfig(
-                n_candidates=8,
-                look_ahead=1.0,
-                change_aversion=-0.1,
-                choice_temperature_gene="choice_temperature",
+        held = turn_from(world, dogged, previous)
+        scattered = turn_from(world, flighty, previous)
+        # One spacing is the furthest the *second*-nearest candidate can ever sit, so this says the
+        # cohort never chose past its bearing's immediate neighbours.
+        assert (held <= SPACING).all()
+        assert held.mean() < SPACING / 2
+        # A uniform draw over the circle averages a quarter-turn; anything near it is no preference.
+        assert scattered.mean() > 1.0
+
+    def test_a_commitment_gene_that_drifted_negative_is_dogged_in_the_same_way(self):
+        """Read as a magnitude, so storage below zero is a strongly committed animal rather than one
+        rewarded for reversing. Genes drift freely across zero (§2.5) and the expression mode is
+        what keeps the bonus a bonus — nothing clamps the column.
+
+        Asserted as equality against the mirrored cohort rather than statistically, because `abs`
+        makes the two *the same animal*: same seed, same jitter, same draw, same heading.
+        """
+        world = World(capacity=512)
+        previous = 1.0
+        positive = world.spawn(200, commitment=5.0)
+        negative = world.spawn(200, commitment=-5.0)
+        world.travelling(positive, previous)
+        world.travelling(negative, previous)
+        world.behaviour.register(ConstantDrive("nothing", urgency=0.0))
+
+        world.behaviour.choose(positive, np.random.default_rng(3))
+        world.behaviour.choose(negative, np.random.default_rng(3))
+
+        assert turn_from(world, negative, previous) == pytest.approx(
+            turn_from(world, positive, previous)
+        )
+
+    def test_standing_still_is_an_incumbent_too(self):
+        """Rest has to be holdable, or an animal can never stay down long enough to shed real
+        exertion and recovery is a duty cycle nothing can evolve away from (#100).
+
+        `cos` is the dot product of two unit headings and rest is the zero vector, so the
+        travelling term hands the null option nothing *by construction* — which is why holding a
+        rest needs its own term rather than falling out.
+        """
+        world = World(n_candidates=3)
+        selection = world.spawn(1)
+        world.resting(selection, 0.0)
+        headings = np.array([[0.0, np.pi / 2, np.pi]])
+        x, y = world.behaviour.candidate_positions(selection, headings)
+
+        total, _ = world.behaviour.utilities(selection, headings, x, y, np.array([0.5]))
+
+        assert total[0, 3] == pytest.approx(0.5)  # staying down: the whole bonus
+        assert total[0, 0] == pytest.approx(0.0, abs=1e-9)  # getting up the way it faced
+        assert total[0, 1] == pytest.approx(-0.5)  # getting up sideways
+        assert total[0, 2] == pytest.approx(-1.0)  # getting up and reversing
+
+    def test_getting_up_costs_exactly_what_stopping_costs(self):
+        """The two states sit in one symmetric band, which is what makes this hysteresis between
+        moving and resting rather than a thumb on the scale for one of them. Selection then sets
+        the width from both sides: a lineage that will not settle never recovers, and one that
+        will not rise is eaten where it lies.
+        """
+        world = World(n_candidates=3)
+        headings = np.array([[0.0, np.pi / 2, np.pi]])
+        band = 0.5
+
+        mover = world.spawn(1)
+        world.travelling(mover, 0.0)
+        x, y = world.behaviour.candidate_positions(mover, headings)
+        moving, _ = world.behaviour.utilities(mover, headings, x, y, np.array([band]))
+
+        stayer = world.spawn(1)
+        world.resting(stayer, 0.0)
+        x, y = world.behaviour.candidate_positions(stayer, headings)
+        rested, _ = world.behaviour.utilities(stayer, headings, x, y, np.array([band]))
+
+        # What a mover gives up by stopping, and what a stayer gives up by setting off again.
+        assert moving[0, 0] - moving[0, 3] == pytest.approx(band)
+        assert rested[0, 3] - rested[0, 0] == pytest.approx(band)
+
+    def test_a_resting_animal_still_prefers_the_way_it_was_facing(self):
+        """The heading is kept while resting (`choose`), so the travelling term still ranks the
+        ways it could resume. Without that a rested animal would pick its direction afresh from
+        nothing, which is the property #114 kept the column for.
+        """
+        world = World(n_candidates=3)
+        selection = world.spawn(1)
+        world.resting(selection, 0.0)
+        headings = np.array([[0.0, np.pi / 2, np.pi]])
+        x, y = world.behaviour.candidate_positions(selection, headings)
+
+        total, _ = world.behaviour.utilities(selection, headings, x, y, np.array([0.5]))
+
+        assert total[0, 0] > total[0, 1] > total[0, 2]
+
+    def test_commitment_keeps_a_tired_cohort_down_across_ticks(self):
+        """The behaviour the term exists for, at `choose` level and over several ticks: a dogged
+        cohort that has settled stays settled against a standing appetite, while an uncommitted one
+        gets straight back up. This is what lets exertion actually decay (#107) instead of being
+        shed one tick and re-spent the next.
+        """
+        world = World(capacity=512)
+        dogged = world.spawn(200, commitment=5.0)
+        flighty = world.spawn(200, commitment=0.0)
+        world.resting(dogged, 1.0)
+        world.resting(flighty, 1.0)
+        # A steady pull toward one heading, well under the dogged cohort's band and well over the
+        # flighty one's — which is zero.
+        world.behaviour.register(wanting(3, urgency=1.0))
+
+        for tick in range(3):
+            world.behaviour.choose(dogged, np.random.default_rng(tick))
+            world.behaviour.choose(flighty, np.random.default_rng(tick))
+
+        assert not world.store.choice_moving[dogged.to_indices()].any()
+        assert world.store.choice_moving[flighty.to_indices()].all()
+
+    def test_a_commitment_gene_that_could_express_negative_is_rejected(self):
+        """A negative bonus rewards reversing, which is a spin rather than a preference — and the
+        mode is what forbids it, so the world is refused at construction rather than checked per
+        tick (§8.7). This is #136's rule about costs applied to a second consumer of the same
+        property: what matters is that the phenotype cannot go below zero, not which mode it is.
+        """
+        registry = gene_registry(("mutability", "choice_temperature", "signature_0"))
+        store = EntityStore(initial_capacity=1, n_drives=1, n_genes=len(registry))
+        columns = ColumnRegistry()
+        species = SpeciesRegistry(registry.vocabulary)
+
+        with pytest.raises(ValueError, match="signature_0"):
+            Behaviour(
+                store,
+                columns,
+                Genetics(store, columns, species, registry, GENETICS_CONFIG),
+                registry,
+                Terrain(np.zeros((9, 9), dtype=np.float32), cell_size=1.0),
+                BehaviourConfig(
+                    n_candidates=8,
+                    look_ahead=1.0,
+                    commitment_gene="signature_0",
+                    choice_temperature_gene="choice_temperature",
+                ),
             )
 
 

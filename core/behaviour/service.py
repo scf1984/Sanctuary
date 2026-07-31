@@ -1,4 +1,4 @@
-"""Behaviour domain service: drives scoring *options*, not entities (issues #22, #114).
+"""Behaviour domain service: drives scoring *options*, not entities (issues #22, #114, #100).
 
 #22 shipped drives that scored each animal — "how hungry is this one" — and resolved by argmax into
 a single winning drive. That had a structural flaw: only a drive with a mechanic behind it could do
@@ -24,6 +24,19 @@ outscored hunger" is recoverable from the store. The replacement is a per-drive 
 drive to report, and their two consumers never needed one: #19's feeding is "an animal standing on
 biomass eats" and #20's mating is "two compatible animals in one place may mate". Drives choose
 where to go; interactions fall out of where you are.
+
+**What is held across ticks is the last choice, and how hard it is held is a gene** (#100). An
+option earns a bonus in proportion to how well it continues what the animal was already doing —
+`cos` of the turn for a bearing, and a flat bonus for staying put if it was already stopped — and
+that bonus is the expressed `commitment` gene rather than a per-world constant. Because it favours
+the *incumbent* and not any particular drive, it is hysteresis rather than a weight: a challenger
+must clear a band `2 × commitment` wide, whether that means turning a traveller or getting a
+settled animal moving again.
+
+A gene is what puts the band's width under selection, and both ends of it are lethal — a lineage
+that dithers wastes every step re-deciding and never recovers from a hard run, while one that
+cannot be interrupted walks into whatever it stopped noticing or dozes through it. The band is
+expected to evolve small and non-zero, and nothing here forces that.
 """
 
 from __future__ import annotations
@@ -56,10 +69,12 @@ class BehaviourConfig:
         since a drive reads its field there. Per-world rather than per-animal because it is the
         same class of knob as `n_candidates`; making it the animal's own reach would put the speed
         gene, which `Movement` owns, inside this service (§2.3).
-    change_aversion: bonus added to a candidate in proportion to how well it continues last tick's
-        heading. Zero makes every tick an independent decision, which reads as jitter; large values
-        make an animal commit. #100 replaces this constant with a gene, and the constant is that
-        gene's degenerate case rather than a different mechanism.
+    commitment_gene: the gene whose expressed value is the bonus an option earns in proportion to
+        how well it continues last tick's choice — a bearing, or standing still (#100). Zero makes
+        every tick an independent decision, which reads as dithering and leaves an animal unable to
+        hold a rest long enough to recover; large values make an animal dogged to the point of not
+        noticing what it walked into. Its expression mode must be one that cannot produce a negative
+        phenotype — see `Behaviour.__init__`.
     choice_temperature_gene: the gene whose expressed value is the Boltzmann temperature. Read
         `EXPONENTIAL` so it is strictly positive however far the gene drifts (#111) — a zero
         temperature divides by zero and a negative one inverts every preference the animal has.
@@ -67,7 +82,7 @@ class BehaviourConfig:
 
     n_candidates: int
     look_ahead: float
-    change_aversion: float
+    commitment_gene: str
     choice_temperature_gene: str
 
     def __post_init__(self) -> None:
@@ -75,11 +90,6 @@ class BehaviourConfig:
             raise ValueError(f"n_candidates must be at least 1, got {self.n_candidates}")
         if self.look_ahead <= 0.0:
             raise ValueError(f"look_ahead must be positive, got {self.look_ahead}")
-        if self.change_aversion < 0.0:
-            raise ValueError(
-                f"change_aversion must be non-negative, got {self.change_aversion}; a negative "
-                "value rewards reversing, which is a spin rather than a preference"
-            )
 
 
 class Drive(Protocol):
@@ -144,10 +154,24 @@ class Behaviour(DomainService):
         self.terrain = terrain
         self.config = config
         self._drives: list[Drive] = []
-        # A temperature is a bare scale on a utility, so it carries no dimension of its own.
+        # A temperature is a bare scale on a utility, so it carries no dimension of its own; so is
+        # a bonus added to one.
         self._temperature_index = genes.index_of(
             config.choice_temperature_gene, unit=Unit.DIMENSIONLESS
         )
+        self._commitment_index = genes.index_of(config.commitment_gene, unit=Unit.DIMENSIONLESS)
+        # A negative bonus rewards the option that *reverses* last tick's bearing, which is a spin
+        # rather than a preference. Genes drift freely across zero (§2.5), so what forbids it is the
+        # expression mode and nothing else — refused here, at the one place both facts are in hand,
+        # rather than clamped every tick (§8.7). Asked as a property, not as a list of modes, for
+        # the reason #136 gives: the next mode added answers on `ExpressionMode` once.
+        mode = genes.spec(config.commitment_gene).expression_mode
+        if not mode.always_non_negative:
+            raise ValueError(
+                f"commitment gene '{config.commitment_gene}' is read as {mode.value}, which can "
+                "express a negative phenotype; a negative commitment rewards the option that "
+                "reverses last tick's bearing"
+            )
 
     @property
     def drive_names(self) -> tuple[str, ...]:
@@ -223,13 +247,23 @@ class Behaviour(DomainService):
         )
 
     def utilities(
-        self, selection: Selection, headings: np.ndarray, x: np.ndarray, y: np.ndarray
+        self,
+        selection: Selection,
+        headings: np.ndarray,
+        x: np.ndarray,
+        y: np.ndarray,
+        commitment: np.ndarray,
     ) -> tuple[np.ndarray, dict[str, np.ndarray]]:
         """The summed utility of every option, and each drive's contribution to it.
 
         `utility(option) = SUM over drives of urgency * appeal(option)`, which is what makes a
         mildly hungry animal's food preference weigh less than a starving one's without either
         drive knowing the other exists.
+
+        commitment: (len(selection),) how doggedly each animal holds last tick's bearing — the
+            expressed `commitment` gene, handed in rather than read here so one phenotype read
+            serves both genes this service consults, exactly as `x` and `y` are sampled once and
+            shared by every drive (#114).
 
         Returns the total *and* the per-drive contributions, because the decomposition is the
         explanation the viewer shows (§3.3) and recomputing it later would let an explanation drift
@@ -257,15 +291,31 @@ class Behaviour(DomainService):
             contributions[drive.name] = contribution
             total += contribution
 
-        # Continuing last tick's heading is rewarded by *how well* it is continued, not by an
-        # equality test: `cos` of the turn angle falls off smoothly, so a slight correction keeps
-        # almost all of the bonus and a reversal loses it. An option-index comparison could not
-        # express that, which is why the column stores a heading (#114). The null option gets no
-        # bonus, since staying put continues no direction.
-        previous = self.store.choice_heading[selection.to_mask()].astype(np.float64)[:, None]
-        total[:, : self.config.n_candidates] += self.config.change_aversion * np.cos(
-            headings - previous
-        )
+        # Continuing what the animal was already doing is rewarded by *how well* it is continued,
+        # not by an equality test: `cos` of the turn angle falls off smoothly, so a slight
+        # correction keeps almost all of the bonus and a reversal loses it. An option-index
+        # comparison could not express that, which is why the column stores a heading (#114).
+        #
+        # The bonus goes to the *incumbent* rather than to any fixed drive, which is what makes it
+        # hysteresis: leaving needs a challenger over `+c` and returning needs one over `-c`, so
+        # the band is `2c` wide and `commitment` sets it (#100).
+        #
+        # **Standing still is an incumbent too**, and the `- rested` term is what makes it one.
+        # `cos` is the dot product of two unit headings, and rest is the zero vector, so the
+        # travelling term hands rest nothing by construction rather than by decision — an animal
+        # could never hold a rest long enough to shed real exertion, and recovery would be a duty
+        # cycle nothing could evolve away from. Shifting the travelling block down by `c` exactly
+        # when rest was the last choice makes getting up cost what stopping costs, so the two
+        # states sit in one symmetric band and selection sets its width. It has to be small or a
+        # dozing animal is eaten; that is a price paid in the world, not a rule written here.
+        mask = selection.to_mask()
+        previous = self.store.choice_heading[mask].astype(np.float64)[:, None]
+        rested = (~self.store.choice_moving[mask]).astype(np.float64)[:, None]
+        bonus = commitment[:, None]
+        total[:, : self.config.n_candidates] += bonus * (np.cos(headings - previous) - rested)
+        # A resting animal keeps its heading (`choose` below), so the term above still ranks the
+        # ways it could resume — it prefers the way it was facing, one band below staying put.
+        total[:, self.config.n_candidates :] += bonus * rested
         return total, contributions
 
     def choose(self, selection: Selection, rng: np.random.Generator) -> None:
@@ -281,15 +331,20 @@ class Behaviour(DomainService):
         per-entity `rng.choice` (§2.3). It is the same extreme-value machinery §2.5 already uses for
         inheritance, for the same reason: the sampling is the point, not the mean.
 
-        Records the chosen heading for the next tick's change-aversion. An animal that stays put
+        Records the chosen heading for the next tick's commitment bonus. An animal that stays put
         keeps its previous heading rather than losing it, so a rested animal resumes the way it was
         going instead of choosing afresh from nothing.
         """
         headings = self.candidate_headings(selection, rng)
         x, y = self.candidate_positions(selection, headings)
-        total, contributions = self.utilities(selection, headings, x, y)
+        # One phenotype read for both genes this service consults: `expressed` rebuilds the whole
+        # (n, n_genes) block per call, so asking it twice in one tick is a block nobody needed.
+        expressed = self.genetics.expressed(selection)
+        total, contributions = self.utilities(
+            selection, headings, x, y, expressed[:, self._commitment_index].astype(np.float64)
+        )
 
-        temperature = self.genetics.expressed(selection)[:, self._temperature_index]
+        temperature = expressed[:, self._temperature_index]
         scaled = total / temperature.astype(np.float64)[:, None]
         chosen = np.argmax(scaled + rng.gumbel(size=scaled.shape), axis=1)
 

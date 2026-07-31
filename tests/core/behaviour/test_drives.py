@@ -53,6 +53,7 @@ GENE_NAMES = (
     *FLAT_AVERSION,
     "mutability",
     "choice_temperature",
+    "commitment",
 )
 GENE_REGISTRY = gene_registry(GENE_NAMES, {"size": 2.0, "speed": 3.0, "sight": 1.0, "insulation": 1.0, "scent_acuity": 0.5})
 SCENT_GENES = ScentGenes(emission_gene="scent_emission", signature_genes=SIGNATURE_GENES)
@@ -162,7 +163,7 @@ class World:
             BehaviourConfig(
                 n_candidates=8,
                 look_ahead=2.0,
-                change_aversion=0.0,
+                commitment_gene="commitment",
                 choice_temperature_gene="choice_temperature",
             ),
         )
