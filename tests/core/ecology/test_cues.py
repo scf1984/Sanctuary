@@ -136,6 +136,114 @@ class TestDeposit:
             )
 
 
+class TestSamplingElsewhere:
+    """Reading the field at a candidate position rather than where the animal stands (#188).
+
+    This is what lets a drive *steer* by smell. `Fear.appeal` and `Lust.appeal` both return flat
+    scores today because the only exclusion available was at the sampler's own cell, and lust needs
+    it most: its vector is the animal's own signature, so its own deposit is the strongest match to
+    it anywhere in the world. Without exclusion at candidates, every animal would be maximally
+    attracted to the cell it is already standing in — a rule that says never move.
+    """
+
+    def test_a_lone_broadcaster_smells_nothing_of_itself_one_cell_over(self):
+        """The property the whole issue exists for. `sample_excluding_self` handles only the
+        sampler's own cell; one cell away it read back its own plume at full strength."""
+        _, field = make_field()
+        x, y, emission, sig = (
+            np.array([10.0]),
+            np.array([10.0]),
+            np.array([2.0]),
+            signature(1, 1, 1),
+        )
+        field.rebuild(x, y, emission, sig)
+
+        perceived = field.sample_excluding_source(
+            np.array([11.0]), np.array([10.0]), x, y, emission, sig
+        )
+
+        assert perceived[0] == pytest.approx(np.zeros(CHANNELS), abs=1e-6)
+
+    def test_it_is_clean_across_a_whole_neighbourhood(self):
+        _, field = make_field()
+        x, y, emission, sig = (
+            np.array([10.0]),
+            np.array([10.0]),
+            np.array([3.0]),
+            signature(1, 0, 0),
+        )
+        field.rebuild(x, y, emission, sig)
+
+        offsets = np.arange(-4.0, 4.5)
+        perceived = field.sample_excluding_source(
+            10.0 + offsets, np.full(offsets.shape, 10.0), np.full(offsets.shape, 10.0),
+            np.full(offsets.shape, 10.0), np.full(offsets.shape, 3.0),
+            np.tile(signature(1, 0, 0), (offsets.shape[0], 1)),
+        )
+
+        assert perceived == pytest.approx(np.zeros_like(perceived), abs=1e-6)
+
+    def test_sampling_at_your_own_cell_agrees_with_the_diagonal(self):
+        """`sample_excluding_self` is the zero-offset case of this, so the two must not disagree —
+        that agreement is what says the off-diagonal derivation is the same one."""
+        _, field = make_field()
+        x, y, emission, sig = (
+            np.array([7.0, 12.0]),
+            np.array([9.0, 3.0]),
+            np.array([2.0, 1.5]),
+            np.tile(signature(1, -1, 0.5), (2, 1)),
+        )
+        field.rebuild(x, y, emission, sig)
+
+        assert field.sample_excluding_source(x, y, x, y, emission, sig) == pytest.approx(
+            field.sample_excluding_self(x, y, emission, sig), abs=1e-6
+        )
+
+    def test_somebody_else_is_still_smelled_from_a_distance(self):
+        """Excluding your own plume must not excuse anyone else's."""
+        _, field = make_field()
+        x, y = np.array([8.0, 12.0]), np.array([10.0, 10.0])
+        emission = np.array([2.0, 2.0])
+        sig = np.tile(signature(1, 0, 0), (2, 1))
+        field.rebuild(x, y, emission, sig)
+
+        # The first animal samples where the second stands, subtracting only its own contribution.
+        perceived = field.sample_excluding_source(
+            np.array([12.0]), np.array([10.0]), x[:1], y[:1], emission[:1], sig[:1]
+        )
+
+        assert perceived[0, 0] > 0.0
+
+    def test_it_samples_a_whole_block_of_candidate_options(self):
+        """#114 scores options as an (n_entities, n_options) block, so this has to take one."""
+        _, field = make_field()
+        x, y, emission, sig = (
+            np.array([10.0, 6.0]),
+            np.array([10.0, 6.0]),
+            np.array([2.0, 2.0]),
+            np.tile(signature(1, 0, 0), (2, 1)),
+        )
+        field.rebuild(x, y, emission, sig)
+        options_x = np.array([[10.0, 11.0, 12.0], [6.0, 7.0, 8.0]])
+        options_y = np.array([[10.0, 10.0, 10.0], [6.0, 6.0, 6.0]])
+
+        perceived = field.sample_excluding_source(
+            options_x, options_y, x, y, emission, sig
+        )
+
+        assert perceived.shape == (2, 3, CHANNELS)
+        # Each animal's own plume is gone from every one of its candidates, but the other's is not.
+        assert perceived[0, 0, 0] > 0.0
+
+    def test_sample_takes_a_block_too(self):
+        _, field = make_field()
+        field.rebuild(
+            np.array([10.0]), np.array([10.0]), np.array([1.0]), signature(1, 0, 0)
+        )
+
+        assert field.sample(np.zeros((4, 5)), np.zeros((4, 5))).shape == (4, 5, CHANNELS)
+
+
 class TestSelfExclusion:
     """CLAUDE.md §2.5: a creature does not perceive itself.
 

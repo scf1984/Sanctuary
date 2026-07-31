@@ -147,7 +147,11 @@ def world_config(**overrides):
             saturation=1.0,
         ),
         lust=LustConfig(
-            weight=1.0, maturity_age=20, breeding_energy=120.0, abundant_energy=250.0
+            weight=1.0,
+            maturity_age=20,
+            scent_acuity_gene="scent_acuity",
+            detection_threshold=1e-4,
+            breeding_energy=120.0, abundant_energy=250.0
         ),
         fatigue=FatigueConfig(weight=1.0, exertion_saturation=20.0),
         behaviour=BehaviourConfig(

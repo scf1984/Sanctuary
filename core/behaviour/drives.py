@@ -221,6 +221,12 @@ class LustConfig:
     weight: multiplier on the drive's 0-1 shape.
     maturity_age: ticks. Below this an animal does not seek a mate at any energy level — the tick
         counter is the only clock (CLAUDE.md §2.1), so this is in ticks and never in real time.
+    scent_acuity_gene: the gene whose expressed value is scent detection sensitivity. The *same*
+        gene fear reads: mate-finding and threat-detection are one nose, so a keener nose finds
+        both from further away and there is no separate sense to evolve.
+    detection_threshold: the scaled reading below which nobody has been found. Sensitivity and
+        range are the same parameter for a plume (§2.5), so this is what gives acuity teeth —
+        without it every animal detects every other faintly and the gene only scales enthusiasm.
     breeding_energy: energy units. The pool level below which reproduction is not attempted at all.
         Gestation charges upkeep like any other trait (§2.5), so an animal that cannot afford it
         must not want it, or selection would favour breeding itself to death.
@@ -229,6 +235,8 @@ class LustConfig:
 
     weight: float
     maturity_age: int
+    scent_acuity_gene: str
+    detection_threshold: float
     breeding_energy: float
     abundant_energy: float
 
@@ -236,6 +244,11 @@ class LustConfig:
         _check_weight(self.weight)
         if self.maturity_age < 0:
             raise ValueError(f"maturity_age must be non-negative, got {self.maturity_age}")
+        if self.detection_threshold <= 0:
+            raise ValueError(
+                f"detection_threshold must be positive, got {self.detection_threshold}; at or "
+                "below zero every animal detects every other faintly and acuity buys nothing"
+            )
         if self.abundant_energy <= self.breeding_energy:
             raise ValueError(
                 "abundant_energy must exceed breeding_energy, got "
@@ -253,20 +266,54 @@ class Lust:
 
     name = "lust"
 
-    def __init__(self, store: EntityStore, ecology: Ecology, config: LustConfig) -> None:
+    def __init__(
+        self,
+        store: EntityStore,
+        ecology: Ecology,
+        genetics: Genetics,
+        scent: Scent,
+        genes: GeneRegistry,
+        config: LustConfig,
+    ) -> None:
         self.store = store
         self.ecology = ecology
+        self.genetics = genetics
+        self.scent = scent
         self.config = config
+        self._acuity_index = genes.index_of(config.scent_acuity_gene, unit=Unit.DIMENSIONLESS)
 
     def appeal(self, selection: Selection, x: np.ndarray, y: np.ndarray) -> np.ndarray:
-        """(n, n_options) float32: flat — nothing can perceive a mate yet.
+        """(n, n_options) float32 in [0, 1]: how much company-like-me each option leads toward.
 
-        §2.5 settles that finding a mate is the cue field read with the searcher's *own* signature
-        as the vector, but there is no mating mechanic to act on it (#20). Constant until then, so
-        lust registers an appetite without steering — see `Thirst.appeal` for why that is the
-        correct degenerate case rather than a stub (§8.2).
+        **The vector is the animal's own signature** (CLAUDE.md §2.5), and that is the whole of
+        mate-finding: no genes of its own, no threat table, and it tracks speciation for free —
+        a daughter species inherits its parents' signature, so its members are drawn to each other
+        without anything being told that a split happened.
+
+        Self-exclusion is not optional here, it is the mechanic. An animal's own plume is the
+        strongest match to its own signature anywhere in the world, so reading the raw field would
+        make every animal maximally attracted to the cell it is already standing in — a rule that
+        says never move. `Scent.perceived_at` subtracts it exactly, at every candidate (#188).
+
+        Scaled by scent acuity and gated by `detection_threshold`, exactly as hunger reads the
+        forage field: **detection is a threshold, not a radius**, because one field serves the whole
+        population and acuity can only scale what is sampled, never narrow it.
+
+        Normalised by each animal's own best option, so an animal that senses nobody returns all
+        zeros and lust drops out of the utility sum entirely rather than voting flatly for
+        everywhere — the same reason `Hunger.appeal` normalises.
         """
-        return np.ones_like(x, dtype=np.float32)
+        acuity = self.genetics.expressed(selection)[:, self._acuity_index].astype(np.float64)
+        perceived = self.scent.perceived_at(selection, x, y)
+        own = self.scent.signature_of(selection).astype(np.float64)
+        # Dot each candidate's cue reading against the searcher's own signature. Negative means it
+        # smells like the opposite of itself, which the positive threshold discards.
+        reading = acuity[:, None] * np.einsum("nkc,nc->nk", perceived, own)
+        found = np.where(reading >= self.config.detection_threshold, reading, 0.0)
+        best = found.max(axis=1, keepdims=True)
+        return np.divide(
+            found, best, out=np.zeros_like(found), where=best > 0.0
+        ).astype(np.float32)
 
     def urgency(self, selection: Selection) -> np.ndarray:
         """(len(selection),) float32: weighted energy surplus, zero before maturity."""
