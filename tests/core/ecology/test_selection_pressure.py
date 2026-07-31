@@ -28,6 +28,7 @@ from core.world.terrain import Terrain
 from core.world.tick import TickLoop
 
 from tests.support.genes import gene_registry
+from tests.support.plants import plant_field
 
 
 GENE_NAMES = ("size", "speed", "sight", "insulation", "mutability")
@@ -73,6 +74,9 @@ def make_world(capacity=1024, equator_temperature=20.0, latitude_gradient=0.0):
         genetics,
         climate,
         Metabolism(vocabulary, METABOLISM_CONFIG),
+        # Every row this fixture can allocate is endowed with STARTING_ENERGY it never grazed
+        # for, and excretion returns nutrients against the export ledger (#21).
+        plant_field(terrain, climate, founding_stock=capacity * STARTING_ENERGY),
     )
     return store, species, genetics, ecology
 

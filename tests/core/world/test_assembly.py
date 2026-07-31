@@ -261,6 +261,34 @@ class TestABuiltWorldRuns:
         closing = world.store.energy[world.store.alive]
         assert np.any(closing > opening - upkeep)
 
+    def test_animals_that_run_out_of_energy_leave_the_world(self):
+        """The half of the loop this world has: a population can now fall. Nothing is born, so it
+        can only fall — which is the honest shape until #20."""
+        world = build_world(world_config(), seed=7)
+        # An emptied pool is what death reads, so empty some rather than waiting for starvation to
+        # arrive on its own schedule; what is under test is that the loop acts on it.
+        doomed = world.store.alive.copy()
+        doomed[np.cumsum(doomed) > 10] = False
+        world.store.energy[doomed] = 0.0
+        before = int(world.store.alive.sum())
+
+        world.loop.advance(1)
+
+        assert int(world.store.alive.sum()) == before - int(doomed.sum())
+        assert world.store.available >= int(doomed.sum())
+
+    def test_a_row_freed_by_death_is_handed_out_again(self):
+        """§2.1 orders death before reproduction precisely so this holds within a tick. Nothing
+        breeds yet, so the allocation stands in for what #20 will do."""
+        world = build_world(world_config(), seed=8)
+        world.store.energy[world.store.alive] = 0.0
+
+        world.loop.advance(1)
+        reused = world.store.allocate(1, energy=np.array([50.0], dtype=np.float32))
+
+        assert world.store.alive.sum() == 1
+        assert reused.shape == (1,)
+
     def test_the_world_is_populated_and_aging(self):
         world = build_world(world_config(), seed=4)
         assert len(world.founders) == world.config.n_founders

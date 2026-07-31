@@ -33,6 +33,7 @@ from core.world.terrain import Terrain
 from core.world.water import Water
 
 from tests.support.genes import gene_registry
+from tests.support.plants import plant_field
 
 # Three cue channels rather than the eight CLAUDE.md §2.5 settles on: the algebra is identical and
 # a test that spells out eight signature components per creature stops being readable.
@@ -153,6 +154,7 @@ class World:
             self.genetics,
             self.climate,
             Metabolism(self.genes, METABOLISM_CONFIG),
+            plant_field(self.terrain, self.climate),
         )
         self.behaviour = Behaviour(
             self.store,

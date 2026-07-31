@@ -19,6 +19,7 @@ from __future__ import annotations
 import numpy as np
 
 from core.ecology.metabolism import Metabolism
+from core.ecology.plants import Plants
 from core.entities.store import EntityStore
 from core.genetics.service import Genetics
 from core.selection import Selection
@@ -50,11 +51,13 @@ class Ecology(DomainService):
         genetics: Genetics,
         climate: Climate,
         metabolism: Metabolism,
+        plants: Plants,
     ) -> None:
         super().__init__(store, registry)
         self.genetics = genetics
         self.climate = climate
         self.metabolism = metabolism
+        self.plants = plants
 
     def energy(self, selection: Selection) -> np.ndarray:
         """(len(selection),) float32, energy units: the current pool, in ascending row order."""
@@ -98,13 +101,31 @@ class Ecology(DomainService):
         Raises ValueError for a negative charge: energy entering the world is #18's sunlight and
         #19's feeding, never a cost with its sign flipped, and §2.5's closed loop has no other
         income (§8.7).
+
+        **Burning energy excretes nutrients, and that is what closes the loop** (#21). Metabolism
+        and locomotion are respiration: the energy is gone, but the nutrients it was carried in are
+        not, and they land in the cell the animal is standing in. Decomposition alone would not do
+        it — over a life an animal eats `H`, assimilates `H×c` and burns `S` of that, so a carcass
+        can only ever return `H×c − S` and every unit it ever metabolised would sit on the export
+        ledger forever while the field starved.
+
+        It lives here rather than in the upkeep system because *every* draw on the pool is
+        respiration — #25's locomotion as much as basal cost, and #20's gestation when it arrives —
+        and this is the one place they all pass through. What is returned is what was **actually
+        burned**, which is not the bill: the pool floors at zero, so an animal charged more than it
+        holds pays what it has, and excreting the bill instead would invent nutrients.
         """
         cost = np.asarray(cost, dtype=np.float32)
         if np.any(cost < 0.0):
             raise ValueError(
                 "spend() charges energy and cannot be negative; income belongs to #18 and #19"
             )
-        self.write("energy", selection, np.maximum(self.energy(selection) - cost, 0.0))
+        pool = self.energy(selection)
+        burned = np.minimum(pool, cost)
+        self.write("energy", selection, pool - burned)
+
+        mask = selection.to_mask()
+        self.plants.return_nutrients(self.store.x[mask], self.store.y[mask], burned)
 
     def gain(self, selection: Selection, energy: np.ndarray) -> None:
         """Credit `energy` units to `selection`'s pools — the only thing that adds to them.

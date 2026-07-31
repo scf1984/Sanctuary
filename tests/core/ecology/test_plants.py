@@ -312,6 +312,34 @@ class TestReturningNutrients:
             )
 
 
+class TestFoundingStock:
+    """Founders exist before anything has been grazed, so their bodies are nutrients that are out
+    of the field without the field having supplied them (#21)."""
+
+    def test_it_puts_the_bodies_on_the_ledger(self):
+        plants = make_plants()
+
+        plants.record_founding_stock(50.0)
+
+        assert plants.exported_nutrients == pytest.approx(50.0 * CONFIG.nutrient_per_biomass)
+
+    def test_the_world_total_grows_by_exactly_the_bodies(self):
+        """Unlike every other movement of nutrients this is not a transfer — it is the rest of the
+        world's budget arriving. Everything after it conserves."""
+        plants = make_plants()
+        opening = plants.total_nutrients()
+
+        plants.record_founding_stock(50.0)
+
+        assert plants.total_nutrients() == pytest.approx(
+            opening + 50.0 * CONFIG.nutrient_per_biomass
+        )
+
+    def test_a_negative_founding_stock_is_rejected(self):
+        with pytest.raises(ValueError, match="non-negative"):
+            make_plants().record_founding_stock(-1.0)
+
+
 class TestGrazing:
     def test_grazing_depletes_only_the_grazed_cell(self):
         plants = make_plants()

@@ -267,6 +267,23 @@ class Plants:
         self.exported_nutrients += float(removed.sum()) * self.config.nutrient_per_biomass
         return harvested
 
+    def record_founding_stock(self, biomass: float) -> None:
+        """Account for nutrients already bound up in bodies the field never supplied (#21).
+
+        A founding population exists before anything has been grazed, holding an energy endowment
+        that came from nowhere. Every later excretion and carcass returns nutrients *against the
+        export ledger*, so without this the very first upkeep would try to return more than has
+        ever left and `return_nutrients` would rightly refuse.
+
+        This is the one call that moves `total_nutrients()`, and it is not a leak: it is the rest
+        of the world's nutrient budget arriving at founding, in the only form it can — bodies.
+        Everything afterwards conserves, which is what makes the invariant meaningful from tick
+        zero rather than from whenever the founders happen to have eaten.
+        """
+        if biomass < 0:
+            raise ValueError(f"founding stock must be non-negative, got {biomass}")
+        self.exported_nutrients += biomass * self.config.nutrient_per_biomass
+
     def return_nutrients(self, x: np.ndarray, y: np.ndarray, biomass: np.ndarray) -> None:
         """Put nutrients back into the soil at each position, off the export ledger.
 

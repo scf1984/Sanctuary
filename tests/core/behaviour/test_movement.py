@@ -25,6 +25,7 @@ from core.world.climate import Climate, ClimateConfig
 from core.world.terrain import Terrain
 
 from tests.support.genes import gene_registry
+from tests.support.plants import plant_field
 
 
 GENE_NAMES = ("size", "speed", "insulation", "mutability")
@@ -110,6 +111,7 @@ class World:
             self.genetics,
             self.climate,
             Metabolism(self.genes, FREE_METABOLISM),
+            plant_field(self.terrain, self.climate),
         )
         # Exertion is where movement records effort (#107); nothing here asserts on it, so the
         # recovery rate is arbitrary. `tests/core/behaviour/test_exertion.py` is what covers it.
@@ -142,6 +144,9 @@ class World:
             energy=np.full(n, energy, dtype=np.float32),
             species_id=np.full(n, self.species_id, dtype=np.int32),
         )
+        # Energy handed out here was never grazed for, and every `spend` excretes against the
+        # export ledger, so the bodies have to be on it first (#21).
+        self.ecology.plants.record_founding_stock(float(n) * float(np.max(energy)))
         rows = np.array([self.store._id_to_row[i] for i in ids.tolist()], dtype=np.int64)
         selection = Selection.from_indices(rows, capacity=self.store.capacity)
         self.genetics.set_genes(selection, genes)
