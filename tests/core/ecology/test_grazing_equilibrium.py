@@ -70,6 +70,9 @@ def grazing_world(allocations, intake_rate=9.0, assimilation_max=0.5, frontier_e
     plants = Plants(terrain, climate, Water.generate(terrain), PLANTS_CONFIG)
     for _ in range(400):
         plants.grow()
+    # Founders are handed 180 energy units each below; the export ledger has to account for
+    # bodies the field never supplied before anything can excrete against it (#21).
+    plants.record_founding_stock(180.0 * len(allocations))
 
     n = len(allocations)
     store = EntityStore(initial_capacity=n, n_drives=1, n_genes=len(GENE_NAMES))
@@ -77,7 +80,12 @@ def grazing_world(allocations, intake_rate=9.0, assimilation_max=0.5, frontier_e
     species = SpeciesRegistry(GENE_REGISTRY)
     genetics = Genetics(store, columns, species, GENE_REGISTRY, GENETICS_CONFIG)
     ecology = Ecology(
-        store, columns, genetics, climate, Metabolism(GENE_REGISTRY, METABOLISM_CONFIG)
+        store,
+        columns,
+        genetics,
+        climate,
+        Metabolism(GENE_REGISTRY, METABOLISM_CONFIG),
+        plants,
     )
     feeding = Feeding(
         store,

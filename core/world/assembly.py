@@ -14,20 +14,24 @@ as data and then not consulting it, which is why the tuple sequences rather than
 
 The reasoning behind each position lives in CLAUDE.md §2.1, not here — it is a decision of
 consequence and belongs where decisions are recorded (§8.6). What belongs here is the fact that
-**this is the implemented prefix of that order, in that order.** Three settled steps have no system
+**this is the implemented prefix of that order, in that order.** Two settled steps have no system
 yet and are absent rather than stubbed (§8.2):
 
 | settled step | inserted by |
 |---|---|
-| death and decomposition, after upkeep | #21 |
 | reproduction, after death | #20 |
 | speciation, last; periodicity still open | #16 |
 
-Their absence is visible in what the world does. Energy now enters an animal — feeding runs between
-exertion recovery and upkeep, so a grazer eats where it arrived and pays its upkeep afterwards
-rather than starving on top of a meadow (§2.1) — but nothing dies or is born, so the population is
-fixed at its founders however well or badly it feeds. This is a world that *runs* and now *eats*,
-and not yet one that lives.
+Their absence is visible in what the world does. Energy enters an animal and animals now die of
+running out of it, so a population *falls* — but nothing is born, so it can only ever fall, and a
+world left running long enough empties. That is the honest shape of a half-closed loop: selection
+can finally remove the badly-adapted, and nothing yet passes on what worked.
+
+**Decomposition is not in this step**, despite §2.1 naming it there. An animal's nutrient debt is
+exactly its energy and starvation empties that, so a starved carcass is worth nothing and there is
+no mass for a carrion field to hold (#21). What actually closes §2.5's loop is `Ecology.spend`
+returning the nutrients an animal burns to the cell it is standing in — respiration, every tick,
+for every spender — and that is a property of the pool rather than a step in the order.
 
 **Movement acts for one drive.** `Behaviour` scores all five and partitions the population by
 winner, but only hunger has somewhere to walk to today: fleeing is #24's, mate-seeking is #20's,
@@ -65,6 +69,7 @@ from core.behaviour.movement import Movement, MovementConfig
 from core.behaviour.service import Behaviour, BehaviourConfig
 from core.ecology.aging import Aging
 from core.ecology.cues import CueField, CueFieldConfig, Scent, ScentGenes
+from core.ecology.death import Death
 from core.ecology.diet import Diet, DietConfig
 from core.ecology.feeding import Feeding, FeedingConfig
 from core.ecology.metabolism import Metabolism, MetabolismConfig
@@ -91,6 +96,7 @@ TICK_ORDER: tuple[str, ...] = (
     "exertion_recovery",
     "feeding",
     "metabolic_upkeep",
+    "death",
     "age_increment",
 )
 """The order systems run within a tick — a rule, not an implementation detail (CLAUDE.md §2.1).
@@ -188,6 +194,7 @@ class World:
     genetics: Genetics
     ecology: Ecology
     feeding: Feeding
+    death: Death
     exertion: Exertion
     movement: Movement
     behaviour: Behaviour
@@ -229,6 +236,7 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
         genetics,
         climate,
         Metabolism(genes, config.metabolism),
+        plants,
     )
     feeding = Feeding(
         store,
@@ -239,6 +247,7 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
         genes,
         config.feeding,
     )
+    death = Death(store, ecology)
     exertion = Exertion(store, columns, config.exertion)
     movement = Movement(
         store, columns, ecology, exertion, genetics, terrain, genes, config.movement
@@ -275,6 +284,11 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
 
     rng = np.random.default_rng(seed)
     founders = _found(config, store, genetics, species, movement, terrain, rng)
+    # Founders hold an endowment the field never supplied, and every excretion and carcass
+    # returns nutrients *against* the export ledger (#21). Recording their bodies here is what
+    # makes `total_nutrients()` constant from tick zero rather than from whenever they first
+    # happen to eat — and it is the only call in the world that moves that total.
+    plants.record_founding_stock(config.n_founders * config.founder_energy)
 
     systems = _build_systems(
         store,
@@ -286,6 +300,7 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
         exertion,
         ecology,
         feeding,
+        death,
         aging,
         rng,
         config.movement.walking_pace,
@@ -311,6 +326,7 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
         genetics=genetics,
         ecology=ecology,
         feeding=feeding,
+        death=death,
         exertion=exertion,
         movement=movement,
         behaviour=behaviour,
@@ -353,6 +369,7 @@ def _build_systems(
     exertion: Exertion,
     ecology: Ecology,
     feeding: Feeding,
+    death: Death,
     aging: Aging,
     rng: np.random.Generator,
     walking_pace: float,
@@ -388,6 +405,7 @@ def _build_systems(
         "exertion_recovery": lambda: exertion.recover(living()),
         "feeding": lambda: feeding.feed(living()),
         "metabolic_upkeep": lambda: ecology.drain(living()),
+        "death": lambda: death.reap(living()),
         "age_increment": lambda: aging.advance(living()),
     }
 

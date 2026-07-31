@@ -70,6 +70,9 @@ def make_world(intake_rate=1.0, assimilation_max=0.6, frontier_exponent=2.0, set
     plants = Plants(terrain, climate, Water.generate(terrain), PLANTS_CONFIG)
     for _ in range(settle_ticks):
         plants.grow()
+    # These tests hand animals energy directly rather than letting them graze for it, so the
+    # ledger has to already account for bodies the field never supplied (#21).
+    plants.record_founding_stock(10_000.0)
 
     store = EntityStore(initial_capacity=8, n_drives=1, n_genes=len(GENE_NAMES))
     columns = ColumnRegistry()
@@ -81,6 +84,7 @@ def make_world(intake_rate=1.0, assimilation_max=0.6, frontier_exponent=2.0, set
         genetics,
         climate,
         Metabolism(GENE_REGISTRY, METABOLISM_CONFIG),
+        plants,
     )
     diet = Diet(
         GENE_REGISTRY,

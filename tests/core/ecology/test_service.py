@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from core.ecology.metabolism import Metabolism, MetabolismConfig
+from core.ecology.plants import Plants, PlantsConfig
 from core.ecology.service import Ecology
 from core.entities.store import EntityStore
 from core.genetics.expression import GeneticsConfig
@@ -10,7 +11,9 @@ from core.genetics.species import SpeciesRegistry
 from core.selection import Selection
 from core.services import ColumnOwnershipError, ColumnRegistry
 from core.world.climate import Climate, ClimateConfig
+from core.world.diffusion import DiffusionConfig
 from core.world.terrain import Terrain
+from core.world.water import Water
 
 from tests.support.genes import gene_registry
 
@@ -25,6 +28,20 @@ GENETICS_CONFIG = GeneticsConfig(
     drift_margin=2.0,
 )
 GENE_REGISTRY = gene_registry(GENE_NAMES, {"size": 2.0, "speed": 3.0, "insulation": 1.0})
+
+PLANTS_CONFIG = PlantsConfig(
+    solar_constant=10.0,
+    latitude_tilt=0.0,
+    min_growth_temperature=0.0,
+    optimal_growth_temperature=25.0,
+    max_growth_temperature=45.0,
+    nutrient_per_biomass=0.1,
+    initial_soil_nutrients=100.0,
+    senescence_rate=0.05,
+    saturation_accumulation=50.0,
+    max_rooting_depth=0.5,
+    forage_diffusion=DiffusionConfig(range=4.0, climb_penalty=0.5),
+)
 
 METABOLISM_CONFIG = MetabolismConfig(
     basal_rate=1.0,
@@ -54,8 +71,14 @@ def make_world(initial_capacity=8, temperature=20.0):
     metabolism = Metabolism(
         GENE_REGISTRY, METABOLISM_CONFIG
     )
-    ecology = Ecology(store, registry, genetics, climate, metabolism)
-    return store, registry, species, genetics, ecology
+    plants = Plants(terrain, climate, Water.generate(terrain), PLANTS_CONFIG)
+    # These tests hand animals an energy endowment directly rather than letting them graze for it,
+    # so the export ledger has to account for bodies the field never supplied — otherwise the first
+    # `spend` excretes against nothing and `return_nutrients` rightly refuses (#21). Sized past
+    # anything the suite allocates; the assembled world seeds exactly its founders instead.
+    plants.record_founding_stock(1000.0 * initial_capacity)
+    ecology = Ecology(store, registry, genetics, climate, metabolism, plants)
+    return store, registry, species, genetics, ecology, plants
 
 
 def selection_for(store, ids):
@@ -76,16 +99,18 @@ class TestColumnOwnership:
         assert registry.owner_of("energy") == "Ecology"
 
     def test_a_rival_service_cannot_also_claim_energy(self):
-        store, registry, _, genetics, ecology = make_world()
+        store, registry, _, genetics, ecology, _ = make_world()
 
         class RivalEcology(Ecology):
             pass
 
         with pytest.raises(ColumnOwnershipError):
-            RivalEcology(store, registry, genetics, ecology.climate, ecology.metabolism)
+            RivalEcology(
+                store, registry, genetics, ecology.climate, ecology.metabolism, ecology.plants
+            )
 
     def test_ecology_cannot_write_a_column_it_does_not_own(self):
-        store, _, _, _, ecology = make_world()
+        store, _, _, _, ecology, _ = make_world()
         ids = store.allocate(1)
         selection = selection_for(store, ids)
 
@@ -98,7 +123,7 @@ class TestUpkeepFromExpressedGenes:
         """A gene's cost and its benefit are inseparable (issue #17): a species that does not
         express a trait does not pay for it, and one that does pays every tick it lives.
         """
-        store, _, species, genetics, ecology = make_world()
+        store, _, species, genetics, ecology, _ = make_world()
         sprinter = species.register(("size", "speed", "sight", "insulation"))
         plodder = species.register(("size", "sight", "insulation"))
         ids = store.allocate(2, species_id=np.array([sprinter, plodder], dtype=np.int32))
@@ -131,9 +156,8 @@ class TestUpkeepFromExpressedGenes:
             registry,
             genetics,
             climate,
-            Metabolism(
-                GENE_REGISTRY, METABOLISM_CONFIG
-            ),
+            Metabolism(GENE_REGISTRY, METABOLISM_CONFIG),
+            Plants(terrain, climate, Water.generate(terrain), PLANTS_CONFIG),
         )
         species_id = species.register(GENE_NAMES)
         ids = store.allocate(
@@ -154,7 +178,7 @@ class TestUpkeepFromExpressedGenes:
 
 class TestDrain:
     def test_drain_subtracts_exactly_one_tick_of_upkeep(self):
-        store, _, species, genetics, ecology = make_world()
+        store, _, species, genetics, ecology, _ = make_world()
         species_id = species.register(GENE_NAMES)
         ids = store.allocate(
             2,
@@ -170,7 +194,7 @@ class TestDrain:
         assert ecology.energy(selection) == pytest.approx(100.0 - upkeep)
 
     def test_drain_leaves_entities_outside_the_selection_untouched(self):
-        store, _, species, _, ecology = make_world()
+        store, _, species, _, ecology, _ = make_world()
         species_id = species.register(GENE_NAMES)
         ids = store.allocate(
             2,
@@ -188,7 +212,7 @@ class TestDrain:
         """CLAUDE.md §2.5: the metabolic pool is a hard budget. Upkeep can empty it, never
         overdraw it -- the invariant registered by #7 asserts exactly this every tick.
         """
-        store, _, species, _, ecology = make_world()
+        store, _, species, _, ecology, _ = make_world()
         species_id = species.register(GENE_NAMES)
         ids = store.allocate(
             1,
@@ -202,7 +226,7 @@ class TestDrain:
         assert ecology.energy(selection) == pytest.approx([0.0])
 
     def test_drain_never_raises_an_entitys_energy(self):
-        store, _, species, genetics, ecology = make_world()
+        store, _, species, genetics, ecology, _ = make_world()
         species_id = species.register(GENE_NAMES)
         rng = np.random.default_rng(3)
         ids = store.allocate(
@@ -229,7 +253,7 @@ class TestSpend:
     """
 
     def _one_entity(self, energy):
-        store, _, species, _, ecology = make_world()
+        store, _, species, _, ecology, _ = make_world()
         species_id = species.register(GENE_NAMES)
         ids = store.allocate(
             1,
@@ -268,12 +292,75 @@ class TestSpend:
         assert ecology.energy(selection) == pytest.approx([100.0])
 
 
+class TestSpendingExcretes:
+    """§2.5's loop closes here, not in decomposition alone (#21).
+
+    Over a life an animal eats `H`, assimilates `H×c`, burns `S` on upkeep and locomotion, and dies
+    holding `H×c − S`. Faeces return `H×(1−c)` and a carcass returns the remainder, so **`S` — every
+    unit it ever metabolised — would sit on the export ledger forever.** Over a long life that is
+    nearly all of it, and the field starves while the ledger grows.
+
+    So every energy unit burned is a nutrient unit excreted where the animal stands. One rule, in
+    the one place energy leaves an animal, covering upkeep and locomotion and anything that spends
+    later.
+    """
+
+    def _one_entity(self, energy, x=0.0, y=0.0):
+        store, _, species, _, ecology, plants = make_world()
+        species_id = species.register(GENE_NAMES)
+        ids = store.allocate(
+            1,
+            x=np.array([x], dtype=np.float32),
+            y=np.array([y], dtype=np.float32),
+            energy=np.array([energy], dtype=np.float32),
+            species_id=np.array([species_id], dtype=np.int32),
+        )
+        return ecology, plants, selection_for(store, ids)
+
+    def test_burning_energy_returns_nutrients_to_the_cell(self):
+        ecology, plants, selection = self._one_entity(100.0)
+        before = plants.soil_nutrients[0, 0]
+
+        ecology.spend(selection, np.array([30.0], dtype=np.float32))
+
+        assert plants.soil_nutrients[0, 0] > before
+
+    def test_the_world_total_is_unmoved(self):
+        ecology, plants, selection = self._one_entity(100.0)
+        opening = plants.total_nutrients()
+
+        ecology.spend(selection, np.array([30.0], dtype=np.float32))
+
+        assert plants.total_nutrients() == pytest.approx(opening, rel=1e-9)
+
+    def test_only_what_was_actually_burned_is_excreted(self):
+        """The pool floors at zero, so an animal billed more than it holds pays what it has. The
+        excretion has to follow the payment and not the bill, or the ledger loses the difference."""
+        ecology, plants, selection = self._one_entity(10.0)
+        before = plants.soil_nutrients[0, 0]
+
+        ecology.spend(selection, np.array([25.0], dtype=np.float32))
+
+        returned = plants.soil_nutrients[0, 0] - before
+        assert returned == pytest.approx(10.0 * PLANTS_CONFIG.nutrient_per_biomass)
+
+    def test_an_empty_animal_excretes_nothing(self):
+        ecology, plants, selection = self._one_entity(0.0)
+        opening = plants.total_nutrients()
+        before = plants.soil_nutrients[0, 0]
+
+        ecology.spend(selection, np.array([5.0], dtype=np.float32))
+
+        assert plants.soil_nutrients[0, 0] == pytest.approx(before)
+        assert plants.total_nutrients() == pytest.approx(opening, rel=1e-9)
+
+
 class TestGain:
     """The other half of the pool, and the only one that adds to it. Sunlight is #18's and enters
     the plant field; this is where it reaches an animal (#19)."""
 
     def _one_entity(self, energy):
-        store, _, species, _, ecology = make_world()
+        store, _, species, _, ecology, _ = make_world()
         species_id = species.register(GENE_NAMES)
         ids = store.allocate(
             1,
@@ -301,7 +388,7 @@ class TestGain:
         assert ecology.energy(selection) == pytest.approx([40.0])
 
     def test_it_leaves_rows_outside_the_selection_alone(self):
-        store, _, species, _, ecology = make_world()
+        store, _, species, _, ecology, _ = make_world()
         species_id = species.register(GENE_NAMES)
         ids = store.allocate(
             2,
@@ -326,7 +413,7 @@ class TestGain:
 
 class TestStarving:
     def test_selects_the_entities_whose_pool_has_run_out(self):
-        store, _, species, _, ecology = make_world()
+        store, _, species, _, ecology, _ = make_world()
         species_id = species.register(GENE_NAMES)
         ids = store.allocate(
             3,
@@ -343,7 +430,7 @@ class TestStarving:
         """A released row's energy column still reads 0, and #21 will turn this selection into
         deaths -- so a free row must never appear in it.
         """
-        store, _, species, _, ecology = make_world()
+        store, _, species, _, ecology, _ = make_world()
         species_id = species.register(GENE_NAMES)
         ids = store.allocate(
             2,
@@ -357,7 +444,7 @@ class TestStarving:
         assert len(starving) == 0
 
     def test_an_entity_drained_to_empty_becomes_starving(self):
-        store, _, species, _, ecology = make_world()
+        store, _, species, _, ecology, _ = make_world()
         species_id = species.register(GENE_NAMES)
         ids = store.allocate(
             1,

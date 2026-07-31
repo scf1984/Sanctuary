@@ -23,6 +23,7 @@ from core.world.climate import Climate, ClimateConfig
 from core.world.terrain import Terrain
 
 from tests.support.genes import gene_registry
+from tests.support.plants import plant_field
 
 GENE_NAMES = ("size", "speed", "insulation", "mutability")
 
@@ -91,6 +92,7 @@ class World:
             self.genetics,
             self.climate,
             Metabolism(self.genes, FREE_METABOLISM),
+            plant_field(self.terrain, self.climate),
         )
         self.exertion = Exertion(
             self.store, self.registry, ExertionConfig(recovery_rate=recovery_rate)
