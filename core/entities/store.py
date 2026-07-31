@@ -71,7 +71,8 @@ class EntityStore:
       choice_moving: ``(capacity,)`` bool: whether the option chosen last tick proposed a
         displacement at all. Separate from the heading because a resting animal *keeps* its
         heading — the commitment bonus needs something to continue — so the heading alone cannot
-        say whether it moved (#114).
+        say whether it moved (#114). It is also what says *which* incumbent that bonus defends,
+        since standing still is one too and has no heading of its own (#100).
       choice_heading: ``(capacity,)`` float32, radians in [0, 2pi): the direction each entity
         chose to move last tick, which the commitment bonus biases the next choice toward
         (#114, #100).

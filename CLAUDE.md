@@ -481,13 +481,17 @@ by" hunger and no animal stands still merely because the drive that won has no m
   which an index would not — it would silently mean a different direction.
 
 - **What is held across ticks is a bearing, and how hard it is held is a gene** — decided in #100,
-  which owned it, over the term #114 had already built as a per-world constant. A candidate earns a
-  bonus in proportion to how well it continues last tick's heading, and that bonus is the expressed
-  `commitment` gene:
+  which owned it, over the term #114 had already built as a per-world constant. An option earns a
+  bonus in proportion to how well it continues what the animal was already doing, and that bonus is
+  the expressed `commitment` gene:
 
   ```
-  utility(option) += commitment × cos(option − last tick's heading)
+  utility(option) += commitment × continuation(option, last tick's choice)
   ```
+
+  where `continuation` is `cos` of the turn for a travelling option and 1 for staying put when the
+  animal was already stopped — see "Standing still is an incumbent too" below, which is not a
+  special case but the same rule applied to the one option that has no heading.
 
   **"Target" was the wrong noun and is gone.** #100 was written when a drive picked a coordinate and
   held it; the design has since moved to gradients and headings (#93, #114), so what persists is a
@@ -509,11 +513,31 @@ by" hunger and no animal stands still merely because the drive that won has no m
   argument of "author the physics, not the outcomes". It costs no upkeep for the same reason
   `mutability` does not: being wrong at either extreme is its own price.
 
-  **Commitment cannot hold an animal in rest**, because the null option continues no direction and
-  therefore earns no bonus. That closes the worry #100 raised against itself — a resting prey animal
-  sleeping through a predator — at the encoding level rather than with an override. What remains
-  open is the ordinary case: fear must be *able* to clear the band, which is a question of whether
-  `commitment` can evolve high enough to be fatal, and that is selection's to answer.
+  **Standing still is an incumbent too, and it needs its own term.** `cos` is the dot product of two
+  unit headings and rest is the zero vector, so the travelling term hands the null option nothing —
+  *by construction, not by decision*. Left there, an animal could never hold a rest across ticks:
+  it would settle, shed one tick of exertion, and be back on its feet before recovery amounted to
+  anything, so resting would be a duty cycle no lineage could evolve away from. The travelling block
+  is therefore shifted down by `commitment` exactly when rest was the last choice:
+
+  ```
+  travelling(option) += commitment × (cos(option − heading) − rested)
+  staying            += commitment × rested
+  ```
+
+  so **getting up costs precisely what stopping costs**, and the two states sit in one symmetric
+  band of the same width as the one between opposite bearings. A resting animal keeps its heading,
+  so the travelling term still ranks the ways it *could* resume — it prefers the way it was facing,
+  one band below staying put.
+
+  **What stops an animal dozing through a predator is selection, not the encoding.** This is where
+  #100's second comment was going and it is worth stating plainly, because the opposite was tried
+  first: leaving rest un-holdable does close the failure mode, and it closes it by *authoring the
+  outcome* — deleting the trait rather than pricing it. A lineage whose commitment is high enough to
+  sleep through an approaching threat is eaten; one whose commitment is too low never recovers and
+  is run down. The band is therefore expected to evolve **small but non-zero**, and where it settles
+  is a reading of how dangerous a given world is — which is a result worth having rather than a
+  constant worth choosing. Fear needing to clear the band is the mechanism, not a bug in it.
 
   **It is read as a magnitude**, so a stored value drifting below zero is a *strongly* committed
   animal rather than one paid to reverse. A signed bonus would reward the option pointing backwards,

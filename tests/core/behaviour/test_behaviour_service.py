@@ -76,6 +76,20 @@ class World:
         self.genetics.set_genes(selection, genes)
         return selection
 
+    def travelling(self, selection, heading):
+        """Put `selection` mid-journey on `heading`, as a tick that ended in a step leaves it.
+
+        Both columns, never just the heading: `choice_moving` is what says which incumbent the
+        commitment bonus is defending, and a freshly spawned row reads as *resting* (#100).
+        """
+        self.store.choice_heading[selection.to_indices()] = heading
+        self.store.choice_moving[selection.to_indices()] = True
+
+    def resting(self, selection, heading):
+        """Put `selection` at a standstill, still facing `heading`."""
+        self.store.choice_heading[selection.to_indices()] = heading
+        self.store.choice_moving[selection.to_indices()] = False
+
 
 class ConstantDrive:
     """A drive whose urgency and appeal are authored by the test rather than read from a world.
@@ -453,7 +467,7 @@ class TestCommitment:
         # straight on, a right angle, and a reversal.
         world = World(n_candidates=3)
         selection = world.spawn(1)
-        world.store.choice_heading[selection.to_indices()] = 0.0
+        world.travelling(selection, 0.0)
         headings = np.array([[0.0, np.pi / 2, np.pi]])
         x, y = world.behaviour.candidate_positions(selection, headings)
 
@@ -462,7 +476,7 @@ class TestCommitment:
         assert total[0, 0] == pytest.approx(0.5)  # straight on: the whole bonus
         assert total[0, 1] == pytest.approx(0.0, abs=1e-9)  # a right-angle turn: none of it
         assert total[0, 2] == pytest.approx(-0.5)  # a reversal: the bonus paid back
-        assert total[0, 3] == pytest.approx(0.0)  # the null option continues no direction
+        assert total[0, 3] == pytest.approx(0.0)  # stopping: rest is not the incumbent here
 
     def test_each_animal_holds_its_bearing_by_its_own_commitment(self):
         """The whole of #100: the band is per-entity, so two animals in one vectorized pass weigh
@@ -471,7 +485,7 @@ class TestCommitment:
         """
         world = World(n_candidates=3)
         selection = world.spawn(2)
-        world.store.choice_heading[selection.to_indices()] = 0.0
+        world.travelling(selection, 0.0)
         headings = np.zeros((2, 3))
         x, y = world.behaviour.candidate_positions(selection, headings)
 
@@ -498,7 +512,7 @@ class TestCommitment:
         for urgency, holds in ((0.4, True), (0.6, False)):
             world = World(n_candidates=4)
             selection = world.spawn(1)
-            world.store.choice_heading[selection.to_indices()] = 0.0
+            world.travelling(selection, 0.0)
             world.behaviour.register(ConstantDrive("sideways", urgency=urgency, appeal=sideways))
             x, y = world.behaviour.candidate_positions(selection, headings)
 
@@ -523,8 +537,8 @@ class TestCommitment:
         previous = 1.0
         dogged = world.spawn(200, commitment=5.0)
         flighty = world.spawn(200, commitment=0.0)
-        world.store.choice_heading[dogged.to_indices()] = previous
-        world.store.choice_heading[flighty.to_indices()] = previous
+        world.travelling(dogged, previous)
+        world.travelling(flighty, previous)
         world.behaviour.register(ConstantDrive("nothing", urgency=0.0))
 
         world.behaviour.choose(dogged, np.random.default_rng(3))
@@ -551,8 +565,8 @@ class TestCommitment:
         previous = 1.0
         positive = world.spawn(200, commitment=5.0)
         negative = world.spawn(200, commitment=-5.0)
-        world.store.choice_heading[positive.to_indices()] = previous
-        world.store.choice_heading[negative.to_indices()] = previous
+        world.travelling(positive, previous)
+        world.travelling(negative, previous)
         world.behaviour.register(ConstantDrive("nothing", urgency=0.0))
 
         world.behaviour.choose(positive, np.random.default_rng(3))
@@ -561,6 +575,88 @@ class TestCommitment:
         assert turn_from(world, negative, previous) == pytest.approx(
             turn_from(world, positive, previous)
         )
+
+    def test_standing_still_is_an_incumbent_too(self):
+        """Rest has to be holdable, or an animal can never stay down long enough to shed real
+        exertion and recovery is a duty cycle nothing can evolve away from (#100).
+
+        `cos` is the dot product of two unit headings and rest is the zero vector, so the
+        travelling term hands the null option nothing *by construction* — which is why holding a
+        rest needs its own term rather than falling out.
+        """
+        world = World(n_candidates=3)
+        selection = world.spawn(1)
+        world.resting(selection, 0.0)
+        headings = np.array([[0.0, np.pi / 2, np.pi]])
+        x, y = world.behaviour.candidate_positions(selection, headings)
+
+        total, _ = world.behaviour.utilities(selection, headings, x, y, np.array([0.5]))
+
+        assert total[0, 3] == pytest.approx(0.5)  # staying down: the whole bonus
+        assert total[0, 0] == pytest.approx(0.0, abs=1e-9)  # getting up the way it faced
+        assert total[0, 1] == pytest.approx(-0.5)  # getting up sideways
+        assert total[0, 2] == pytest.approx(-1.0)  # getting up and reversing
+
+    def test_getting_up_costs_exactly_what_stopping_costs(self):
+        """The two states sit in one symmetric band, which is what makes this hysteresis between
+        moving and resting rather than a thumb on the scale for one of them. Selection then sets
+        the width from both sides: a lineage that will not settle never recovers, and one that
+        will not rise is eaten where it lies.
+        """
+        world = World(n_candidates=3)
+        headings = np.array([[0.0, np.pi / 2, np.pi]])
+        band = 0.5
+
+        mover = world.spawn(1)
+        world.travelling(mover, 0.0)
+        x, y = world.behaviour.candidate_positions(mover, headings)
+        moving, _ = world.behaviour.utilities(mover, headings, x, y, np.array([band]))
+
+        stayer = world.spawn(1)
+        world.resting(stayer, 0.0)
+        x, y = world.behaviour.candidate_positions(stayer, headings)
+        rested, _ = world.behaviour.utilities(stayer, headings, x, y, np.array([band]))
+
+        # What a mover gives up by stopping, and what a stayer gives up by setting off again.
+        assert moving[0, 0] - moving[0, 3] == pytest.approx(band)
+        assert rested[0, 3] - rested[0, 0] == pytest.approx(band)
+
+    def test_a_resting_animal_still_prefers_the_way_it_was_facing(self):
+        """The heading is kept while resting (`choose`), so the travelling term still ranks the
+        ways it could resume. Without that a rested animal would pick its direction afresh from
+        nothing, which is the property #114 kept the column for.
+        """
+        world = World(n_candidates=3)
+        selection = world.spawn(1)
+        world.resting(selection, 0.0)
+        headings = np.array([[0.0, np.pi / 2, np.pi]])
+        x, y = world.behaviour.candidate_positions(selection, headings)
+
+        total, _ = world.behaviour.utilities(selection, headings, x, y, np.array([0.5]))
+
+        assert total[0, 0] > total[0, 1] > total[0, 2]
+
+    def test_commitment_keeps_a_tired_cohort_down_across_ticks(self):
+        """The behaviour the term exists for, at `choose` level and over several ticks: a dogged
+        cohort that has settled stays settled against a standing appetite, while an uncommitted one
+        gets straight back up. This is what lets exertion actually decay (#107) instead of being
+        shed one tick and re-spent the next.
+        """
+        world = World(capacity=512)
+        dogged = world.spawn(200, commitment=5.0)
+        flighty = world.spawn(200, commitment=0.0)
+        world.resting(dogged, 1.0)
+        world.resting(flighty, 1.0)
+        # A steady pull toward one heading, well under the dogged cohort's band and well over the
+        # flighty one's — which is zero.
+        world.behaviour.register(wanting(3, urgency=1.0))
+
+        for tick in range(3):
+            world.behaviour.choose(dogged, np.random.default_rng(tick))
+            world.behaviour.choose(flighty, np.random.default_rng(tick))
+
+        assert not world.store.choice_moving[dogged.to_indices()].any()
+        assert world.store.choice_moving[flighty.to_indices()].all()
 
     def test_a_commitment_gene_that_could_express_negative_is_rejected(self):
         """A negative bonus rewards reversing, which is a spin rather than a preference — and the
