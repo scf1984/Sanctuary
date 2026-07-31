@@ -55,6 +55,7 @@ GENE_NAMES = (
     "mutability",
     "choice_temperature",
     "commitment",
+    "maturity_age",
 )
 GENE_REGISTRY = gene_registry(GENE_NAMES, {"size": 2.0, "speed": 3.0, "sight": 1.0, "insulation": 1.0, "scent_acuity": 0.5})
 SCENT_GENES = ScentGenes(emission_gene="scent_emission", signature_genes=SIGNATURE_GENES)
@@ -543,10 +544,11 @@ class TestLust:
     def test_an_immature_animal_wants_no_mate_however_fat(self):
         world = World()
         selection = world.spawn(1, energy=np.array([100.0], dtype=np.float32))
+        world.genetics.set_genes(selection, gene_rows({"maturity_age": 100.0}))
         world.store.age[selection.to_indices()] = 5
         config = LustConfig(
             weight=1.0,
-            maturity_age=100,
+            maturity_gene="maturity_age",
             scent_acuity_gene="scent_acuity",
             detection_threshold=1e-4,
             breeding_energy=20.0,
@@ -561,10 +563,11 @@ class TestLust:
         """
         world = World()
         selection = world.spawn(1, energy=np.array([10.0], dtype=np.float32))
+        world.genetics.set_genes(selection, gene_rows({"maturity_age": 100.0}))
         world.store.age[selection.to_indices()] = 200
         config = LustConfig(
             weight=1.0,
-            maturity_age=100,
+            maturity_gene="maturity_age",
             scent_acuity_gene="scent_acuity",
             detection_threshold=1e-4,
             breeding_energy=20.0,
@@ -576,10 +579,11 @@ class TestLust:
     def test_lust_rises_with_energy_above_the_breeding_floor(self):
         world = World()
         selection = world.spawn(3, energy=np.array([20.0, 45.0, 90.0], dtype=np.float32))
+        world.genetics.set_genes(selection, gene_rows(*[{"maturity_age": 100.0}] * 3))
         world.store.age[selection.to_indices()] = 200
         config = LustConfig(
             weight=1.0,
-            maturity_age=100,
+            maturity_gene="maturity_age",
             scent_acuity_gene="scent_acuity",
             detection_threshold=1e-4,
             breeding_energy=20.0,
@@ -595,10 +599,11 @@ class TestLust:
         """The tick counter is the only clock (CLAUDE.md §2.1) — maturity is a row of `age`."""
         world = World()
         selection = world.spawn(2, energy=np.array([70.0, 70.0], dtype=np.float32))
+        world.genetics.set_genes(selection, gene_rows(*[{"maturity_age": 100.0}] * 2))
         world.store.age[selection.to_indices()] = [99, 100]
         config = LustConfig(
             weight=1.0,
-            maturity_age=100,
+            maturity_gene="maturity_age",
             scent_acuity_gene="scent_acuity",
             detection_threshold=1e-4,
             breeding_energy=20.0,
@@ -612,7 +617,7 @@ class TestLust:
     def lust(self, world, **overrides):
         params = dict(
             weight=1.0,
-            maturity_age=100,
+            maturity_gene="maturity_age",
             scent_acuity_gene="scent_acuity",
             detection_threshold=1e-4,
             breeding_energy=20.0,
@@ -773,7 +778,7 @@ def register_four(world):
             world.scent,
             world.genes,
             LustConfig(weight=1.0,
-            maturity_age=100,
+            maturity_gene="maturity_age",
             scent_acuity_gene="scent_acuity",
             detection_threshold=1e-4,
             breeding_energy=20.0,
@@ -1286,7 +1291,7 @@ class TestAllFiveDrivesCompeting:
                 world.genes,
                 LustConfig(
                     weight=1.0,
-            maturity_age=100,
+            maturity_gene="maturity_age",
             scent_acuity_gene="scent_acuity",
             detection_threshold=1e-4,
             breeding_energy=20.0,

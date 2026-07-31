@@ -219,8 +219,13 @@ class LustConfig:
     """Per-world tuning for the lust drive.
 
     weight: multiplier on the drive's 0-1 shape.
-    maturity_age: ticks. Below this an animal does not seek a mate at any energy level — the tick
-        counter is the only clock (CLAUDE.md §2.1), so this is in ticks and never in real time.
+    maturity_gene: the gene whose expressed value is how many ticks an animal must live before it
+        seeks a mate at all. A **gene** rather than a constant (§2.5, #20): age at first
+        reproduction is among the most strongly selected life-history traits there is, and a world
+        that fixes it decides by hand what the environment should be deciding. Read as a magnitude,
+        so a lineage that drifts below zero matures at once rather than never.
+        The tick counter is the only clock (§2.1), so what it expresses is a count of ticks and
+        never a span of real time.
     scent_acuity_gene: the gene whose expressed value is scent detection sensitivity. The *same*
         gene fear reads: mate-finding and threat-detection are one nose, so a keener nose finds
         both from further away and there is no separate sense to evolve.
@@ -234,7 +239,7 @@ class LustConfig:
     """
 
     weight: float
-    maturity_age: int
+    maturity_gene: str
     scent_acuity_gene: str
     detection_threshold: float
     breeding_energy: float
@@ -242,8 +247,6 @@ class LustConfig:
 
     def __post_init__(self) -> None:
         _check_weight(self.weight)
-        if self.maturity_age < 0:
-            raise ValueError(f"maturity_age must be non-negative, got {self.maturity_age}")
         if self.detection_threshold <= 0:
             raise ValueError(
                 f"detection_threshold must be positive, got {self.detection_threshold}; at or "
@@ -280,7 +283,14 @@ class Lust:
         self.genetics = genetics
         self.scent = scent
         self.config = config
-        self._acuity_index = genes.index_of(config.scent_acuity_gene, unit=Unit.DIMENSIONLESS)
+        # A count of ticks, so dimensionless: §2.1 makes the tick the only clock, and
+        # nothing here is a length or an energy.
+        self._maturity_index = genes.index_of(
+            config.maturity_gene, unit=Unit.DIMENSIONLESS
+        )
+        self._acuity_index = genes.index_of(
+            config.scent_acuity_gene, unit=Unit.DIMENSIONLESS
+        )
 
     def appeal(self, selection: Selection, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """(n, n_options) float32 in [0, 1]: how much company-like-me each option leads toward.
@@ -316,8 +326,14 @@ class Lust:
         ).astype(np.float32)
 
     def urgency(self, selection: Selection) -> np.ndarray:
-        """(len(selection),) float32: weighted energy surplus, zero before maturity."""
-        mature = self.store.age[selection.to_mask()] >= self.config.maturity_age
+        """(len(selection),) float32: weighted energy surplus, zero before maturity.
+
+        Maturity is per-entity because it is a gene (#20): two animals of the same age can differ
+        in whether they are looking yet, which is what lets selection tune age at first
+        reproduction against the world rather than a designer choosing it.
+        """
+        maturity = self.genetics.expressed(selection)[:, self._maturity_index]
+        mature = self.store.age[selection.to_mask()] >= maturity
         headroom = self.config.abundant_energy - self.config.breeding_energy
         surplus = (self.ecology.energy(selection) - self.config.breeding_energy) / headroom
         return (self.config.weight * np.where(mature, np.clip(surplus, 0.0, 1.0), 0.0)).astype(

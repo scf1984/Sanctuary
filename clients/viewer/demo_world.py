@@ -169,6 +169,19 @@ _GENES = (
         ),
     ),
     GeneSpec(
+        name="maturity_age",
+        cost=0.0,
+        expression_mode=ExpressionMode.MAGNITUDE,
+        unit=Unit.DIMENSIONLESS,
+        description=(
+            "Ticks an animal must live before it seeks a mate at all. A gene rather than a "
+            "constant, because age at first reproduction is among the most strongly selected "
+            "life-history traits there is and a world that fixes it decides by hand what the "
+            "environment should decide (§2.5, #20). Free: late maturity is already paid for in "
+            "generations forgone."
+        ),
+    ),
+    GeneSpec(
         name="mutability",
         cost=0.0,
         expression_mode=ExpressionMode.MAGNITUDE,
@@ -269,10 +282,11 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
         ),
         lust=LustConfig(
             weight=1.0,
-            maturity_age=20,
+            maturity_gene="maturity_age",
             scent_acuity_gene="scent_acuity",
-            detection_threshold=1e-4,
-            breeding_energy=120.0, abundant_energy=250.0
+            detection_threshold=0.05,
+            breeding_energy=120.0,
+            abundant_energy=250.0,
         ),
         fatigue=FatigueConfig(weight=1.0, exertion_saturation=20.0),
         behaviour=BehaviourConfig(
@@ -316,6 +330,9 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
             # declared herbivores — this world holds only plants, so selection settles it within a
             # few generations, and that is the point (§2.5, #101: founders are naive).
             "diet_animal_derived": (-1.0, 1.0),
+            # Ticks. Wide, and low relative to a lifetime, so founders differ in how soon they
+            # breed and selection has something to act on from the first generation.
+            "maturity_age": (40.0, 120.0),
         },
         n_founders=n_entities,
         founder_energy=180.0,
