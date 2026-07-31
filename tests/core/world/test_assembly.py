@@ -23,6 +23,7 @@ from core.behaviour.exertion import ExertionConfig
 from core.behaviour.service import BehaviourConfig
 from core.behaviour.movement import MovementConfig
 from core.ecology.conception import ConceptionConfig
+from core.entities.growth import GrowthConfig
 from core.ecology.cues import CueFieldConfig, ScentGenes
 from core.ecology.diet import DietConfig
 from core.ecology.feeding import FeedingConfig
@@ -110,6 +111,13 @@ def world_config(**overrides):
             saturation_accumulation=20.0,
             max_rooting_depth=0.5,
             forage_diffusion=DiffusionConfig(range=4.0, climb_penalty=0.5),
+        ),
+        growth=GrowthConfig(
+            # Grow when free rows fall below a tenth of the rows in use. Measured in
+            # docs/spikes/conception-and-capacity.md: at the steepest growth a world managed about
+            # 0.43% of occupancy allocated per tick, so a tenth is roughly twenty ticks of runway
+            # — and since `grow` doubles, it is reached rarely.
+            reserve_fraction=0.1,
         ),
         conception=ConceptionConfig(
             # World units. A contact distance, not a search radius: finding each other is the lust
@@ -347,17 +355,18 @@ class TestABuiltWorldRuns:
 
         world.loop.advance(10)
 
-        assert np.all(world.store.age[world.founders.to_mask()] == 10)
+        assert np.all(world.store.age[world.store.alive] == 10)
 
     def test_animals_move(self):
         """Movement is wired to a real decision: `Behaviour` picks a winner and the foragers among
         them walk toward the patch `Hunger` chose. Nothing asserts *where* — that is ecology."""
         world = build_world(world_config(), seed=5)
-        before = world.store.x[world.founders.to_mask()].copy()
+        alive = world.store.alive.copy()
+        before = world.store.x[alive].copy()
 
         world.loop.advance(15)
 
-        assert np.any(world.store.x[world.founders.to_mask()] != before)
+        assert np.any(world.store.x[: alive.shape[0]][alive] != before)
 
     def test_every_drive_scores(self):
         """All five are registered and all five run, which is the thing no test could check before
@@ -366,7 +375,7 @@ class TestABuiltWorldRuns:
 
         world.loop.advance(1)
 
-        breakdown = world.behaviour.breakdown(world.founders)
+        breakdown = world.behaviour.breakdown(Selection.from_mask(world.store.alive))
         assert set(breakdown) == {"hunger", "thirst", "fear", "lust", "fatigue"}
         assert all(scores.shape == (world.config.n_founders,) for scores in breakdown.values())
 
@@ -377,7 +386,7 @@ class TestABuiltWorldRuns:
 
         world.loop.advance(10)
 
-        mask = world.founders.to_mask()
+        mask = world.store.alive
         ground = world.terrain.elevation_at(world.store.x[mask], world.store.y[mask])
         assert world.store.z[mask] == pytest.approx(ground, abs=1e-4)
 
@@ -385,11 +394,12 @@ class TestABuiltWorldRuns:
         """Upkeep runs, so a world where nothing eats is a world that spends down. Feeding is #19's;
         until it lands this direction is the whole energy story."""
         world = build_world(world_config(), seed=8)
-        before = world.ecology.energy(world.founders).sum()
+        population = Selection.from_mask(world.store.alive)
+        before = world.ecology.energy(population).sum()
 
         world.loop.advance(10)
 
-        assert world.ecology.energy(world.founders).sum() < before
+        assert world.ecology.energy(Selection.from_mask(world.store.alive)).sum() < before
 
 
 class TestBatchingDoesNotChangeTheWorld:
@@ -488,7 +498,7 @@ class TestFoundersAreNaive:
 
     def test_founders_start_on_the_surface_and_alive(self):
         world = build_world(world_config(), seed=14)
-        mask = world.founders.to_mask()
+        mask = world.store.alive
 
         assert np.all(world.store.alive[mask])
         assert np.all(world.store.health[mask] == 1.0)

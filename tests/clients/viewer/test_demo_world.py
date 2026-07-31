@@ -110,14 +110,15 @@ class TestFramePath:
     def test_a_death_removes_an_entity_from_the_frame(self):
         """End-to-end proof that the ghost is gone (#119).
 
-        Nothing in an assembled world dies yet — #21 is unbuilt — so this releases a row directly.
-        That is exactly what death will do, and the point is that the *frame path* stops drawing it
-        rather than that any particular system caused it. Capacity-wide rendering was accidentally
-        correct only because the demo world allocated exactly its capacity and never released a row.
+        Releases a row directly rather than waiting for starvation to arrive on its own schedule;
+        the point is that the *frame path* stops drawing it, not that any particular system caused
+        it. Capacity-wide rendering was accidentally correct only because the demo world allocated
+        exactly its capacity and never released a row.
         """
         world = build_demo_world(seed=4, n_entities=40)
         world.loop.advance(1)
         before = int(world.store.alive.sum())
+        capacity_before = world.store.capacity
 
         doomed = world.store.row_ids()[world.store.alive][:1]
         world.store.release(doomed)
@@ -133,4 +134,7 @@ class TestFramePath:
 
         assert int(drawn.sum()) == before - 1
         assert len(x) == before - 1
-        assert world.store.capacity == before, "capacity is unchanged; only the drawn set shrank"
+        # A death frees a row, it does not shrink the store — the drawn set narrows and the
+        # capacity does not. Compared against the capacity *before*, not against the
+        # population: a store now carries a breeding reserve (#127), so the two differ.
+        assert world.store.capacity == capacity_before
