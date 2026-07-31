@@ -14,20 +14,20 @@ as data and then not consulting it, which is why the tuple sequences rather than
 
 The reasoning behind each position lives in CLAUDE.md §2.1, not here — it is a decision of
 consequence and belongs where decisions are recorded (§8.6). What belongs here is the fact that
-**this is the implemented prefix of that order, in that order.** Four settled steps have no system
+**this is the implemented prefix of that order, in that order.** Three settled steps have no system
 yet and are absent rather than stubbed (§8.2):
 
 | settled step | inserted by |
 |---|---|
-| feeding, after movement | #19 |
 | death and decomposition, after upkeep | #21 |
 | reproduction, after death | #20 |
 | speciation, last; periodicity still open | #16 |
 
-Their absence is visible in what the world does. Nothing eats, so energy only ever leaves the
-animals; nothing dies or is born, so the population is fixed at its founders. This is a world that
-*runs* — every service reading what the previous ones wrote, over real terrain — and not yet a world
-that lives.
+Their absence is visible in what the world does. Energy now enters an animal — feeding runs between
+exertion recovery and upkeep, so a grazer eats where it arrived and pays its upkeep afterwards
+rather than starving on top of a meadow (§2.1) — but nothing dies or is born, so the population is
+fixed at its founders however well or badly it feeds. This is a world that *runs* and now *eats*,
+and not yet one that lives.
 
 **Movement acts for one drive.** `Behaviour` scores all five and partitions the population by
 winner, but only hunger has somewhere to walk to today: fleeing is #24's, mate-seeking is #20's,
@@ -65,6 +65,8 @@ from core.behaviour.movement import Movement, MovementConfig
 from core.behaviour.service import Behaviour, BehaviourConfig
 from core.ecology.aging import Aging
 from core.ecology.cues import CueField, CueFieldConfig, Scent, ScentGenes
+from core.ecology.diet import Diet, DietConfig
+from core.ecology.feeding import Feeding, FeedingConfig
 from core.ecology.metabolism import Metabolism, MetabolismConfig
 from core.ecology.plants import Plants, PlantsConfig
 from core.ecology.service import Ecology
@@ -87,6 +89,7 @@ TICK_ORDER: tuple[str, ...] = (
     "drive_scoring",
     "movement",
     "exertion_recovery",
+    "feeding",
     "metabolic_upkeep",
     "age_increment",
 )
@@ -127,6 +130,8 @@ class WorldConfig:
     terrain: TerrainConfig
     climate: ClimateConfig
     plants: PlantsConfig
+    diet: DietConfig
+    feeding: FeedingConfig
     cue_field: CueFieldConfig
     metabolism: MetabolismConfig
     genetics: GeneticsConfig
@@ -182,6 +187,7 @@ class World:
     species: SpeciesRegistry
     genetics: Genetics
     ecology: Ecology
+    feeding: Feeding
     exertion: Exertion
     movement: Movement
     behaviour: Behaviour
@@ -223,6 +229,15 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
         genetics,
         climate,
         Metabolism(genes, config.metabolism),
+    )
+    feeding = Feeding(
+        store,
+        plants,
+        genetics,
+        ecology,
+        Diet(genes, config.diet),
+        genes,
+        config.feeding,
     )
     exertion = Exertion(store, columns, config.exertion)
     movement = Movement(
@@ -270,6 +285,7 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
         movement,
         exertion,
         ecology,
+        feeding,
         aging,
         rng,
         config.movement.walking_pace,
@@ -294,6 +310,7 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
         species=species,
         genetics=genetics,
         ecology=ecology,
+        feeding=feeding,
         exertion=exertion,
         movement=movement,
         behaviour=behaviour,
@@ -335,6 +352,7 @@ def _build_systems(
     movement: Movement,
     exertion: Exertion,
     ecology: Ecology,
+    feeding: Feeding,
     aging: Aging,
     rng: np.random.Generator,
     walking_pace: float,
@@ -368,6 +386,7 @@ def _build_systems(
         "drive_scoring": lambda: behaviour.choose(living(), rng),
         "movement": move_chosen,
         "exertion_recovery": lambda: exertion.recover(living()),
+        "feeding": lambda: feeding.feed(living()),
         "metabolic_upkeep": lambda: ecology.drain(living()),
         "age_increment": lambda: aging.advance(living()),
     }

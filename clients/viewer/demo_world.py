@@ -34,6 +34,8 @@ from core.behaviour.exertion import ExertionConfig
 from core.behaviour.service import BehaviourConfig
 from core.behaviour.movement import MovementConfig
 from core.ecology.cues import CueFieldConfig, ScentGenes
+from core.ecology.diet import DietConfig
+from core.ecology.feeding import FeedingConfig
 from core.ecology.metabolism import MetabolismConfig
 from core.ecology.plants import PlantsConfig
 from core.genetics.expression import GeneticsConfig
@@ -154,6 +156,19 @@ _GENES = (
         ),
     ),
     GeneSpec(
+        name="diet_animal_derived",
+        cost=0.0,
+        expression_mode=ExpressionMode.UNIT_INTERVAL,
+        unit=Unit.DIMENSIONLESS,
+        description=(
+            "How a gut is split between plant and animal food: 0 is a pure herbivore, 1 a pure "
+            "carnivore, and what is given to one side is taken from the other. An allocation "
+            "rather than a pair of capacities, because two capacities can both rise and this "
+            "cannot (#102, #146). Free: being allocated for food this world does not hold is its "
+            "own price, immediately."
+        ),
+    ),
+    GeneSpec(
         name="mutability",
         cost=0.0,
         expression_mode=ExpressionMode.MAGNITUDE,
@@ -195,6 +210,27 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
             saturation_accumulation=20.0,
             max_rooting_depth=0.5,
             forage_diffusion=DiffusionConfig(range=4.0, climb_penalty=0.5),
+        ),
+        diet=DietConfig(
+            animal_derived_gene="diet_animal_derived",
+            # Above 1 so a generalist is strictly worse than a specialist at that specialist's own
+            # food (#146). At 2 an even split converts a quarter as well as a pure herbivore,
+            # which in a world holding only plants is a strong pull toward herbivory — and that
+            # pull is the point: nothing here declares these creatures herbivores.
+            frontier_exponent=2.0,
+        ),
+        feeding=FeedingConfig(
+            # Chosen so a *naive* founder population is viable, which is a stricter and temporary
+            # requirement than it looks: nothing dies (#21) and nothing breeds (#20), so selection
+            # cannot move the diet distribution and the rate has to carry animals that were badly
+            # allocated by chance. Measured in docs/spikes/grazing-equilibrium.md over 3 seeds and
+            # 2,500 ticks: 10% of founders viable at 2.5, 47% at 6.0, 66% here. Revisit once #20
+            # and #21 let selection do this work instead — it should look generous by then.
+            intake_rate=9.0,
+            # No gut extracts everything: the remainder is faeces, and it is what fertilises the
+            # ground a herd grazes over.
+            assimilation_max=0.5,
+            size_gene="size",
         ),
         cue_field=CueFieldConfig(diffusion_range=3.0),
         metabolism=MetabolismConfig(
@@ -271,6 +307,11 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
             # Around zero, so `exp` puts founding temperatures around 1 — the scale at which a
             # utility difference of one is a decisive preference rather than a faint one.
             "choice_temperature": (-0.3, 0.3),
+            # Spread across zero, which the logistic squash reads as allocations either side of an
+            # even split. Founders are therefore *undecided* about what they eat rather than
+            # declared herbivores — this world holds only plants, so selection settles it within a
+            # few generations, and that is the point (§2.5, #101: founders are naive).
+            "diet_animal_derived": (-1.0, 1.0),
         },
         n_founders=n_entities,
         founder_energy=180.0,

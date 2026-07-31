@@ -123,6 +123,20 @@ class TestResolvingAGene:
 
 
 class TestGeneratedMap:
+    def test_allows_a_cost_on_a_unit_interval_gene(self):
+        """A [0, 1] reading cannot produce a negative phenotype, so #136's objection does not
+        apply. #102 and #146 both set their allocation genes to zero cost for a different reason —
+        the selective consequence is immediate — but that is a per-world economy decision, not
+        something the registry may impose."""
+        registry = GeneRegistry(
+            (spec("size"), spec("diet_fresh", cost=0.5, mode=ExpressionMode.UNIT_INTERVAL))
+        )
+
+        assert registry.cost.tolist() == [0.0, 0.5]
+
+    def test_a_unit_interval_gene_expresses_non_negative(self):
+        assert ExpressionMode.UNIT_INTERVAL.always_non_negative
+
     def test_an_exponential_gene_expresses_strictly_positive(self):
         # The reason the mode exists: a temperature or a rate must never reach zero however far
         # the gene drifts, and `exp` guarantees that by construction rather than by a clamp.

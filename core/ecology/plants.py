@@ -267,6 +267,47 @@ class Plants:
         self.exported_nutrients += float(removed.sum()) * self.config.nutrient_per_biomass
         return harvested
 
+    def return_nutrients(self, x: np.ndarray, y: np.ndarray, biomass: np.ndarray) -> None:
+        """Put nutrients back into the soil at each position, off the export ledger.
+
+        x, y:    (n,) world units — where each deposit lands.
+        biomass: (n,) energy units — the *biomass equivalent* being returned, not a nutrient
+                 amount. Callers hold energy, and the exchange rate is this class's config, so
+                 converting here is what keeps `nutrient_per_biomass` in one place.
+
+        The counterpart to `graze`, which moves nutrients out of the field and onto
+        `exported_nutrients`. Feeding (#19) assimilates only part of a mouthful, so the rest comes
+        straight back as faeces into the cell it was eaten in — which is why a poor digester
+        fertilises the ground it grazes without anybody writing a fertilisation mechanic. #21's
+        decomposition returns a whole carcass through the same door.
+
+        Rejects returning more than is outstanding. Conservation would still hold if it did — this
+        moves nutrients between two terms of `total_nutrients()` and creates none — and that is
+        precisely why the check has to be here rather than left to the invariant harness: a ledger
+        driven negative means nutrients were invented upstream, and nothing downstream could
+        notice (§8.7).
+        """
+        biomass = np.asarray(biomass, dtype=np.float64)
+        if np.any(biomass < 0):
+            raise ValueError("returned biomass must be non-negative")
+
+        returned = float(biomass.sum()) * self.config.nutrient_per_biomass
+        if returned > self.exported_nutrients:
+            raise ValueError(
+                f"cannot return more nutrients than have left the field: returning {returned} "
+                f"against {self.exported_nutrients} outstanding"
+            )
+
+        rows, cols = self._cell_indices(x, y)
+        flat_cell = rows * self.soil_nutrients.shape[1] + cols
+        deposited = np.zeros(self.soil_nutrients.size, dtype=np.float64)
+        np.add.at(deposited, flat_cell, biomass * self.config.nutrient_per_biomass)
+        self.soil_nutrients += deposited.reshape(self.soil_nutrients.shape)
+        # Debited from the same summed array that was credited to the cells, so what enters the
+        # soil and what leaves the ledger agree to the last bit and conservation holds exactly —
+        # the reason `graze` ledgers from `removed` rather than from `harvested`.
+        self.exported_nutrients -= float(deposited.sum())
+
     def forage_field(self) -> np.ndarray:
         """``(height, width)`` float32: how much grazing is *reachable* from every cell (#93).
 

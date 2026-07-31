@@ -58,6 +58,7 @@ class ExpressionTable:
         operations rather than a per-gene loop (§2.3). Taken from the registry rather than rebuilt,
         since a second copy resolved separately is the disagreement #111 exists to prevent.
     exponential_columns: (n_genes,) bool, True where the gene is read as `exp(value)`.
+    unit_interval_columns: (n_genes,) bool, True where the gene is read as an allocation on (0, 1).
     mutability_index: int, the column `inherit()` reads the draw's spread floor from.
     """
 
@@ -65,8 +66,10 @@ class ExpressionTable:
         self.config = config
         self.magnitude_columns = registry.magnitude_columns
         self.exponential_columns = registry.exponential_columns
+        self.unit_interval_columns = registry.unit_interval_columns
         # Hoisted so `phenotype` — called every tick — does not reduce a boolean array per call.
         self._has_exponential = bool(self.exponential_columns.any())
+        self._has_unit_interval = bool(self.unit_interval_columns.any())
 
         # Raises KeyError naming the vocabulary version if the gene does not exist. The spread of
         # a distribution is a bare number, hence dimensionless.
@@ -80,8 +83,8 @@ class ExpressionTable:
     def phenotype(self, raw: np.ndarray) -> np.ndarray:
         """(n, n_genes) float32: `raw` gene rows read through each gene's mode.
 
-        Magnitude genes fold across zero, exponential genes are raised through `exp`, and signed
-        genes pass through.
+        Magnitude genes fold across zero, exponential genes are raised through `exp`, unit-interval
+        genes are squashed into (0, 1), and signed genes pass through.
         Species expression is *not* applied here — that is `Genetics.expressed`'s job, and it runs
         after this rather than before it, because a mode maps an unexpressed gene's stored value to
         something that is not necessarily zero and masking first would express half of it.
@@ -94,4 +97,12 @@ class ExpressionTable:
         if self._has_exponential:
             columns = self.exponential_columns
             phenotype[:, columns] = np.exp(phenotype[:, columns])
+        if self._has_unit_interval:
+            columns = self.unit_interval_columns
+            # The logistic, written as `0.5 * (1 + tanh(x/2))` rather than `1 / (1 + exp(-x))`.
+            # They are the same function, but the direct form overflows `exp` on any gene that has
+            # drifted well below zero — a RuntimeWarning every tick, and `inf` computed only to be
+            # divided away. `tanh` saturates at ±1 instead, so an extreme allocation costs nothing
+            # and still lands strictly inside the interval.
+            phenotype[:, columns] = 0.5 * (1.0 + np.tanh(0.5 * phenotype[:, columns]))
         return phenotype
