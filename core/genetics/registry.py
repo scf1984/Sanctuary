@@ -52,11 +52,28 @@ class ExpressionMode(Enum):
     it produces a phenotype that bounces off zero; `exp` is monotone, so drift is smooth and the
     sign of the stored value carries real information (below one versus above it)."""
 
-    # There is deliberately no unit-interval mode. #104 names a squash to [0, 1] for
-    # `sex_allocation` and `selfing_rate` (#99) and for respiration allocation (#146) — none of
-    # which exist yet, so adding the member now would be a mode nothing declares (§8.2). Adding one
-    # later is additive, as EXPONENTIAL was when #114's `choice_temperature` first needed it.
+    UNIT_INTERVAL = "unit_interval"
+    """An allocation: read as a logistic squash into (0, 1). What the gene says is not how much of
+    something a body has but how a fixed budget is *split* — 0 is all of one side, 1 all of the
+    other, and the two shares sum to one by construction.
 
+    That is why an allocation needs no clamp and no ceiling: there is no quantity to run away
+    (#146). A capacity can always rise, so `water_breathing` or `feeding_speed` would be pure
+    benefit bounded only by whatever the cost table happened to say; an allocation cannot, because
+    every unit given to one side is taken from the other.
+
+    The interval is held by the reading itself rather than by a clamp — the same requirement §2.5
+    places on senescence decay, and for the same reason: genes drift freely, so the formula has to
+    carry the property.
+
+    Unlike senescence decay, though, the *ends* are allowed. Beyond roughly ±40 the float32
+    reading saturates to exactly 0 or 1, and that is left alone deliberately: a fully specialised
+    gut is a legitimate evolutionary endpoint, and the convex frontier in #102 exists precisely to
+    reward getting there. Senescence could not reach zero because that would be immortality; a
+    pure herbivore is just a herbivore. What must never happen is a value *outside* the interval.
+
+    First declared by #102's diet allocation; named by #104 and reserved for #99's
+    `sex_allocation` and `selfing_rate` and #146's respiration long before anything used it."""
 
     @property
     def always_non_negative(self) -> bool:
@@ -67,7 +84,11 @@ class ExpressionMode(Enum):
         multiplies cannot go below zero. `abs` and `exp` both promise that; a raw signed read does
         not. A mode added later answers here once instead of being remembered in the registry.
         """
-        return self in (ExpressionMode.MAGNITUDE, ExpressionMode.EXPONENTIAL)
+        return self in (
+            ExpressionMode.MAGNITUDE,
+            ExpressionMode.EXPONENTIAL,
+            ExpressionMode.UNIT_INTERVAL,
+        )
 
 
 class Unit(Enum):
@@ -128,6 +149,7 @@ class GeneRegistry:
     magnitude_columns: (n_genes,) bool, True where the gene is read as a magnitude, in column
         order — so applying every mode to a phenotype block is a handful of whole-array operations.
     exponential_columns: (n_genes,) bool, True where the gene is read as `exp(value)`.
+    unit_interval_columns: (n_genes,) bool, True where the gene is read as an allocation on (0, 1).
     """
 
     def __init__(self, specs: tuple[GeneSpec, ...]) -> None:
@@ -167,6 +189,9 @@ class GeneRegistry:
         )
         self.exponential_columns = np.array(
             [gene.expression_mode is ExpressionMode.EXPONENTIAL for gene in specs], dtype=bool
+        )
+        self.unit_interval_columns = np.array(
+            [gene.expression_mode is ExpressionMode.UNIT_INTERVAL for gene in specs], dtype=bool
         )
 
     def __len__(self) -> int:

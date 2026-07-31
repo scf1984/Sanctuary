@@ -268,6 +268,62 @@ class TestSpend:
         assert ecology.energy(selection) == pytest.approx([100.0])
 
 
+class TestGain:
+    """The other half of the pool, and the only one that adds to it. Sunlight is #18's and enters
+    the plant field; this is where it reaches an animal (#19)."""
+
+    def _one_entity(self, energy):
+        store, _, species, _, ecology = make_world()
+        species_id = species.register(GENE_NAMES)
+        ids = store.allocate(
+            1,
+            energy=np.array([energy], dtype=np.float32),
+            species_id=np.array([species_id], dtype=np.int32),
+        )
+        return ecology, selection_for(store, ids)
+
+    def test_it_adds_to_the_pool(self):
+        ecology, selection = self._one_entity(40.0)
+
+        ecology.gain(selection, np.array([12.0], dtype=np.float32))
+
+        assert ecology.energy(selection) == pytest.approx([52.0])
+
+    def test_a_negative_gain_is_rejected_rather_than_becoming_an_uncharged_cost(self):
+        """The mirror of `spend`'s guard, and for the mirrored reason: an income with its sign
+        flipped is a withdrawal that no cost table accounts for, so §2.5's loop would leak with
+        nothing to flag it (§8.7)."""
+        ecology, selection = self._one_entity(40.0)
+
+        with pytest.raises(ValueError, match="cannot be negative"):
+            ecology.gain(selection, np.array([-5.0], dtype=np.float32))
+
+        assert ecology.energy(selection) == pytest.approx([40.0])
+
+    def test_it_leaves_rows_outside_the_selection_alone(self):
+        store, _, species, _, ecology = make_world()
+        species_id = species.register(GENE_NAMES)
+        ids = store.allocate(
+            2,
+            energy=np.array([10.0, 10.0], dtype=np.float32),
+            species_id=np.full(2, species_id, dtype=np.int32),
+        )
+        fed = selection_for(store, ids[:1])
+
+        ecology.gain(fed, np.array([5.0], dtype=np.float32))
+
+        assert ecology.energy(selection_for(store, ids)) == pytest.approx([15.0, 10.0])
+
+    def test_gaining_nothing_changes_nothing(self):
+        """The ordinary case once feeding runs every tick: most animals are standing on ground
+        they have already stripped, so a zero harvest must be free rather than an error."""
+        ecology, selection = self._one_entity(40.0)
+
+        ecology.gain(selection, np.array([0.0], dtype=np.float32))
+
+        assert ecology.energy(selection) == pytest.approx([40.0])
+
+
 class TestStarving:
     def test_selects_the_entities_whose_pool_has_run_out(self):
         store, _, species, _, ecology = make_world()

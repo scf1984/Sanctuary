@@ -106,6 +106,31 @@ class Ecology(DomainService):
             )
         self.write("energy", selection, np.maximum(self.energy(selection) - cost, 0.0))
 
+    def gain(self, selection: Selection, energy: np.ndarray) -> None:
+        """Credit `energy` units to `selection`'s pools — the only thing that adds to them.
+
+        This is the income half §2.5's closed loop needs, and it is deliberately as narrow as
+        `spend`: sunlight enters the world in `core.ecology.plants` and reaches an animal only
+        here, through a transfer that some other module has already decided the size of. Feeding
+        (#19) is the first caller, and it hands over what a mouthful was worth *after* conversion —
+        this method does no conversion of its own, because the efficiency that bounds a transfer is
+        a property of the eater's gut (`core.ecology.diet`) and not of the pool.
+
+        Raises ValueError for a negative credit, mirroring `spend`. An income with its sign flipped
+        is a withdrawal that no cost table accounts for, so the loop would leak with nothing to
+        flag it (§8.7).
+
+        There is no ceiling. A full animal is one that stops eating — which is hunger's business
+        (#22) and feeding's, not the pool's — and capping the column here would silently destroy
+        energy that the nutrient ledger has already recorded as leaving the field.
+        """
+        energy = np.asarray(energy, dtype=np.float32)
+        if np.any(energy < 0.0):
+            raise ValueError(
+                "gain() credits energy and cannot be negative; a withdrawal belongs in spend()"
+            )
+        self.write("energy", selection, self.energy(selection) + energy)
+
     def starving(self, selection: Selection) -> Selection:
         """The entities in `selection` whose pool has run out — energy at or below zero.
 

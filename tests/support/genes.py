@@ -28,10 +28,16 @@ _LENGTH_GENES = frozenset({"speed"})
 # drifts (#114); `abs` would fold it at zero, and a zero temperature is a division by zero.
 _EXPONENTIAL_GENES = frozenset({"choice_temperature"})
 
+# Diet is an allocation rather than a set of capacities (#102): the genes say how a fixed budget is
+# *split*, so they are read on [0, 1] and the shares they imply sum to one by construction.
+_UNIT_INTERVAL_PREFIXES = ("diet_",)
+
 
 def _mode_for(name: str) -> ExpressionMode:
     if name in _EXPONENTIAL_GENES:
         return ExpressionMode.EXPONENTIAL
+    if name.startswith(_UNIT_INTERVAL_PREFIXES):
+        return ExpressionMode.UNIT_INTERVAL
     if name.startswith(_SIGNED_PREFIXES):
         return ExpressionMode.SIGNED
     return ExpressionMode.MAGNITUDE

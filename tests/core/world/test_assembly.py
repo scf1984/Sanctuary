@@ -23,6 +23,8 @@ from core.behaviour.exertion import ExertionConfig
 from core.behaviour.service import BehaviourConfig
 from core.behaviour.movement import MovementConfig
 from core.ecology.cues import CueFieldConfig, ScentGenes
+from core.ecology.diet import DietConfig
+from core.ecology.feeding import FeedingConfig
 from core.ecology.metabolism import MetabolismConfig
 from core.ecology.plants import PlantsConfig
 from core.genetics.expression import GeneticsConfig
@@ -60,6 +62,7 @@ GENE_NAMES = (
     "mutability",
     "choice_temperature",
     "commitment",
+    "diet_animal_derived",
 )
 # Cue space is signed — a signature is a position in it, an aversion a direction through it — and
 # everything else here is a quantity that cannot go negative (#104).
@@ -105,6 +108,8 @@ def world_config(**overrides):
             max_rooting_depth=0.5,
             forage_diffusion=DiffusionConfig(range=4.0, climb_penalty=0.5),
         ),
+        diet=DietConfig(animal_derived_gene="diet_animal_derived", frontier_exponent=2.0),
+        feeding=FeedingConfig(intake_rate=0.6, assimilation_max=0.5, size_gene="size"),
         cue_field=CueFieldConfig(diffusion_range=3.0),
         metabolism=MetabolismConfig(
             basal_rate=0.05,
@@ -177,6 +182,9 @@ def world_config(**overrides):
             "mutability": (0.01, 0.03),
             "choice_temperature": (-0.3, 0.3),
             "commitment": (0.05, 0.25),
+            # Spread across zero, which the squash reads as allocations either side of an even
+            # split: founders are undecided about what they eat rather than declared herbivores.
+            "diet_animal_derived": (-1.0, 1.0),
         },
         n_founders=40,
         founder_energy=180.0,
@@ -231,6 +239,27 @@ class TestABuiltWorldRuns:
         world.loop.advance(50)
 
         assert world.loop.tick_count == 50
+
+    def test_animals_eat_what_grows(self):
+        """The loop is closed rather than a drain (§2.5). Asserted separately from
+        `test_every_invariant_holds_over_a_run` because nutrient conservation holds perfectly in a
+        world where nothing eats at all — it would pass unchanged if feeding never fired.
+        """
+        world = build_world(world_config(), seed=5)
+        population = Selection.from_mask(world.store.alive)
+        opening = world.store.energy[world.store.alive].copy()
+        upkeep = world.ecology.upkeep(population)
+
+        world.loop.advance(1)
+
+        # Biomass left the field. Asserted on the export ledger rather than on standing crop,
+        # because `plant_growth` runs before `feeding` in the same tick (§2.1) and a young field
+        # grows faster than a herd can eat — so the standing total rises even while it is grazed.
+        assert world.plants.exported_nutrients > 0.0
+        # At least one animal ends the tick holding more than upkeep alone would have left it,
+        # which is only possible if something credited the pool.
+        closing = world.store.energy[world.store.alive]
+        assert np.any(closing > opening - upkeep)
 
     def test_the_world_is_populated_and_aging(self):
         world = build_world(world_config(), seed=4)

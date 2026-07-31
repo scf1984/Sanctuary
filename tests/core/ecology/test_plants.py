@@ -234,6 +234,84 @@ class TestNutrientConservation:
         assert plants.total_nutrients() == pytest.approx(opening, rel=1e-9)
 
 
+class TestReturningNutrients:
+    """The way back onto the ledger. Feeding assimilates only part of a mouthful and the rest is
+    faeces (#19); #21's decomposition will use the same door for a whole carcass."""
+
+    def grazed(self, ticks=50):
+        plants = make_plants()
+        settle(plants, ticks=ticks)
+        plants.graze(np.array([5.0]), np.array([5.0]), np.array([plants.biomass[5, 5]]))
+        return plants
+
+    def test_returned_nutrients_land_in_the_cell_they_are_dropped_in(self):
+        plants = self.grazed()
+        before = plants.soil_nutrients[5, 5]
+
+        plants.return_nutrients(np.array([5.0]), np.array([5.0]), np.array([2.0]))
+
+        assert plants.soil_nutrients[5, 5] > before
+        assert plants.soil_nutrients[5, 5] - before == pytest.approx(
+            2.0 * CONFIG.nutrient_per_biomass
+        )
+
+    def test_it_comes_off_the_ledger_it_went_onto(self):
+        plants = self.grazed()
+        outstanding = plants.exported_nutrients
+
+        plants.return_nutrients(np.array([5.0]), np.array([5.0]), np.array([2.0]))
+
+        assert plants.exported_nutrients == pytest.approx(
+            outstanding - 2.0 * CONFIG.nutrient_per_biomass
+        )
+
+    def test_the_total_is_untouched_because_this_only_moves_nutrients(self):
+        plants = self.grazed()
+        opening = plants.total_nutrients()
+
+        plants.return_nutrients(np.array([5.0]), np.array([5.0]), np.array([2.0]))
+
+        assert plants.total_nutrients() == pytest.approx(opening, rel=1e-9)
+
+    def test_several_depositors_in_one_cell_accumulate(self):
+        plants = self.grazed()
+        before = plants.soil_nutrients[5, 5]
+
+        plants.return_nutrients(np.full(3, 5.0), np.full(3, 5.0), np.full(3, 1.0))
+
+        assert plants.soil_nutrients[5, 5] - before == pytest.approx(
+            3.0 * CONFIG.nutrient_per_biomass
+        )
+
+    def test_returning_nothing_is_free_rather_than_an_error(self):
+        """The ordinary case: a perfectly efficient gut, and every animal standing on ground it has
+        already stripped."""
+        plants = self.grazed()
+        opening = plants.total_nutrients()
+
+        plants.return_nutrients(np.array([5.0]), np.array([5.0]), np.array([0.0]))
+
+        assert plants.total_nutrients() == pytest.approx(opening, rel=1e-9)
+
+    def test_a_negative_return_is_rejected(self):
+        plants = self.grazed()
+
+        with pytest.raises(ValueError, match="non-negative"):
+            plants.return_nutrients(np.array([5.0]), np.array([5.0]), np.array([-1.0]))
+
+    def test_returning_more_than_ever_left_is_rejected(self):
+        """Conservation would still *hold* — this only moves between two terms of the same total —
+        which is exactly why it needs its own guard. The ledger going negative means nutrients were
+        invented upstream, and nothing downstream could tell (§8.7)."""
+        plants = self.grazed()
+        outstanding = plants.exported_nutrients / CONFIG.nutrient_per_biomass
+
+        with pytest.raises(ValueError, match="more nutrients than have left"):
+            plants.return_nutrients(
+                np.array([5.0]), np.array([5.0]), np.array([outstanding * 2.0])
+            )
+
+
 class TestGrazing:
     def test_grazing_depletes_only_the_grazed_cell(self):
         plants = make_plants()
