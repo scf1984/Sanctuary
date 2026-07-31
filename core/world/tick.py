@@ -12,6 +12,7 @@ from typing import Callable, Optional, Sequence
 
 import numpy as np
 
+from core.entities.growth import GrowthConfig, grow_if_crowded
 from core.entities.store import EntityStore
 from core.invariants import InvariantRegistry
 
@@ -41,6 +42,13 @@ class TickLoop:
         one that died during the interval, or to a newborn that inherited the row. Reading
         ``store.alive`` at draw time answers only the first of those, and only for the *current*
         end of the interval (#119).
+    growth: an optional capacity policy (`core.entities.growth`, #127), evaluated after every
+        tick and **only between ticks**. Growth belongs here rather than in `TICK_ORDER` because a
+        system runs mid-tick with others still to follow it, and `EntityStore.grow` replaces every
+        column array with a new object — a system holding a NumPy view into the old one would keep
+        reading pre-growth values and produce silently wrong results (§2.3). At a boundary no view
+        and no `Selection` is live, which is the whole reason the boundary is where this happens.
+        None disables it, which is what a world that never allocates during a tick wants.
     invariants, debug_checks: an optional InvariantRegistry (CLAUDE.md §6) evaluated after every
         tick, only when ``debug_checks`` is True. It is handed ``store``; invariants over anything
         else the world holds — the plant field, say — close over it when they are built, so the
@@ -55,9 +63,12 @@ class TickLoop:
         systems: Sequence[System],
         invariants: Optional[InvariantRegistry] = None,
         debug_checks: bool = False,
+        growth: Optional[GrowthConfig] = None,
     ) -> None:
         if debug_checks and invariants is None:
             raise ValueError("debug_checks requires an invariants registry")
+
+        self._growth = growth
 
         self.systems = tuple(systems)
         self._store = store
@@ -90,7 +101,34 @@ class TickLoop:
             self.tick_count += 1
             if self.debug_checks:
                 self._invariants.check_all(self._store, self.tick_count)
+            # After the invariants rather than before, so a check never sees a store whose columns
+            # were replaced halfway through the tick it is reporting on.
+            if self._growth is not None and grow_if_crowded(self._store, self._growth):
+                self._extend_previous_snapshot()
         self.current_positions, self.current_row_ids = self._snapshot()
+
+    def _extend_previous_snapshot(self) -> None:
+        """Widen the opening snapshot to the store's new capacity after a growth.
+
+        The renderer compares the two snapshots elementwise (#119), so they have to be the same
+        length or the comparison indexes off the end of the shorter one. New rows are padded with
+        id **-1**, which is not a placeholder but the truthful answer: nobody occupied that row at
+        the opening boundary. `live_positions` already reads -1 as "not the same entity as before"
+        and draws such a row where it is now rather than blending it in from a stale coordinate,
+        which is exactly right for a row that did not exist.
+        """
+        capacity = self._store.capacity
+        old_ids = self.previous_row_ids
+        row_ids = np.full(capacity, -1, dtype=np.int64)
+        row_ids[: old_ids.shape[0]] = old_ids
+        def widened(axis: np.ndarray) -> np.ndarray:
+            return np.concatenate(
+                [axis, np.zeros(capacity - axis.shape[0], dtype=axis.dtype)]
+            )
+
+        x, y, z = self.previous_positions
+        self.previous_positions = (widened(x), widened(y), widened(z))
+        self.previous_row_ids = row_ids
 
     def _snapshot(self) -> tuple[tuple[np.ndarray, np.ndarray, np.ndarray], np.ndarray]:
         """Positions and the row occupancy that qualifies them, as of right now.

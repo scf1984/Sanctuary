@@ -81,6 +81,7 @@ from core.ecology.feeding import Feeding, FeedingConfig
 from core.ecology.metabolism import Metabolism, MetabolismConfig
 from core.ecology.plants import Plants, PlantsConfig
 from core.ecology.service import Ecology
+from core.entities.growth import GrowthConfig
 from core.entities.store import EntityStore
 from core.genetics.expression import GeneticsConfig
 from core.genetics.service import Genetics
@@ -143,6 +144,7 @@ class WorldConfig:
     terrain: TerrainConfig
     climate: ClimateConfig
     plants: PlantsConfig
+    growth: GrowthConfig
     conception: ConceptionConfig
     diet: DietConfig
     feeding: FeedingConfig
@@ -209,6 +211,11 @@ class World:
     behaviour: Behaviour
     aging: Aging
     scent: Scent
+    # A `Selection` is a mask over a store of a particular capacity, so `founders` does not
+    # survive the store growing (#127): after a capacity change its mask is shorter than the
+    # columns it would index. Deliberate rather than a wart — a selection is a snapshot (§4),
+    # and the founders stop being a meaningful population the moment anything is born. Read
+    # `store.alive` for who is here now.
     founders: Selection
     loop: TickLoop
 
@@ -231,7 +238,12 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
     # added without widening the block fails in `Behaviour.register` at assembly time rather than
     # overwriting a neighbour's score.
     store = EntityStore(
-        initial_capacity=config.n_founders,
+        # The founders plus their reserve, so the world is able to breed from its first tick. Sized
+        # to the founders exactly, a store has zero free rows, and `Conception` truncates to what is
+        # available rather than raising — so the world would be born sterile until the first tick
+        # boundary grew it (#127).
+        initial_capacity=config.n_founders
+        + max(1, int(config.n_founders * config.growth.reserve_fraction)),
         n_drives=len(_DRIVE_NAMES),
         n_genes=len(genes),
     )
@@ -323,6 +335,7 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
             0.0, terrain.world_width, 0.0, terrain.world_height, plants=plants
         ),
         debug_checks=debug_checks,
+        growth=config.growth,
     )
     return World(
         config=config,

@@ -34,6 +34,7 @@ from core.behaviour.exertion import ExertionConfig
 from core.behaviour.service import BehaviourConfig
 from core.behaviour.movement import MovementConfig
 from core.ecology.conception import ConceptionConfig
+from core.entities.growth import GrowthConfig
 from core.ecology.cues import CueFieldConfig, ScentGenes
 from core.ecology.diet import DietConfig
 from core.ecology.feeding import FeedingConfig
@@ -237,6 +238,13 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
             saturation_accumulation=20.0,
             max_rooting_depth=0.5,
             forage_diffusion=DiffusionConfig(range=4.0, climb_penalty=0.5),
+        ),
+        growth=GrowthConfig(
+            # Grow when free rows fall below a tenth of the rows in use. Measured in
+            # docs/spikes/conception-and-capacity.md: at the steepest growth a world managed about
+            # 0.43% of occupancy allocated per tick, so a tenth is roughly twenty ticks of runway
+            # — and since `grow` doubles, it is reached rarely.
+            reserve_fraction=0.1,
         ),
         conception=ConceptionConfig(
             # World units. A contact distance, not a search radius: finding each other is the lust
