@@ -17,24 +17,26 @@ import pygame
 from clients.viewer.demo_world import build_demo_world
 from clients.viewer.playback import Playback
 from clients.viewer.render import (
+    PLANT_LAYERS,
     apply_water_overlay,
     elevation_shading,
     live_positions,
+    plant_overlay,
+    plant_overlay_references,
     species_colors,
     world_to_screen,
 )
-from core.world.terrain import Terrain
-from core.world.water import Water
 
 _SCREEN_SIZE = (900, 900)
 _ENTITY_RADIUS = 4
 
+# What the overlay key cycles through. `None` is terrain alone, and it leads so that the view
+# opens on the same picture it always has.
+_LAYER_CYCLE: tuple[str | None, ...] = (None, *PLANT_LAYERS)
 
-def _background_surface(
-    terrain: Terrain, water: Water, screen_size: tuple[int, int]
-) -> pygame.Surface:
-    """Static terrain+water render, computed once since neither changes tick to tick."""
-    rgb = apply_water_overlay(elevation_shading(terrain), water)
+
+def _scaled_surface(rgb, screen_size: tuple[int, int]) -> pygame.Surface:
+    """A window-sized surface from a (height, width, 3) uint8 grid."""
     # pygame's surfarray convention is (width, height, 3); ours is (height, width, 3).
     surface = pygame.surfarray.make_surface(rgb.transpose(1, 0, 2))
     return pygame.transform.smoothscale(surface, screen_size)
@@ -48,8 +50,18 @@ def run(seed: int = 0, n_entities: int = 200) -> None:
     clock = pygame.time.Clock()
 
     world = build_demo_world(seed, n_entities)
-    background = _background_surface(world.terrain, world.water, _SCREEN_SIZE)
     playback = Playback(ticks_per_second=1.0)
+
+    # Terrain and water never change, so this is rendered once and every overlay is blended onto
+    # a copy of it rather than recomputing the hillshade.
+    terrain_rgb = apply_water_overlay(elevation_shading(world.terrain), world.water)
+    # Fixed for the run, deliberately: a ramp that rescales itself hides the slow decline this
+    # view exists to show. See `render.plant_overlay_references`.
+    references = plant_overlay_references(world.plants)
+
+    layer_index = 0
+    background = _scaled_surface(terrain_rgb, _SCREEN_SIZE)
+    redraw_background = False
 
     running = True
     while running:
@@ -69,10 +81,26 @@ def run(seed: int = 0, n_entities: int = 200) -> None:
                     playback.set_speed(playback.speed * 2.0)
                 elif event.key in (pygame.K_DOWN, pygame.K_MINUS):
                     playback.set_speed(playback.speed / 2.0)
+                elif event.key in (pygame.K_TAB, pygame.K_f):
+                    layer_index = (layer_index + 1) % len(_LAYER_CYCLE)
+                    redraw_background = True
 
         n_ticks, alpha = playback.advance(elapsed_seconds)
         if n_ticks > 0:
             world.loop.advance(n_ticks)
+
+        layer = _LAYER_CYCLE[layer_index]
+        # The fields move once per tick, not once per frame, so the overlay is rebuilt on a tick
+        # boundary rather than every pass — a smoothscale to the window size per frame would cost
+        # far more than the field read that motivates it.
+        if redraw_background or (n_ticks > 0 and layer is not None):
+            rgb = (
+                terrain_rgb
+                if layer is None
+                else plant_overlay(terrain_rgb, world.plants, layer, references)
+            )
+            background = _scaled_surface(rgb, _SCREEN_SIZE)
+            redraw_background = False
 
         screen.blit(background, (0, 0))
 
@@ -92,7 +120,8 @@ def run(seed: int = 0, n_entities: int = 200) -> None:
 
         status = (
             f"{'PAUSED' if playback.paused else 'playing'} | "
-            f"speed x{playback.speed:g} | tick {world.loop.tick_count}"
+            f"speed x{playback.speed:g} | tick {world.loop.tick_count} | "
+            f"[tab] {layer or 'terrain'}"
         )
         screen.blit(font.render(status, True, (255, 255, 255)), (8, 8))
 

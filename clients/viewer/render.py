@@ -11,6 +11,7 @@ import colorsys
 
 import numpy as np
 
+from core.ecology.plants import Plants
 from core.world.terrain import Terrain
 from core.world.water import Water
 
@@ -36,6 +37,29 @@ _WATER_COLOR = np.array([40.0, 90.0, 200.0])
 # saturated tint; deeper water clips to
 # the same color rather than growing darker without bound.
 _WATER_REFERENCE_DEPTH = 3.0
+
+# Plant-field tints. Every one is deliberately outside the palettes already on screen: the
+# elevation ramp owns desaturated green, tan and white, and water owns deep blue, so an overlay
+# drawn in any of those would be read as terrain rather than as data laid over it.
+_LAYER_COLORS = {
+    "biomass": np.array([120.0, 225.0, 40.0]),  # lime, against the ramp's dark green
+    "soil_nutrients": np.array([190.0, 70.0, 200.0]),  # violet, used by nothing else
+    "moisture": np.array([40.0, 210.0, 210.0]),  # cyan, against water's deep blue
+    "potential_growth": np.array([245.0, 180.0, 40.0]),  # amber
+}
+
+PLANT_LAYERS: tuple[str, ...] = tuple(_LAYER_COLORS)
+"""The plant fields that can be drawn, in the order a viewer should cycle them.
+
+Derived from the colour table rather than written out beside it, so a layer can never be offered
+without a tint or tinted without being offered (CLAUDE.md §4: a rule declared as data must be the
+thing that is consulted). Each name is also the attribute on `Plants` that holds the field.
+"""
+
+# Peak blend strength, matching the water overlay so the two read as the same kind of mark. Short
+# of 1.0 because relief must stay visible underneath: an overlay that hid the hillshade would make
+# "the ridge is bare" and "there is no ridge" look identical.
+_FIELD_MAX_ALPHA = 0.85
 
 _UNSET_SPECIES_COLOR = np.array([128, 128, 128], dtype=np.uint8)
 # Irrational turn fraction: successive hashed hues land far apart on the color wheel however
@@ -95,6 +119,88 @@ def apply_water_overlay(base_rgb: np.ndarray, water: Water) -> np.ndarray:
         ..., None
     ]
     return np.clip(blended, 0.0, 255.0).astype(np.uint8)
+
+
+def apply_field_overlay(
+    base_rgb: np.ndarray, field: np.ndarray, reference: float, color: np.ndarray
+) -> np.ndarray:
+    """`base_rgb` (height, width, 3) uint8 with a per-cell `field` blended in against `reference`.
+
+    `field` is (height, width) in whatever unit the layer holds; `reference` is a value in that
+    same unit at which the tint saturates. A cell reading `reference` or more is drawn at full
+    strength, so anything above it clips rather than tinting further — nutrients are conserved and
+    therefore concentrate (#18), and a cell holding several times an ordinary share must read as
+    "full" rather than overflowing the blend into some other colour.
+
+    **`reference` is supplied, never measured off `field`.** That is the whole point of the
+    parameter. Normalising against the field's current range would rescale the ramp every frame,
+    so a world slowly starving to death would render identically to a lush one — which is exactly
+    the failure §3.3 says this instrument exists to catch. The caller computes the scale once from
+    the world's own physics (`plant_overlay_references`) and holds it for the run.
+    """
+    if reference <= 0.0:
+        raise ValueError(f"reference must be positive, got {reference}")
+    if field.shape != base_rgb.shape[:2]:
+        raise ValueError(
+            f"field and base_rgb must share a grid shape, got {field.shape} and "
+            f"{base_rgb.shape[:2]}"
+        )
+
+    alpha = np.clip(field.astype(np.float64) / reference, 0.0, 1.0) * _FIELD_MAX_ALPHA
+    blended = base_rgb.astype(np.float64) * (1.0 - alpha[..., None]) + color * alpha[..., None]
+    return np.clip(blended, 0.0, 255.0).astype(np.uint8)
+
+
+def plant_overlay_references(plants: Plants) -> dict[str, float]:
+    """The value at which each layer's tint saturates, in that layer's own unit.
+
+    Computed once from the world's static physics and then held for the run, because a scale that
+    moves is a scale that hides change (see `apply_field_overlay`). Every one of these is a
+    constant for the lifetime of the world: `potential_growth` is static by construction, and
+    `initial_soil_nutrients` is a config value.
+
+    The numbers are chosen so that **1.0 means something ecological**, not merely "the largest
+    value seen so far":
+
+    - `biomass` — `potential_growth.max() / senescence_rate`, the standing crop a cell settles at
+      when soil never limits it. `grow()` adds `min(potential_growth, affordable)` and removes
+      `biomass × senescence_rate`, so with nutrients to spare those balance exactly there. A cell
+      therefore reads full when it is as green as its own light, warmth and water allow, and reads
+      dark when something else — nutrients, or grazing — is holding it below that.
+    - `soil_nutrients` — the per-cell pool every cell started with. Above 1.0 is ground that has
+      accumulated more than its original share, below is ground that has given it up.
+    - `moisture` — 1.0, since it is already a fraction.
+    - `potential_growth` — its own maximum, which is fixed because the field is.
+    """
+    light_ceiling = float(plants.potential_growth.max())
+    if light_ceiling <= 0.0:
+        raise ValueError(
+            "no cell can grow anything: potential growth is zero across the whole grid, so there "
+            "is no scale to draw a biomass ramp against"
+        )
+    if plants.config.initial_soil_nutrients <= 0.0:
+        raise ValueError(
+            "initial_soil_nutrients is zero, so a soil ramp has nothing to normalise against"
+        )
+
+    return {
+        "biomass": light_ceiling / plants.config.senescence_rate,
+        "soil_nutrients": plants.config.initial_soil_nutrients,
+        "moisture": 1.0,
+        "potential_growth": light_ceiling,
+    }
+
+
+def plant_overlay(
+    base_rgb: np.ndarray, plants: Plants, layer: str, references: dict[str, float]
+) -> np.ndarray:
+    """`base_rgb` with one named plant field blended in. `layer` must be one of `PLANT_LAYERS`.
+
+    `references` comes from `plant_overlay_references` and is passed in rather than recomputed, so
+    that the scale is fixed for the run even though the field under it changes every tick.
+    """
+    color = _LAYER_COLORS[layer]
+    return apply_field_overlay(base_rgb, getattr(plants, layer), references[layer], color)
 
 
 def species_colors(species_id: np.ndarray) -> np.ndarray:
