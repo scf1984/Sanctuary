@@ -322,7 +322,20 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
             maturity_gene="maturity_age",
             gestation_gene="gestation_length",
             # Genetic distance at which interbreeding reaches zero; #16 reads the same number.
-            speciation_threshold=8.0,
+            #
+            # **Derived rather than chosen**: four times the 99th-percentile pairwise distance
+            # *within* this world's population, which measures ~73 (docs/spikes/
+            # interbreeding-threshold.md). The rule is what matters, not the value — the gate
+            # exists to stop *diverged populations* interbreeding, so it must sit above the
+            # spread a single healthy population already carries, or it throttles ordinary
+            # reproduction instead.
+            #
+            # It shipped at 8.0 against a median distance of ~29, which rejected 94% of
+            # candidate couples and suppressed births roughly 24-fold. **Re-derive this after
+            # #193**: the distance metric is currently dominated by `maturity_age` and
+            # `gestation_length`, and changing what distance measures changes this number
+            # completely.
+            speciation_threshold=300.0,
         ),
         diet=DietConfig(
             animal_derived_gene="diet_animal_derived",

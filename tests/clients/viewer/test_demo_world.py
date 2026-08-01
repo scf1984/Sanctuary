@@ -16,7 +16,9 @@ import numpy as np
 
 from clients.viewer.demo_world import build_demo_world
 from clients.viewer.render import live_positions, species_colors, world_to_screen
+from core.genetics.speciation import interbreeding_probability
 from core.invariants import default_registry
+from core.selection import Selection
 
 _SCREEN = (640, 480)
 
@@ -73,6 +75,52 @@ class TestBuildDemoWorld:
         # the one this store holds.
         np.testing.assert_array_equal(world.loop.current_positions[0], world.store.x)
         assert (world.store.age[world.store.alive] == 5).all()
+
+
+class TestTheShippedTuningIsNotDegenerate:
+    """Guards against the failure this world keeps having: a config constant whose name says one
+    thing while it silently does another.
+
+    `speciation_threshold` shipped at 8.0 against a median pairwise distance of ~29, so
+    `interbreeding_probability` returned zero for 94% of candidate couples and suppressed births
+    roughly 24-fold. Every test passed throughout — nothing asserted that the gate was *open*.
+    """
+
+    def test_most_couples_can_actually_breed(self):
+        """The gate exists to stop diverged populations interbreeding. With one population and no
+        divergence it should be nearly transparent, so a majority failing is a misconfiguration
+        rather than ecology."""
+        world = build_demo_world(seed=2, n_entities=120)
+        world.loop.advance(200)
+        rows = np.flatnonzero(world.store.alive & (world.store.age >= 0))
+        rng = np.random.default_rng(2)
+        a, b = rng.choice(rows, 500), rng.choice(rows, 500)
+
+        chance = interbreeding_probability(
+            world.genetics, a, b, world.config.conception.speciation_threshold
+        )
+
+        assert float((chance > 0.0).mean()) > 0.9
+        assert float(np.median(chance)) > 0.5
+
+    def test_the_gate_still_closes_on_a_genuinely_diverged_pair(self):
+        """The other half: a threshold set so high that nothing is ever incompatible would pass the
+        test above while making speciation impossible (#16)."""
+        world = build_demo_world(seed=2, n_entities=40)
+        rows = np.flatnonzero(world.store.alive)[:2]
+        genes = world.genetics.genes_at(rows)
+        # Push one animal far past anything drift produces, along the gene that dominates the
+        # metric today (#193).
+        genes[1, world.genes.index_of("maturity_age")] += 10_000.0
+        world.genetics.set_genes(
+            Selection.from_indices(rows, world.store.capacity), genes
+        )
+
+        chance = interbreeding_probability(
+            world.genetics, rows[:1], rows[1:], world.config.conception.speciation_threshold
+        )
+
+        assert float(chance[0]) == 0.0
 
 
 class TestFramePath:
