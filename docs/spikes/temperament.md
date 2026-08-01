@@ -21,7 +21,36 @@ a frightened animal forgoes food for nothing.
 
 Hunger fell nearly twice as far as fear, consistently.
 
-## Why: a flat drive's weight is a neutral gene
+## Correction: the measurement above came from a miscalibrated world
+
+**The numbers in the table are not reproducible, and the fault was in the same change that produced
+them.** The demo world deliberately damped thirst to a weight of `0.2` — its config comment says "at
+equal weights thirst outscores hunger in this climate and nothing in the world ever moves". When the
+weights became genes (#23), `thirst_weight` was given the same founding range as every other drive,
+`(0.6, 1.4)`, silently discarding that. Thirst then took **100% of a well-fed animal's decision**,
+which is how the world behaved when the table above was measured.
+
+Found by reading an inspection panel (#195) — the drive breakdown showed `thirst 100.0%` and
+everything else at zero, which no amount of staring at a passing test would have revealed.
+
+With `thirst_weight` founded at `(0.1, 0.3)`, restoring the intent, the effect disappears entirely.
+Five seeds, 120 founders, 600 ticks, shift as a fraction of the founding mean:
+
+| gene | median shift |
+|---|---:|
+| `hunger_weight` | 0.0126 |
+| `thirst_weight` | 0.0160 |
+| `fear_weight` | 0.0155 |
+| `lust_weight` | 0.0262 |
+| `fatigue_weight` | 0.0161 |
+
+No separation, and hunger is the *smallest*. **There is no measurable steering-versus-flat effect at
+this scale and duration**, and the statistical test that claimed one has been removed.
+
+The lesson is narrow and worth keeping: a statistical test written against a world with a bug in it
+locks the bug in. It passed, it was reproducible across seeds, and it was measuring the wrong world.
+
+## Why a flat drive's weight is a neutral gene
 
 `Behaviour.choose` scores `utility(option) = Σ over drives of urgency × appeal(option)`.
 
@@ -64,20 +93,24 @@ scarcity the same gene should climb.
 
 ## What is locked in
 
-`tests/core/ecology/test_temperament_evolves.py`, asserting directions only (§2.2):
+`tests/core/ecology/test_temperament_evolves.py`:
 
 - weights vary at founding and still vary after 600 ticks — without which everything else is vacuous
 - every expressed weight stays non-negative, because it is read as a magnitude (§8.7)
-- **a steering drive's weight moves further than a flat drive's**, compared across five replicates
+- **scaling a flat drive's weight tenfold leaves every chosen heading bit-identical**, and scaling
+  hunger's does not
 - the population survives, and is still moving at the end — #23's named degenerate attractor
   ("never eating, never fleeing") is not reached
 
-### On replicates
+The steering claim is asserted **mechanically rather than statistically**, and that is the whole
+correction. The softmax over option utilities is invariant to a shift shared by all options, so a
+flat drive's weight *provably* cannot change the choice at any magnitude. Proving it is both cheaper
+and stronger than measuring a population-level shadow of it — especially since the shadow turned out
+to be an artefact.
 
-The steering-vs-flat comparison is asserted on the **median across five seeds**, not per seed. Per
-seed it failed on one of three while holding comfortably in aggregate, which is exactly what §2.2
-warns about: "variance between two runs of the same state can exceed the difference between A and
-B". A per-seed assertion there is a coin flip dressed as a result.
+The comparison also has to run against a world that has been ticked. A brand-new one has no plants —
+the field starts empty and grows — so hunger's appeal is all zeros and *every* drive is flat at tick
+zero, which makes the control pass for the wrong reason.
 
-Caching the runs took the module from eight minutes to 72 seconds — the runs are the cost, and
-every assertion can share one world per seed.
+Caching one world per seed took the module from eight minutes to about 80 seconds; the runs are the
+entire cost.

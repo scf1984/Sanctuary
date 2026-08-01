@@ -368,10 +368,8 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
         hunger=HungerConfig(
             weight_gene="hunger_weight", satiation_energy=200.0, detection_threshold=0.5, sight_gene="sight"
         ),
-        # Thirst is held quiet on purpose, and this is a workaround rather than a tuning choice: a
-        # drive that *wins* with no mechanic behind it leaves the animal standing still, and hunger
-        # is the only drive that can act today. At equal weights thirst outscores hunger in this
-        # climate and nothing in the world ever moves — which is #126.
+        # Thirst is held quiet on purpose — see its founding range below, which is where the
+        # damping lives now that the weight is a gene (#23).
         thirst=ThirstConfig(weight_gene="thirst_weight", onset_temperature=25.0, saturation_temperature=40.0),
         fear=FearConfig(
             weight_gene="fear_weight",
@@ -425,7 +423,13 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
             # Drive weights, drawn around 1 so founders differ in temperament from the first
             # generation and selection has something to act on (§2.5, #23).
             "hunger_weight": (0.6, 1.4),
-            "thirst_weight": (0.6, 1.4),
+            # Thirst founds an order of magnitude quieter than the rest, and this is a
+            # workaround rather than a tuning choice: a drive that *wins* with no mechanic
+            # behind it leaves the animal standing still (#126), and nothing drinks (#156).
+            # It was a config weight of 0.2 before the weights became genes (#23); drawing it
+            # from the same range as the others silently discarded that, and thirst then took
+            # 100% of every well-fed animal's decision.
+            "thirst_weight": (0.1, 0.3),
             "fear_weight": (0.6, 1.4),
             "lust_weight": (0.6, 1.4),
             "fatigue_weight": (0.6, 1.4),
