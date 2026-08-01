@@ -20,6 +20,7 @@ import pygame
 from clients.viewer.charts import stack_charts, world_charts
 from clients.viewer.demo_world import build_demo_world
 from clients.viewer.export import export_history
+from persistence import SnapshotError, load, save
 from clients.viewer.playback import Playback
 from clients.viewer.render import (
     PLANT_LAYERS,
@@ -50,6 +51,9 @@ _PANEL_TEXT = (232, 232, 226)
 # the inspection panel at the top.
 _CHART_SIZE = (320, 54)
 _EXPORT_DIRECTORY = Path("exports")
+# One slot per seed. A save browser is a UI this diagnostic instrument does not need (§3.3), and a
+# file per seed is what stops a second run of the same world silently overwriting the first's.
+_SAVE_DIRECTORY = Path("saves")
 
 # What the overlay key cycles through. `None` is terrain alone, and it leads so that the view
 # opens on the same picture it always has.
@@ -110,6 +114,31 @@ def _export(world, seed: int) -> str:
     return f"wrote {csv_path} (+ .json)"
 
 
+def _save(world, seed: int) -> str:
+    """Write the world to its seed's slot, and say where it went."""
+    path = save(world, _SAVE_DIRECTORY / f"seed{seed}.npz")
+    return f"saved {path} at tick {world.loop.tick_count}"
+
+
+def _restore(world, seed: int) -> str:
+    """Load the seed's slot into the running world, or say why not.
+
+    In place, so the viewer's services, its recorder and its overlay references all keep pointing
+    at the world that now holds the loaded state. A `SnapshotError` is reported rather than raised
+    because refusing a load is a normal outcome — a snapshot taken under different rules (§2.8) is
+    exactly what that error exists to prevent, and the status line is the only place a viewer can
+    say so.
+    """
+    path = _SAVE_DIRECTORY / f"seed{seed}.npz"
+    if not path.exists():
+        return f"no save at {path}"
+    try:
+        load(world, path)
+    except SnapshotError as refused:
+        return f"refused: {refused}"
+    return f"loaded {path} at tick {world.loop.tick_count}"
+
+
 def run(seed: int = 0, n_entities: int = 200) -> None:
     pygame.init()
     screen = pygame.display.set_mode(_SCREEN_SIZE)
@@ -166,6 +195,14 @@ def run(seed: int = 0, n_entities: int = 200) -> None:
                     gene_index = (gene_index + 1) % (len(gene_names) + 1)
                 elif event.key == pygame.K_e:
                     exported = _export(world, seed)
+                elif event.key == pygame.K_s:
+                    exported = _save(world, seed)
+                elif event.key == pygame.K_l:
+                    exported = _restore(world, seed)
+                    # The loaded world's positions are nothing like the ones on screen, and the
+                    # renderer blends two snapshots (§3.3, #119). Redrawing the background is the
+                    # cheapest way to be sure the overlay matches the field that just arrived.
+                    redraw_background = True
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 # Pick against the *living*, so a gestating row and a freed one are both
                 # unselectable — the first has not been born and the second is not there (#119).
@@ -233,7 +270,7 @@ def run(seed: int = 0, n_entities: int = 200) -> None:
         status = (
             f"{'PAUSED' if playback.paused else 'playing'} | "
             f"speed x{playback.speed:g} | tick {world.loop.tick_count} | "
-            f"[tab] {layer or 'terrain'} | [c] charts [g] trait [e] export"
+            f"[tab] {layer or 'terrain'} | [c] charts [g] trait [e] export [s] save [l] load"
             f" | click an animal to inspect"
             + (f" | {exported}" if exported else "")
         )

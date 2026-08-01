@@ -24,12 +24,12 @@ viewer = [
     "pygame>=2.5",
 ]
 
-# core/ and metrics/ are the installable packages (see CLAUDE.md §4). `metrics/` reads `core/` and
+# core/, metrics/ and persistence/ are the installable packages (see CLAUDE.md §4). `metrics/` reads `core/` and
 # never the reverse — a world that cannot be observed is a smaller loss than one that cannot run
 # without an observer — so `core/` stays importable standalone. legacy/ is kept for reference only,
 # does not run, and must never be packaged or imported by anything under core/.
 [tool.setuptools.packages.find]
-include = ["core*", "metrics*"]
+include = ["core*", "metrics*", "persistence*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -61,12 +61,12 @@ python_version = "3.12"
 ignore_missing_imports = true
 exclude = ["legacy"]
 
-# Coverage measures core/ and metrics/, which is the whole scope the per-module threshold applies
+# Coverage measures core/, metrics/ and persistence/, the whole scope the per-module threshold applies
 # to (#47). `clients/` is still outside it — that gap is #182's, not this file's.
 # clients/viewer cannot be imported in CI at all (no pygame in a headless install, CLAUDE.md §3),
 # so including it would report a permanent false zero; tools/ is checked by running it.
 [tool.coverage.run]
-source = ["core", "metrics"]
+source = ["core", "metrics", "persistence"]
 # Branch coverage is deliberately off. The gate exists to catch a module that arrived with no tests
 # (see tools/check_coverage.py); branch percentages would make it a measure of path exhaustiveness
 # instead, which CLAUDE.md §6 explicitly does not want carrying correctness weight here.

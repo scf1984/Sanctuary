@@ -23,3 +23,7 @@ htmlcov/
 
 # Metric exports written by the viewer's [e] key (#39). Run output, not source.
 exports/
+
+# World snapshots written by the viewer's [s] key (#31). Run output, not source -- and a
+# snapshot is the only copy of a world in existence (§3.2), so never one that belongs in git.
+saves/
