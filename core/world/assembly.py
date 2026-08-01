@@ -98,6 +98,7 @@ from core.world.water import Water
 TICK_ORDER: tuple[str, ...] = (
     "plant_growth",
     "cue_field_rebuild",
+    "forage_field_rebuild",
     "drive_scoring",
     "movement",
     "exertion_recovery",
@@ -442,6 +443,7 @@ def _build_systems(
     return {
         "plant_growth": plants.grow,
         "cue_field_rebuild": lambda: scent.rebuild(living()),
+        "forage_field_rebuild": plants.rebuild_forage,
         "drive_scoring": lambda: behaviour.choose(living(), rng),
         "movement": move_chosen,
         "exertion_recovery": lambda: exertion.recover(living()),

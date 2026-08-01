@@ -142,6 +142,11 @@ class Plants:
                       and "dry" and "too cold" are indistinguishable in the product.
     exported_nutrients: scalar float, nutrient units. Nutrients grazed out of the field and not
                       yet returned — see the module docstring.
+    forage:           (height, width) float32. The diffused standing crop as of the last
+                      `rebuild_forage()`, which is a registered tick system (#170). Held
+                      rather than rebuilt per reader: one tick has one field and every
+                      forager reads the same one, so building it per drive query would pay
+                      for the diffusion once per caller.
 
     All four grid fields align cell-for-cell with `terrain.heights`.
 
@@ -164,6 +169,7 @@ class Plants:
     soil_nutrients: np.ndarray
     potential_growth: np.ndarray
     moisture: np.ndarray
+    forage: np.ndarray
     exported_nutrients: float
 
     def __init__(
@@ -190,6 +196,10 @@ class Plants:
             terrain.heights.shape, config.initial_soil_nutrients, dtype=np.float64
         )
         self.exported_nutrients = 0.0
+        # Built at construction rather than left empty, so the attribute is never a field that
+        # disagrees with the biomass beside it — a stale forage field sends grazers to ground
+        # that was stripped bare while they walked.
+        self.forage = self.forage_field()
 
     def grow(self) -> None:
         """Advance the field one tick: senescence, then nutrient-limited growth.
@@ -325,13 +335,33 @@ class Plants:
         # the reason `graze` ledgers from `removed` rather than from `harvested`.
         self.exported_nutrients -= float(deposited.sum())
 
+    def rebuild_forage(self) -> None:
+        """Recompute the forage field for this tick — a registered system (#170, CLAUDE.md §2.1).
+
+        A tick has **one** forage field, and every forager reads the same one. `Hunger.appeal` used
+        to call `forage_field()` itself, so the cost-aware diffusion was rebuilt once per drive that
+        read it rather than once per tick. Exactly one drive reads it today, so nothing was wrong
+        with the numbers — but the method it replaced carried a docstring warning about precisely
+        this, that warning outlived the code, and nothing enforced it.
+
+        It is a step in `TICK_ORDER` rather than a cache with an invalidation stamp, and for the
+        reason §8.7 gives: a stamp turns a declared fact into a runtime one, and when it is wrong
+        nothing raises — a forager simply reads last tick's world and the world looks fine. The
+        order already carries `cue_field_rebuild` for the identical problem ("must precede any
+        sensing, or animals smell *last tick's* world"), and the repository keeps one answer per
+        question.
+        """
+        self.forage = self.forage_field()
+
     def forage_field(self) -> np.ndarray:
         """``(height, width)`` float32: how much grazing is *reachable* from every cell (#93).
 
         Standing crop diffused over the terrain, so a cell's reading accumulates every meadow
-        within range, each discounted by how far away it is and by the climbing between. Rebuilt on
-        demand rather than cached, because grazing changes the source every tick and a stale field
-        would send foragers to ground that was stripped bare while they walked.
+        within range, each discounted by how far away it is and by the climbing between.
+
+        This is the pure computation. Callers in a running world read `self.forage`, which
+        `rebuild_forage()` refreshes once per tick — grazing changes the source every tick, and
+        a stale field sends foragers to ground that was stripped bare while they walked.
 
         This is the whole of what a forager can know about food it is not standing on. It replaces
         a per-forager list of candidate patches (the original #93 contract), and the reason is that

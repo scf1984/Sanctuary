@@ -168,7 +168,7 @@ class Hunger:
         which is the failure `forage_target` had to special-case.
         """
         sight = self.genetics.expressed(selection)[:, self._sight_index].astype(np.float64)
-        reading = sight[:, None] * self.plants.forage_at(self.plants.forage_field(), x, y)
+        reading = sight[:, None] * self.plants.forage_at(self.plants.forage, x, y)
         found = np.where(reading >= self.config.detection_threshold, reading, 0.0)
         best = found.max(axis=1, keepdims=True)
         return np.divide(
