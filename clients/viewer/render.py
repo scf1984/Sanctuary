@@ -8,12 +8,17 @@ that touches pygame; everything here is plain NumPy in, NumPy out.
 from __future__ import annotations
 
 import colorsys
+from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 
 from core.ecology.plants import Plants
+from core.selection import Selection
 from core.world.terrain import Terrain
 from core.world.water import Water
+
+if TYPE_CHECKING:  # pragma: no cover - import cycle at runtime only
+    from core.world.assembly import World
 
 # Diagonal lighting from the upper-left, the conventional default for cartographic relief
 # shading. Expressed in Terrain.aspect's own convention (radians, counterclockwise from +x) so
@@ -290,3 +295,101 @@ def world_to_screen(
     px = (x / world_width) * screen_width if world_width > 0 else np.zeros_like(x)
     py = (y / world_height) * screen_height if world_height > 0 else np.zeros_like(y)
     return px.astype(np.int32), py.astype(np.int32)
+
+def screen_to_world(
+    px: np.ndarray,
+    py: np.ndarray,
+    world_width: float,
+    world_height: float,
+    screen_width: int,
+    screen_height: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """The inverse of `world_to_screen`: where in the world a pixel points.
+
+    Returns zeros for a degenerate world rather than dividing by its extent, matching what
+    `world_to_screen` does in the same case — the two have to agree or a round trip would land
+    somewhere neither of them meant.
+    """
+    x = (px / screen_width) * world_width if screen_width > 0 else np.zeros_like(px)
+    y = (py / screen_height) * world_height if screen_height > 0 else np.zeros_like(py)
+    return np.asarray(x, dtype=np.float64), np.asarray(y, dtype=np.float64)
+
+
+def pick_entity(
+    x: float,
+    y: float,
+    entity_x: np.ndarray,
+    entity_y: np.ndarray,
+    rows: np.ndarray,
+    radius: float,
+) -> Optional[int]:
+    """The store row of the entity nearest `(x, y)`, or None if nothing is within `radius`.
+
+    entity_x, entity_y, rows: parallel arrays over whatever population the caller chose to make
+    selectable — the living, in practice. **`rows` is returned rather than an index into those
+    arrays**, because the caller has already filtered and the two numbers are different: handing
+    back a position index would inspect whichever animal happened to occupy that row.
+
+    None rather than a nearest-anything, so clicking empty ground clears the panel instead of
+    leaving the last animal selected — which would be a readout quietly describing something the
+    player is no longer pointing at.
+    """
+    if entity_x.shape[0] == 0:
+        return None
+    gap = np.hypot(entity_x - x, entity_y - y)
+    nearest = int(np.argmin(gap))
+    if gap[nearest] > radius:
+        return None
+    return int(rows[nearest])
+
+
+def describe_entity(world: "World", row: int) -> tuple[str, ...]:
+    """A readable dump of one entity, line by line, for the viewer to blit (§3.3, #195).
+
+    Returns text rather than a structure because the formatting *is* the part worth testing: this
+    module is collectable in CI and `app.py` is not, so anything that decides what a number means
+    has to live here (#110). `app.py` draws the lines and nothing else.
+
+    Shows each gene's **stored and expressed value side by side**, which is the only way the
+    expression mode is visible at all — a magnitude gene folding across zero and a unit-interval
+    gene squashing are both invisible from either number alone.
+    """
+    store = world.store
+    if not store.alive[row]:
+        return (f"row {row}", "empty — this row holds no entity",)
+
+    selection = Selection.from_indices(np.array([row], dtype=np.int64), store.capacity)
+    age = int(store.age[row])
+    lines = [
+        f"entity {int(store.row_ids()[row])}   species {int(store.species_id[row])}   row {row}",
+        (
+            # A negative age is the gestation clock (#20), not a corrupt row.
+            f"gestating — born in {-age} ticks"
+            if age < 0
+            else f"age {age} ticks"
+        ),
+        f"energy {float(store.energy[row]):.1f}"
+        f"   upkeep {float(world.ecology.upkeep(selection)[0]):.3f}/tick"
+        f"   exertion {float(store.exertion[row]):.3f}",
+        f"position ({float(store.x[row]):.1f}, {float(store.y[row]):.1f},"
+        f" {float(store.z[row]):.1f})",
+        "",
+    ]
+
+    contributions = {
+        name: float(values[0]) for name, values in world.behaviour.breakdown(selection).items()
+    }
+    total = sum(contributions.values())
+    ranked = sorted(contributions.items(), key=lambda item: -item[1])
+    lines.append("drives, by share of the last decision:")
+    for name, value in ranked:
+        share = value / total if total > 0 else 0.0
+        lines.append(f"  {name:<10} {value:8.3f}  {100 * share:5.1f}%")
+    lines.append("")
+
+    stored = world.genetics.genes_at(np.array([row], dtype=np.int64))[0]
+    expressed = world.genetics.expressed_at(np.array([row], dtype=np.int64))[0]
+    lines.append("genes — expressed, and as stored:")
+    for i, gene in enumerate(world.config.genes):
+        lines.append(f"  {gene.name:<22} {float(expressed[i]):10.4f}  {float(stored[i]):10.4f}")
+    return tuple(lines)

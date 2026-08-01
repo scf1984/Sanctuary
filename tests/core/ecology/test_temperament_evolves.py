@@ -52,12 +52,6 @@ def weights(world, gene):
     return world.genetics.expressed(living)[:, world.genes.index_of(gene)]
 
 
-def shift(seed, gene):
-    """How far a weight moved from where the founders started, as a fraction of it."""
-    world, opening = run(seed)
-    return abs(float(weights(world, gene).mean()) - opening[gene]) / opening[gene]
-
-
 class TestAWeightIsCarriedAndPassedOn:
     def test_founders_differ_in_temperament(self):
         """Nothing can select on a distribution that does not exist."""
@@ -83,30 +77,41 @@ class TestAWeightIsCarriedAndPassedOn:
             assert (weights(world, gene) >= 0.0).all()
 
 
-class TestOnlyASteeringDriveIsSelected:
-    """The result that was measured rather than assumed.
+class TestOnlyASteeringDriveCanChangeTheChoice:
+    """Why some weights are under selection and others are not, asserted **mechanically**.
 
-    A flat drive adds a constant to every option, so it cannot change the choice and its weight is
-    nearly a free random walk. A steering drive changes which option wins, so its weight is paid
-    for or rewarded every tick.
+    `Behaviour.choose` samples from `utility(option) = Σ urgency × appeal(option)`. A drive whose
+    appeal is *flat* adds the same number to every option, and the Boltzmann sampling is invariant
+    to a shift shared by all of them — so that drive's weight cannot change which option wins, at
+    any magnitude. It is a neutral gene by construction rather than by measurement.
+
+    This replaces a population-level statistical claim that did not survive contact with a fixed
+    world: see `docs/spikes/temperament.md`. The mechanism is provable, so proving it beats
+    measuring a shadow of it over 600 ticks.
     """
 
+    def chosen(self, seed, scale=None, gene=None):
+        world = build_world(demo_world_config(FOUNDERS, seed), seed=seed)
+        # Advanced first, identically, because a brand-new world has no plants: the field starts
+        # empty and grows, so hunger's appeal is all zeros and *every* drive is flat at tick 0.
+        world.loop.advance(120)
+        population = Selection.from_mask(world.store.alive & (world.store.age >= 0))
+        if gene is not None:
+            genes = world.genetics.genes(population)
+            genes[:, world.genes.index_of(gene)] *= scale
+            world.genetics.set_genes(population, genes)
+        world.behaviour.choose(population, np.random.default_rng(seed))
+        return world.store.choice_heading[population.to_mask()].copy()
+
     @pytest.mark.parametrize("flat", ["fear_weight", "thirst_weight"])
-    def test_hunger_moves_further_than_a_flat_drive(self, flat):
-        """Hunger reads the forage field and steers; fear and thirst are still flat, because
-        flight does not exist (#188 gave lust its direction and left fear's for #24) and nothing
-        drinks. So hunger's weight is paid for every tick and theirs is drifting.
+    def test_a_flat_drives_weight_cannot_change_the_decision(self, flat):
+        """Ten times the weight, identical headings. Fear and thirst are still flat — flight has
+        never existed and nothing drinks — so scaling them moves nothing."""
+        np.testing.assert_array_equal(self.chosen(0), self.chosen(0, 10.0, flat))
 
-        **Asserted across replicates, not per seed.** §2.2 is explicit that variance between two
-        runs of the same state can exceed the difference being measured, so a per-seed assertion
-        here is a coin flip dressed as a result — it failed on one seed of three while holding
-        comfortably in aggregate. This compares the median shift over `SEEDS` runs, which is the
-        form §2.2 asks competitions to use.
-        """
-        steering = [shift(seed, "hunger_weight") for seed in SEEDS]
-        drifting = [shift(seed, flat) for seed in SEEDS]
-
-        assert float(np.median(steering)) > float(np.median(drifting))
+    def test_a_steering_drives_weight_does_change_it(self):
+        """The control: hunger reads the forage field, so its weight reaches the choice."""
+        assert not np.array_equal(self.chosen(0), self.chosen(0, 10.0, "hunger_weight"))
 
 
 class TestTheDegenerateAttractor:
