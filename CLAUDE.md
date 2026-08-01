@@ -1137,6 +1137,30 @@ wrapping work. If it is not, no amount of service code will save it.
   no amount of compute recovers it. Restores are therefore *tested on a schedule*, never assumed.
 - **Deploys must drain, not kill.** Stopping a process without snapshotting every live world
   discards sim-time that cannot be recomputed identically.
+- **A snapshot carries state; the config carries the rules** — settled in #31, which owns it.
+  `persistence.load` restores into a world that has *already* been assembled from a config, and
+  refuses if that config is not the one the snapshot was taken under. §2.8 requires a world to keep
+  running under its own rules forever, and this is what makes the alternative impossible rather
+  than merely discouraged: a snapshot cannot be opened into a differently-tuned world at all. The
+  check is a **fingerprint** — a hash over the config tree — and not a serialisation, which is why
+  it can be exhaustive about *rules* while storing none of them.
+
+  Serialising the config is the other half and is not done: until it is, a snapshot is portable
+  between processes running the same code and not between versions of it, and the fingerprint is
+  what turns that from a silent hazard into a refused load (§7.3 — #31 stays open).
+
+  **Only what cannot be recomputed is stored.** Terrain, water, the cue field and the forage field
+  are pure functions of the config or of the stored state, and a stored derivation is one that can
+  disagree with what it came from. Terrain becomes state the day terraforming (#152) can edit it,
+  and that is a schema bump rather than a silent widening.
+
+  Two pieces are stored that look like implementation detail and are not. **The generator's state**,
+  so a reloaded world draws onward instead of replaying the sequence it already used — §2.2 promises
+  no determinism, but a repetition compounding with every reload is not what it licenses. And **the
+  free list in its own order**, which `row_ids` cannot express: the row a newborn lands in decides
+  which element of every vectorized draw it receives, so a re-derived list makes a reloaded world
+  diverge from the saved one at its first birth. With both, a save and reload continues *bit for
+  bit* — which is a stronger promise than §2.2 requires and a much easier one to test.
 - **The repository is public.** No secret ever enters the repo, the container image, or committed
   Terraform state. Secret scanning blocks merge.
 - CI enforces lint, types, coverage, container builds, **performance regression gates** (throughput

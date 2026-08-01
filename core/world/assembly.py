@@ -218,6 +218,11 @@ class World:
     # and the founders stop being a meaningful population the moment anything is born. Read
     # `store.alive` for who is here now.
     founders: Selection
+    # The world's own generator, exposed so a snapshot can record where its draws had reached
+    # (#31). Without it a reloaded world restarts from the seed and replays the sequence it has
+    # already used — not a correctness failure under §2.2, which promises no determinism, but a
+    # repetition nobody asked for that compounds with every reload.
+    rng: np.random.Generator
     loop: TickLoop
 
 
@@ -363,6 +368,7 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
         aging=aging,
         scent=scent,
         founders=founders,
+        rng=rng,
         loop=loop,
     )
 

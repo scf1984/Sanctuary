@@ -287,6 +287,69 @@ class EntityStore:
             del self._id_to_row[id_]
         self._free_rows.extend(rows.tolist())
 
+    def free_rows(self) -> np.ndarray:
+        """(n_free,) int64: the free list in the order allocate() will consume it, last handed out
+        first.
+
+        Exists so a snapshot can restore it exactly (#31). It is not derivable from `row_ids()` —
+        that says *which* rows are free, not in what order — and the order is load-bearing after a
+        reload: a newborn placed in a different row receives a different element of every
+        vectorized draw thereafter, so a world reloaded with a re-derived free list diverges from
+        the one that was saved at its very next birth. §2.2 would permit that divergence; #31's
+        "continues indistinguishably" is a stronger promise, and this is what keeps it.
+        """
+        return np.array(self._free_rows, dtype=np.int64)
+
+    def restore(self, columns: dict, row_ids: np.ndarray, next_id: int, free_rows) -> None:
+        """Replace every column and all of the id bookkeeping, as a loaded snapshot dictates (#31).
+
+        columns: every name in `_COLUMN_NAMES`, each already at the capacity being restored to. The
+            store takes the capacity *from these arrays* rather than being told it separately, so a
+            snapshot cannot describe a capacity its own columns disagree with (§8.7).
+        row_ids: (capacity,) int64, the id occupying each row and -1 where the row is free — what
+            `row_ids()` returns.
+        next_id: the value `ids_issued` must resume at. Restored rather than derived from the
+            maximum live id, because the highest id may belong to something that has since died,
+            and resuming below it would hand a *reused* id to the next birth — which §2.3 forbids
+            outright and which nothing downstream could detect.
+
+        free_rows: the free list in consumption order, from `free_rows()`. Restored rather than
+            re-derived from `row_ids`, which cannot express order: the row a newborn lands in
+            decides which element of every vectorized draw it receives, so a re-derived list makes
+            a reloaded world diverge from the saved one at its first birth. It is checked against
+            `row_ids` below, because the two describing different sets of free rows is a corrupt
+            snapshot that would otherwise surface as a newborn overwriting a live entity.
+
+        Deliberately not a constructor. A world is assembled from its config (§7.2, `build_world`),
+        and a snapshot restores *state* into that assembly; a second construction path would be a
+        second place for a store to come into existence, which is what §2.3's single array set
+        exists to prevent.
+        """
+        missing = set(_COLUMN_NAMES) - set(columns)
+        if missing:
+            raise ValueError(f"snapshot is missing columns: {sorted(missing)}")
+        capacity = columns["alive"].shape[0]
+        if row_ids.shape[0] != capacity:
+            raise ValueError(
+                f"row_ids describes {row_ids.shape[0]} rows against {capacity} in the columns"
+            )
+
+        self._allocate_columns(capacity)
+        for name in _COLUMN_NAMES:
+            getattr(self, name)[...] = columns[name]
+
+        self._row_to_id = np.array(row_ids, dtype=np.int64)
+        self._id_to_row = {
+            int(id_): int(row) for row, id_ in enumerate(row_ids.tolist()) if id_ >= 0
+        }
+        self._free_rows = [int(row) for row in free_rows]
+        if sorted(self._free_rows) != np.flatnonzero(row_ids < 0).tolist():
+            raise ValueError(
+                "the snapshot's free list and its row ids disagree about which rows are free; "
+                "allocating from it would hand a live entity's row to a newborn"
+            )
+        self._next_id = int(next_id)
+
     def grow(self) -> None:
         """Double capacity, preserving every column's existing values.
 

@@ -64,6 +64,32 @@ class SpeciesRegistry:
         self._mask_table = np.vstack([self._mask_table, mask])
         return species_id
 
+    def mask_table(self) -> np.ndarray:
+        """(n_species, n_genes) bool: every registered mask, in species-id order.
+
+        A copy, for the reason `EntityStore.row_ids` gives: this is the registry's own bookkeeping
+        and a caller must not be able to mutate it. Exists so a snapshot can record the species a
+        world has (#31) — which, per §2.3, *is* the mask table plus the ids pointing at it.
+        """
+        return self._mask_table.copy()
+
+    def restore(self, mask_table: np.ndarray) -> None:
+        """Replace the whole table, as a loaded snapshot dictates (#31).
+
+        The masks *are* the species — §2.3 makes a species an expression mask and a row of ids that
+        point at it, with nothing else per-species anywhere — so restoring them restores every
+        species the world had, including any created at runtime by speciation. Width is checked
+        against the vocabulary because a table one column narrow would silently express the wrong
+        gene for every creature in the world, and both sides are boolean arrays that nothing else
+        could notice disagreeing (§8.7, and the same shape of defect as #112).
+        """
+        if mask_table.ndim != 2 or mask_table.shape[1] != len(self._vocabulary):
+            raise ValueError(
+                f"a mask table must be (n_species, {len(self._vocabulary)}) for gene vocabulary "
+                f"v{self._vocabulary.version}; got {mask_table.shape}"
+            )
+        self._mask_table = np.array(mask_table, dtype=np.bool_)
+
     def mask_of(self, species_id: int) -> np.ndarray:
         """(n_genes,) bool: the expression mask for one species id."""
         if not 0 <= species_id < self.n_species:
