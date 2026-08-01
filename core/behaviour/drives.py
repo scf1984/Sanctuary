@@ -49,10 +49,32 @@ from core.selection import Selection
 from core.world.climate import Climate
 
 
-def _check_weight(weight: float) -> None:
-    """A negative weight would invert a drive: the more urgent its cause, the less it wants."""
-    if weight < 0:
-        raise ValueError(f"drive weight must be non-negative, got {weight}")
+class DriveWeight:
+    """One drive's weight, read per entity from a gene (#23, CLAUDE.md §2.5).
+
+    §2.5 makes the weights genes rather than constants, so **boldness, sociality and parental
+    investment arise from selection instead of being designed**. A population under heavy predation
+    evolves caution with nobody writing a caution rule; the same population, unpredated, evolves it
+    away again, because a frightened animal forgoes food for nothing.
+
+    Every drive resolves its weight identically, which is why this exists at all — it is the fifth
+    repetition of the same three lines (§8.3), not an abstraction written ahead of need.
+
+    **Read as a magnitude, which is what deletes the old check.** `_check_weight` used to reject a
+    negative weight at construction, because a negative one inverts a drive: the more urgent its
+    cause, the less it wants. A magnitude gene cannot express that, so the check is gone rather than
+    moved — §8.7's preference for an unrepresentable failure over a validated one, the same move
+    #111 made for gene costs.
+    """
+
+    def __init__(self, genetics: Genetics, genes: GeneRegistry, gene: str) -> None:
+        self.genetics = genetics
+        # A weight scales a drive's 0-1 shape, so it is a bare multiplier and carries no dimension.
+        self._index = genes.index_of(gene, unit=Unit.DIMENSIONLESS)
+
+    def of(self, selection: Selection) -> np.ndarray:
+        """(len(selection),) float32: each entity's own weighting for this drive."""
+        return self.genetics.expressed(selection)[:, self._index]
 
 
 @dataclass(frozen=True)
@@ -80,13 +102,12 @@ class HungerConfig:
     spreading are one mechanism (#93).
     """
 
-    weight: float
+    weight_gene: str
     satiation_energy: float
     detection_threshold: float
     sight_gene: str
 
     def __post_init__(self) -> None:
-        _check_weight(self.weight)
         if self.satiation_energy <= 0:
             raise ValueError(f"satiation_energy must be positive, got {self.satiation_energy}")
         if self.detection_threshold <= 0:
@@ -124,11 +145,12 @@ class Hunger:
         # Raises KeyError naming the vocabulary version if the gene does not exist. Acuity
         # scales what is sampled from a field rather than a radius (#93), so it is dimensionless.
         self._sight_index = genes.index_of(config.sight_gene, unit=Unit.DIMENSIONLESS)
+        self._weight = DriveWeight(genetics, genes, config.weight_gene)
 
     def urgency(self, selection: Selection) -> np.ndarray:
         """(len(selection),) float32: how far the pool has fallen below satiation, weighted."""
         deficit = 1.0 - self.ecology.energy(selection) / self.config.satiation_energy
-        return (self.config.weight * np.clip(deficit, 0.0, 1.0)).astype(np.float32)
+        return (self._weight.of(selection) * np.clip(deficit, 0.0, 1.0)).astype(np.float32)
 
     def appeal(self, selection: Selection, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """(n, n_options) float32 in [0, 1]: how much grazing each option leads toward.
@@ -158,19 +180,20 @@ class Hunger:
 class ThirstConfig:
     """Per-world tuning for the thirst drive.
 
-    weight: multiplier on the drive's 0-1 shape.
+    weight_gene: the gene whose expressed value multiplies this drive's 0-1 shape. A gene
+        rather than a constant, so temperament evolves rather than being designed (§2.5,
+        #23). Read as a magnitude: a negative weight would invert the drive.
     onset_temperature: degrees C below which an animal wants no water at all.
     saturation_temperature: degrees C at and above which thirst is maximal. Must exceed
         `onset_temperature`; the two being equal would make thirst a step function of the climate
         field and every animal on one side of a contour maximally thirsty at once.
     """
 
-    weight: float
+    weight_gene: str
     onset_temperature: float
     saturation_temperature: float
 
     def __post_init__(self) -> None:
-        _check_weight(self.weight)
         if self.saturation_temperature <= self.onset_temperature:
             raise ValueError(
                 "saturation_temperature must exceed onset_temperature, got "
@@ -189,10 +212,18 @@ class Thirst:
 
     name = "thirst"
 
-    def __init__(self, store: EntityStore, climate: Climate, config: ThirstConfig) -> None:
+    def __init__(
+        self,
+        store: EntityStore,
+        climate: Climate,
+        genetics: Genetics,
+        genes: GeneRegistry,
+        config: ThirstConfig,
+    ) -> None:
         self.store = store
         self.climate = climate
         self.config = config
+        self._weight = DriveWeight(genetics, genes, config.weight_gene)
 
     def appeal(self, selection: Selection, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """(n, n_options) float32: flat — thirst pulls at no direction yet.
@@ -211,14 +242,16 @@ class Thirst:
         temperature = self.climate.temperature_at(self.store.x[mask], self.store.y[mask])
         span = self.config.saturation_temperature - self.config.onset_temperature
         load = (temperature - self.config.onset_temperature) / span
-        return (self.config.weight * np.clip(load, 0.0, 1.0)).astype(np.float32)
+        return (self._weight.of(selection) * np.clip(load, 0.0, 1.0)).astype(np.float32)
 
 
 @dataclass(frozen=True)
 class LustConfig:
     """Per-world tuning for the lust drive.
 
-    weight: multiplier on the drive's 0-1 shape.
+    weight_gene: the gene whose expressed value multiplies this drive's 0-1 shape. A gene
+        rather than a constant, so temperament evolves rather than being designed (§2.5,
+        #23). Read as a magnitude: a negative weight would invert the drive.
     maturity_gene: the gene whose expressed value is how many ticks an animal must live before it
         seeks a mate at all. A **gene** rather than a constant (§2.5, #20): age at first
         reproduction is among the most strongly selected life-history traits there is, and a world
@@ -238,7 +271,7 @@ class LustConfig:
     abundant_energy: energy units at which lust saturates. Must exceed `breeding_energy`.
     """
 
-    weight: float
+    weight_gene: str
     maturity_gene: str
     scent_acuity_gene: str
     detection_threshold: float
@@ -246,7 +279,6 @@ class LustConfig:
     abundant_energy: float
 
     def __post_init__(self) -> None:
-        _check_weight(self.weight)
         if self.detection_threshold <= 0:
             raise ValueError(
                 f"detection_threshold must be positive, got {self.detection_threshold}; at or "
@@ -291,6 +323,7 @@ class Lust:
         self._acuity_index = genes.index_of(
             config.scent_acuity_gene, unit=Unit.DIMENSIONLESS
         )
+        self._weight = DriveWeight(genetics, genes, config.weight_gene)
 
     def appeal(self, selection: Selection, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """(n, n_options) float32 in [0, 1]: how much company-like-me each option leads toward.
@@ -336,7 +369,7 @@ class Lust:
         mature = self.store.age[selection.to_mask()] >= maturity
         headroom = self.config.abundant_energy - self.config.breeding_energy
         surplus = (self.ecology.energy(selection) - self.config.breeding_energy) / headroom
-        return (self.config.weight * np.where(mature, np.clip(surplus, 0.0, 1.0), 0.0)).astype(
+        return (self._weight.of(selection) * np.where(mature, np.clip(surplus, 0.0, 1.0), 0.0)).astype(
             np.float32
         )
 
@@ -345,7 +378,9 @@ class Lust:
 class FearConfig:
     """Per-world tuning for the fear drive.
 
-    weight: multiplier on the drive's 0-1 shape.
+    weight_gene: the gene whose expressed value multiplies this drive's 0-1 shape. A gene
+        rather than a constant, so temperament evolves rather than being designed (§2.5,
+        #23). Read as a magnitude: a negative weight would invert the drive.
     scent_acuity_gene: the gene whose expressed value is scent detection sensitivity. Named here
         rather than assumed, as `MetabolismConfig.insulation_gene` is, because the vocabulary is
         per-world.
@@ -367,14 +402,13 @@ class FearConfig:
         contour would be maximally terrified at once.
     """
 
-    weight: float
+    weight_gene: str
     scent_acuity_gene: str
     aversion_genes: tuple[tuple[str, ...], ...]
     detection_threshold: float
     saturation: float
 
     def __post_init__(self) -> None:
-        _check_weight(self.weight)
         if not self.aversion_genes:
             raise ValueError("aversion_genes must name at least one aversion direction")
         if any(not block for block in self.aversion_genes):
@@ -448,6 +482,7 @@ class Fear:
         # scales a sampled concentration and an aversion is a direction in cue space; neither
         # carries a dimension.
         self._acuity_index = genes.index_of(config.scent_acuity_gene, unit=Unit.DIMENSIONLESS)
+        self._weight = DriveWeight(genetics, genes, config.weight_gene)
         # (n_directions, n_channels): one row of gene columns per aversion direction, so scoring
         # every direction is one matrix product rather than a loop over genes.
         self._aversion_indices = np.array(
@@ -478,7 +513,7 @@ class Fear:
         detected = np.stack(self._channels(selection))
         # Noisy-OR: independent detections corroborate without ever summing past certainty, which
         # is what lets #24 add a sense without re-tuning every other drive's weight.
-        return (self.config.weight * (1.0 - np.prod(1.0 - detected, axis=0))).astype(np.float32)
+        return (self._weight.of(selection) * (1.0 - np.prod(1.0 - detected, axis=0))).astype(np.float32)
 
     def _channels(self, selection: Selection) -> list[np.ndarray]:
         """Each channel's detection probability, (len(selection),) float32 in [0, 1].
@@ -510,7 +545,9 @@ class Fear:
 class FatigueConfig:
     """Per-world tuning for the fatigue drive.
 
-    weight: multiplier on the drive's 0-1 shape.
+    weight_gene: the gene whose expressed value multiplies this drive's 0-1 shape. A gene
+        rather than a constant, so temperament evolves rather than being designed (§2.5,
+        #23). Read as a magnitude: a negative weight would invert the drive.
     exertion_saturation: accumulated work per unit of body size at which exhaustion alone is
         reason enough to stop — the point where `Exertion`'s open-ended quantity becomes the
         0-to-1 shape every drive competes in. Must be positive; at zero any movement at all would
@@ -523,11 +560,10 @@ class FatigueConfig:
         where the second moved and the first did not.
     """
 
-    weight: float
+    weight_gene: str
     exertion_saturation: float
 
     def __post_init__(self) -> None:
-        _check_weight(self.weight)
         if self.exertion_saturation <= 0:
             raise ValueError(
                 f"exertion_saturation must be positive, got {self.exertion_saturation}; "
@@ -554,10 +590,18 @@ class Fatigue:
 
     name = "fatigue"
 
-    def __init__(self, store: EntityStore, exertion: Exertion, config: FatigueConfig) -> None:
+    def __init__(
+        self,
+        store: EntityStore,
+        exertion: Exertion,
+        genetics: Genetics,
+        genes: GeneRegistry,
+        config: FatigueConfig,
+    ) -> None:
         self.store = store
         self.exertion = exertion
         self.config = config
+        self._weight = DriveWeight(genetics, genes, config.weight_gene)
 
     def appeal(self, selection: Selection, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """(n, n_options) float32: all of it on staying put, which is the last option.
@@ -578,4 +622,4 @@ class Fatigue:
         )
         # Noisy-OR over the two reasons: neither alone can saturate the score, and both together
         # exceed either — an injured animal that has also just been running wants to stop most.
-        return (self.config.weight * (1.0 - (1.0 - injury) * (1.0 - spent))).astype(np.float32)
+        return (self._weight.of(selection) * (1.0 - (1.0 - injury) * (1.0 - spent))).astype(np.float32)

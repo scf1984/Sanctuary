@@ -25,7 +25,7 @@ from core.world.terrain import Terrain
 from tests.support.genes import gene_registry
 from tests.support.plants import plant_field
 
-GENE_NAMES = ("size", "speed", "insulation", "mutability")
+GENE_NAMES = ("size", "speed", "insulation", "fatigue_weight", "mutability")
 
 # Every gene declares how its stored value is read (#104). These are all quantities, so all fold
 # across zero; `mutability` is in the vocabulary because inheritance's spread floor is a gene, and
@@ -110,7 +110,9 @@ class World:
         self.fatigue = Fatigue(
             self.store,
             self.exertion,
-            FatigueConfig(weight=1.0, exertion_saturation=exertion_saturation),
+            self.genetics,
+            self.genes,
+            FatigueConfig(weight_gene="fatigue_weight", exertion_saturation=exertion_saturation),
         )
         self.species_id = self.species.register(GENE_NAMES)
 
@@ -121,6 +123,8 @@ class World:
         genes = np.zeros((n, len(GENE_NAMES)), dtype=np.float32)
         genes[:, GENE_NAMES.index("speed")] = speed
         genes[:, GENE_NAMES.index("size")] = size
+        # Drive weights are genes now (#23); these tests were written against a scalar 1.0.
+        genes[:, GENE_NAMES.index("fatigue_weight")] = 1.0
 
         ids = self.store.allocate(
             n,
@@ -168,7 +172,7 @@ class TestExertionConfig:
 class TestFatigueConfig:
     def test_zero_saturation_is_rejected(self):
         with pytest.raises(ValueError, match="exertion_saturation"):
-            FatigueConfig(weight=1.0, exertion_saturation=0.0)
+            FatigueConfig(weight_gene="fatigue_weight", exertion_saturation=0.0)
 
 
 class TestMovementFillsTheColumn:

@@ -197,6 +197,71 @@ _GENES = (
         ),
     ),
     GeneSpec(
+        name="hunger_weight",
+        cost=0.0,
+        expression_mode=ExpressionMode.MAGNITUDE,
+        unit=Unit.DIMENSIONLESS,
+        description=(
+            "How heavily hunger counts in the drive contest. A gene rather than a constant, so "
+            "temperament evolves rather than being designed (§2.5, #23) — an animal that weights "
+            "hunger badly for its world is outcompeted by one that does not. Read as a magnitude, "
+            "because a negative weight would invert the drive. Free: mis-weighting is its own "
+            "price, immediately."
+        ),
+    ),
+    GeneSpec(
+        name="thirst_weight",
+        cost=0.0,
+        expression_mode=ExpressionMode.MAGNITUDE,
+        unit=Unit.DIMENSIONLESS,
+        description=(
+            "How heavily thirst counts in the drive contest. A gene rather than a constant, so "
+            "temperament evolves rather than being designed (§2.5, #23) — an animal that weights "
+            "thirst badly for its world is outcompeted by one that does not. Read as a magnitude, "
+            "because a negative weight would invert the drive. Free: mis-weighting is its own "
+            "price, immediately."
+        ),
+    ),
+    GeneSpec(
+        name="fear_weight",
+        cost=0.0,
+        expression_mode=ExpressionMode.MAGNITUDE,
+        unit=Unit.DIMENSIONLESS,
+        description=(
+            "How heavily fear counts in the drive contest. A gene rather than a constant, so "
+            "temperament evolves rather than being designed (§2.5, #23) — an animal that weights "
+            "fear badly for its world is outcompeted by one that does not. Read as a magnitude, "
+            "because a negative weight would invert the drive. Free: mis-weighting is its own "
+            "price, immediately."
+        ),
+    ),
+    GeneSpec(
+        name="lust_weight",
+        cost=0.0,
+        expression_mode=ExpressionMode.MAGNITUDE,
+        unit=Unit.DIMENSIONLESS,
+        description=(
+            "How heavily lust counts in the drive contest. A gene rather than a constant, so "
+            "temperament evolves rather than being designed (§2.5, #23) — an animal that weights "
+            "lust badly for its world is outcompeted by one that does not. Read as a magnitude, "
+            "because a negative weight would invert the drive. Free: mis-weighting is its own "
+            "price, immediately."
+        ),
+    ),
+    GeneSpec(
+        name="fatigue_weight",
+        cost=0.0,
+        expression_mode=ExpressionMode.MAGNITUDE,
+        unit=Unit.DIMENSIONLESS,
+        description=(
+            "How heavily fatigue counts in the drive contest. A gene rather than a constant, so "
+            "temperament evolves rather than being designed (§2.5, #23) — an animal that weights "
+            "fatigue badly for its world is outcompeted by one that does not. Read as a magnitude, "
+            "because a negative weight would invert the drive. Free: mis-weighting is its own "
+            "price, immediately."
+        ),
+    ),
+    GeneSpec(
         name="mutability",
         cost=0.0,
         expression_mode=ExpressionMode.MAGNITUDE,
@@ -301,29 +366,29 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
         ),
         exertion=ExertionConfig(recovery_rate=0.2),
         hunger=HungerConfig(
-            weight=1.0, satiation_energy=200.0, detection_threshold=0.5, sight_gene="sight"
+            weight_gene="hunger_weight", satiation_energy=200.0, detection_threshold=0.5, sight_gene="sight"
         ),
         # Thirst is held quiet on purpose, and this is a workaround rather than a tuning choice: a
         # drive that *wins* with no mechanic behind it leaves the animal standing still, and hunger
         # is the only drive that can act today. At equal weights thirst outscores hunger in this
         # climate and nothing in the world ever moves — which is #126.
-        thirst=ThirstConfig(weight=0.2, onset_temperature=25.0, saturation_temperature=40.0),
+        thirst=ThirstConfig(weight_gene="thirst_weight", onset_temperature=25.0, saturation_temperature=40.0),
         fear=FearConfig(
-            weight=1.0,
+            weight_gene="fear_weight",
             scent_acuity_gene="scent_acuity",
             aversion_genes=_AVERSION_GENES,
             detection_threshold=0.05,
             saturation=1.0,
         ),
         lust=LustConfig(
-            weight=1.0,
+            weight_gene="lust_weight",
             maturity_gene="maturity_age",
             scent_acuity_gene="scent_acuity",
             detection_threshold=0.05,
             breeding_energy=120.0,
             abundant_energy=250.0,
         ),
-        fatigue=FatigueConfig(weight=1.0, exertion_saturation=20.0),
+        fatigue=FatigueConfig(weight_gene="fatigue_weight", exertion_saturation=20.0),
         behaviour=BehaviourConfig(
             # Eight headings is enough that a forager can follow a gradient without the walk
             # visibly staircasing, and the per-entity jitter makes the effective resolution
@@ -357,6 +422,13 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
             # enough to hold one against an appetite. Drawn rather than fixed, so founders differ
             # in doggedness and selection has something to act on from the first generation.
             "commitment": (0.05, 0.25),
+            # Drive weights, drawn around 1 so founders differ in temperament from the first
+            # generation and selection has something to act on (§2.5, #23).
+            "hunger_weight": (0.6, 1.4),
+            "thirst_weight": (0.6, 1.4),
+            "fear_weight": (0.6, 1.4),
+            "lust_weight": (0.6, 1.4),
+            "fatigue_weight": (0.6, 1.4),
             # Around zero, so `exp` puts founding temperatures around 1 — the scale at which a
             # utility difference of one is a decisive preference rather than a faint one.
             "choice_temperature": (-0.3, 0.3),
