@@ -47,6 +47,7 @@ from core.genetics.service import Genetics
 from core.genetics.registry import GeneRegistry, Unit
 from core.selection import Selection
 from core.world.climate import Climate
+from core.world.terrain import Terrain
 
 
 class DriveWeight:
@@ -558,16 +559,51 @@ class FatigueConfig:
         there, because the two answer different questions: that config says what a step *costs*,
         this one says how much work is *too much*, and an animal bred for endurance is a world
         where the second moved and the first did not.
+
+    travel_effort: the share of an animal's restfulness that an ordinary step over level ground
+        costs, in (0, 1]. **This is the number #207 was about.** Fatigue used to score 1 on the
+        null option and 0 on every travelling one, so the gap between resting and walking was
+        pinned at the maximum a drive can express — its spread across options equalled its whole
+        urgency, measured at 0.921 against hunger's 0.210, and hunger consequently never once
+        decided a direction despite ranking the food perfectly.
+
+        Naming the gap makes it a per-world statement about how much walking takes out of a tired
+        animal, rather than an implicit "everything". At 1 the old behaviour is recovered exactly,
+        which is why the interval is open at the top and closed at the bottom: the degenerate case
+        is reachable and stays available, and zero — walking as restful as lying down — would make
+        rest unreachable and bring back the drive that cannot act (#126).
+    climb_tolerance: world units of *ascent* over which a travelling option loses what is left of
+        its appeal, e-folding. Must be positive. This is what gives fatigue a direction rather than
+        a bit: a tired animal prefers the valley to the ridge, so terrain shapes where a herd rests
+        without anybody placing a bedding ground.
+
+        **Only gain counts, never net elevation change**, which is the identical rule §2.5 settles
+        for what a step costs — descent is priced at its horizontal distance and no more. Fatigue
+        and the cost function disagreeing about what is tiring would be the same class of defect as
+        #112's unit mismatch: two readings of one physical fact, drifting apart with nothing to
+        catch it.
     """
 
     weight_gene: str
     exertion_saturation: float
+    travel_effort: float
+    climb_tolerance: float
 
     def __post_init__(self) -> None:
         if self.exertion_saturation <= 0:
             raise ValueError(
                 f"exertion_saturation must be positive, got {self.exertion_saturation}; "
                 "at zero any movement whatsoever pins fatigue at maximum"
+            )
+        if not 0.0 < self.travel_effort <= 1.0:
+            raise ValueError(
+                f"travel_effort must be in (0, 1], got {self.travel_effort}; at zero walking is "
+                "as restful as lying down and a tired animal never stops (#126, #207)"
+            )
+        if self.climb_tolerance <= 0:
+            raise ValueError(
+                f"climb_tolerance must be positive, got {self.climb_tolerance}; "
+                "at zero any ascent at all makes an option maximally tiring"
             )
 
 
@@ -595,24 +631,65 @@ class Fatigue:
         store: EntityStore,
         exertion: Exertion,
         genetics: Genetics,
+        terrain: Terrain,
         genes: GeneRegistry,
         config: FatigueConfig,
     ) -> None:
         self.store = store
         self.exertion = exertion
+        self.terrain = terrain
         self.config = config
         self._weight = DriveWeight(genetics, genes, config.weight_gene)
 
     def appeal(self, selection: Selection, x: np.ndarray, y: np.ndarray) -> np.ndarray:
-        """(n, n_options) float32: all of it on staying put, which is the last option.
+        """(n, n_options) float32: how restful each option looks, 1 for staying put.
 
-        This is what makes rest reachable without a mode, a flag or a state column (#114). A tired
-        animal's utility concentrates on the option proposing no displacement; it then pays no
-        transport cost, and therefore recovers (#107). Nothing anywhere branches on "is resting".
+        ```
+        appeal(travelling) = (1 − travel_effort) × exp(−ascent / climb_tolerance)
+        appeal(staying)    = 1
+        ```
+
+        Staying put is maximally restful because it proposes no displacement, so it costs nothing
+        and the animal recovers (#107). That is what makes rest reachable without a mode, a flag or
+        a state column (#114). It is identified by **zero displacement rather than by its column
+        index**: `Behaviour` does put the null option last, but an option that proposes going
+        nowhere is restful because it goes nowhere, and a travelling candidate clipped onto the
+        animal's own position at a world corner is the same thing and should read the same way.
+
+        **Travelling is graded, not vetoed, and that is #207.** This used to return exactly 0 on
+        every travelling option, so the drive's spread across options equalled its entire urgency
+        — 0.921 measured against hunger's 0.210 — and hunger, which ranks the food correctly 0.998
+        of the time, never once decided a direction. A drive's influence over a *ranking* is how
+        far its appeal varies between the options, not how much it wants; expressing "rest" as an
+        all-or-nothing bit spent the largest voice in the contest on one bit of information.
+
+        **Ascent is what gives it a direction.** Distance cannot: every candidate sits one
+        `look_ahead` away, so it is identical across the options and discriminates nothing. Relief
+        is the one thing that differs, and it differs in the direction that matters — a tired
+        animal prefers the valley to the ridge, so where a herd settles is a reading of the terrain
+        rather than an authored bedding ground.
+
+        **Only gain counts, never net elevation change**, matching what a step actually costs
+        (§2.5, #113): descent is charged its horizontal distance and no more. Fatigue calling a
+        downhill option restful while `Movement` charges it the same as level ground would be two
+        readings of one physical fact drifting apart, which is the shape of defect #112 was.
+
+        Elevation is sampled at the candidate rather than walked (#113's cell crossing) because
+        this is a *perception* and not a bill: an animal looks at a slope and judges it, it does
+        not survey the path first. The walk is what the pool is charged against, and it still is.
         """
-        appeal = np.zeros_like(x, dtype=np.float32)
-        appeal[:, -1] = 1.0
-        return appeal
+        mask = selection.to_mask()
+        here_x = self.store.x[mask].astype(np.float64)[:, None]
+        here_y = self.store.y[mask].astype(np.float64)[:, None]
+        ascent = np.maximum(
+            self.terrain.elevation_at(x, y) - self.terrain.elevation_at(here_x, here_y), 0.0
+        )
+        travelling = (
+            1.0 - self.config.travel_effort
+        ) * np.exp(-ascent / self.config.climb_tolerance)
+        # Exactly zero, not near it: `Behaviour.candidate_positions` writes the animal's own
+        # coordinates into the null column unchanged, so the comparison is on identical floats.
+        return np.where(np.hypot(x - here_x, y - here_y) == 0.0, 1.0, travelling).astype(np.float32)
 
     def urgency(self, selection: Selection) -> np.ndarray:
         """(len(selection),) float32: weighted urgency to rest, zero for a healthy idle animal."""

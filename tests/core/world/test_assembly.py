@@ -187,7 +187,12 @@ def world_config(**overrides):
             breeding_energy=120.0,
             abundant_energy=250.0,
         ),
-        fatigue=FatigueConfig(weight_gene="fatigue_weight", exertion_saturation=20.0),
+        fatigue=FatigueConfig(
+            weight_gene="fatigue_weight",
+            exertion_saturation=20.0,
+            travel_effort=0.25,
+            climb_tolerance=4.0,
+        ),
         behaviour=BehaviourConfig(
             # Eight headings is enough that a forager can follow a gradient without the walk
             # visibly staircasing, and the per-entity jitter makes the effective resolution

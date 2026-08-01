@@ -37,6 +37,12 @@ GENETICS_CONFIG = GeneticsConfig(
 # `agility` is costed because `Movement` refuses to build without it (§2.5, #204).
 GENE_REGISTRY = gene_registry(GENE_NAMES, {"insulation": 1.0, "agility": 1.0})
 
+# Fatigue grades travelling options rather than vetoing them (#207). These are the shipped world's
+# figures; nothing below asserts on them, and `TestFatigueGradesTravel` states its own.
+TRAVEL_EFFORT = 0.25
+CLIMB_TOLERANCE = 4.0
+
+
 # Nothing but locomotion moves an energy pool here, so a cohort's exertion is attributable to the
 # steps under test. Insulation carries a cost because MetabolismConfig requires one, and no cohort
 # below expresses it.
@@ -114,8 +120,14 @@ class World:
             self.store,
             self.exertion,
             self.genetics,
+            self.terrain,
             self.genes,
-            FatigueConfig(weight_gene="fatigue_weight", exertion_saturation=exertion_saturation),
+            FatigueConfig(
+                weight_gene="fatigue_weight",
+                exertion_saturation=exertion_saturation,
+                travel_effort=TRAVEL_EFFORT,
+                climb_tolerance=CLIMB_TOLERANCE,
+            ),
         )
         self.species_id = self.species.register(GENE_NAMES)
 
@@ -187,7 +199,12 @@ class TestExertionConfig:
 class TestFatigueConfig:
     def test_zero_saturation_is_rejected(self):
         with pytest.raises(ValueError, match="exertion_saturation"):
-            FatigueConfig(weight_gene="fatigue_weight", exertion_saturation=0.0)
+            FatigueConfig(
+                weight_gene="fatigue_weight",
+                exertion_saturation=0.0,
+                travel_effort=TRAVEL_EFFORT,
+                climb_tolerance=CLIMB_TOLERANCE,
+            )
 
 
 class TestMovementFillsTheColumn:
