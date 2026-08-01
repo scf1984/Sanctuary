@@ -296,6 +296,10 @@ class TestHungerAppeal:
     """
 
     def _hunger(self, world, config=None):
+        # The forage field is tick state with one writer now (#170), so a test that plants biomass
+        # by hand has to run the step before anything can smell it. That is the point of the
+        # change: nothing invalidates the field, so the tick order is what keeps it fresh.
+        world.plants.rebuild_forage()
         return Hunger(
             world.store,
             world.ecology,
@@ -1374,6 +1378,9 @@ class TestAllFiveDrivesCompeting:
         world.scent.rebuild(smellers)
         world.plants.biomass[:] = 0.0
         world.plants.biomass[10, 14] = 80.0  # the only meadow, due east
+        # The forage field is tick state with one writer (#170), so planting a meadow by hand
+        # means running the step before anything can smell it.
+        world.plants.rebuild_forage()
         self.register_all(world)
         return world, prey
 

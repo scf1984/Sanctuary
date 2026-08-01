@@ -437,6 +437,47 @@ class TestBiomassAt:
             plants.biomass_at(np.array([-1.0]), np.array([5.0]))
 
 
+class TestTheForageFieldIsTickState:
+    """One tick has one forage field, and every forager reads the same one (#170).
+
+    `Hunger.appeal` used to build it per call, so the cost-aware diffusion was recomputed once per
+    drive that read it. Exactly one drive reads it today, which is why nothing was wrong with the
+    numbers and why nothing caught it either.
+    """
+
+    def test_a_fresh_field_matches_the_biomass_beside_it(self):
+        """Never a held field that disagrees with the crop it describes — the attribute is built at
+        construction rather than left empty."""
+        plants = make_plants()
+
+        np.testing.assert_allclose(plants.forage, plants.forage_field())
+
+    def test_rebuilding_picks_up_growth(self):
+        plants = make_plants()
+        before = plants.forage.copy()
+        settle(plants, ticks=50)
+
+        plants.rebuild_forage()
+
+        assert plants.forage.max() > before.max()
+
+    def test_it_is_stale_until_rebuilt(self):
+        """The property that makes this a tick step rather than a cache: nothing invalidates it, so
+        the *order* is what guarantees freshness (§8.7 — a stamp that is wrong raises nothing)."""
+        plants = make_plants()
+        settle(plants, ticks=50)
+        # `grow` does not touch the forage field — only the registered step does, which is the
+        # whole point — so it has to be refreshed before it can be shown to go stale.
+        plants.rebuild_forage()
+        stale = plants.forage.copy()
+
+        plants.graze(np.array([5.0]), np.array([5.0]), np.array([plants.biomass[5, 5]]))
+
+        np.testing.assert_array_equal(plants.forage, stale)
+        plants.rebuild_forage()
+        assert plants.forage[5, 5] < stale[5, 5]
+
+
 class TestForageField:
     """How a forager finds food it is not already standing on (#93).
 
