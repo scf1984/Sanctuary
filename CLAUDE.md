@@ -673,6 +673,54 @@ by" hunger and no animal stands still merely because the drive that won has no m
   This is what #23 needs in place first: once the fatigue weight is a gene, selection tunes it
   against whatever fatigue reads, and adding the exertion term afterwards would change what that
   gene means for every world already carrying it — a rules fork under §2.8 rather than a fix.
+
+  **A drive's influence over *direction* is how far its appeal varies across the options, not how
+  much it wants** — settled in #207, which owned it, and it is the general rule the fatigue fix is
+  the first instance of. `utility(option) = Σ urgency × appeal(option)`, so a constant added to
+  every option cancels: urgency decides how much a drive *contributes*, and only its **spread**
+  can move a ranking. Nothing in the design controlled that quantity or made it visible, and the
+  two drives that mattered differed in it by 4.4×.
+
+  Fatigue scored 1 on the null option and 0 on every travelling one, so its spread *equalled its
+  entire urgency* by construction — the loudest voice in the contest, spent on one bit of
+  information. Hunger reads a field diffused over `range` at candidates `look_ahead` away, ranks
+  them **0.995–0.998 correctly by available forage**, and wins by a hair. The measured consequence
+  is that hunger never once decided a direction at any choice temperature: the heading actually
+  taken tracked fatigue when animals were decisive and noise when they were not.
+
+  ```
+  appeal(travelling) = (1 − travel_effort) × exp(−ascent / climb_tolerance)
+  appeal(staying)    = 1
+  ```
+
+  **Naming the rest/travel gap is the fix**; grading it by terrain is what turns a bit into a
+  direction. `travel_effort` is a per-world statement about how much walking takes out of a tired
+  animal, where the implicit value was "everything". Ascent is the only thing that *can*
+  discriminate — every candidate sits one `look_ahead` away, so distance is identical across the
+  options — and it discriminates in the direction that matters: a tired animal prefers the valley
+  to the ridge, so where a herd settles reads the terrain rather than an authored bedding ground.
+  **Only gain counts**, matching what a step actually costs (#113); fatigue calling a descent
+  restful while `Movement` charges it as level ground would be two readings of one physical fact
+  drifting apart, which is the shape of defect #112 was.
+
+  The null option is identified by **zero displacement rather than by its column index**, so a
+  candidate clipped onto the animal's own position at a world edge reads as the rest it is.
+
+  **This and `choice_temperature` must be tuned as a table** (§2.1), which is the sharper lesson.
+  Either measured alone says nothing: the old veto is harmless at the shipped temperature and
+  **pathological at a decisive one — 85% of the population permanently at rest** — while grading it
+  at the shipped temperature is ecologically neutral. Only the corner where both move shows the
+  gain, and #205's negative answer on the temperature was therefore *conditional on this defect*
+  and should be revisited now that it is gone. Measurements in
+  [`docs/spikes/who-steers.md`](docs/spikes/who-steers.md).
+
+  **What is deliberately not done here** is the general fix: normalising every drive's spread so
+  that urgency alone decides influence. It is the right shape and it reshapes #22's contract for
+  every drive present and future, so it wants its own decision rather than arriving behind a
+  tuning change — and it forecloses a drive that genuinely should be all-or-nothing from saying so.
+  Recorded on #207 with the alternatives.
+
+  **MAJOR** under §2.8: it moves what animals do.
 - **Fear is a noisy-OR over perception channels** — decided in #22, which owns it. A *channel* is
   one sense, with its own physics, reporting a detection probability in `[0, 1]` per entity:
 

@@ -293,7 +293,7 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
         Thirst(store, climate, genetics, genes, config.thirst),
         Fear(store, genetics, scent, genes, config.fear),
         Lust(store, ecology, genetics, scent, genes, config.lust),
-        Fatigue(store, exertion, genetics, genes, config.fatigue),
+        Fatigue(store, exertion, genetics, terrain, genes, config.fatigue),
     )
     for drive in drives:
         behaviour.register(drive)

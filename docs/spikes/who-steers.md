@@ -116,3 +116,66 @@ asserts hunger's preferred heading beats 0.9 and a flat drive's does not. Nothin
 end to end before, and nothing else in the suite would notice if it broke: a world of animals
 foraging at random still eats, breeds and stabilises, so every population figure would stay
 plausible.
+
+---
+
+## 5. The fix, and the interaction it exposed (#207)
+
+Fatigue now grades travelling options instead of vetoing them:
+
+```
+appeal(travelling) = (1 − travel_effort) × exp(−ascent / climb_tolerance)
+appeal(staying)    = 1
+```
+
+Shipped at `travel_effort = 0.25`, `climb_tolerance = 4.0`. Both measured rather than chosen. The
+ascent between an animal and one of its candidates runs p50 0.33, p99 1.46, max 1.87 world units
+over a settled world, so a tolerance of 4.0 is roughly twice the largest rise — the discount is
+gentle and graded across the observed range instead of saturating on ordinary ground.
+
+### Neither knob measured alone says anything
+
+This is §2.1's "tune as a table" as a concrete result. Sweeping `travel_effort` at the shipped
+temperature moves **nothing**: forage rank sits at 0.496–0.520 across the whole range from 0.1 to
+1.0, indistinguishable from the 0.521 baseline, because at that temperature the Gumbel noise is
+larger than any drive's spread. And #205 already measured that sharpening the temperature alone
+makes everything worse.
+
+The pathology only appears in the corner where both move:
+
+| travel_effort | climb_tolerance | temperature | living | energy | forage rank | resting | fatigue spread | hunger spread |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1.00 *(the veto)* | — | 1.00 | 2,187 / 2,372 | 60.4 / 61.1 | 0.523 / 0.517 | 0.26 | **0.93 / 0.90** | 0.20 / 0.21 |
+| 1.00 *(the veto)* | — | 0.22 | 1,856 / 1,873 | 59.5 / 59.7 | **0.454 / 0.419** | **0.85** | 0.87 / 0.85 | 0.18 / 0.20 |
+| 0.25 | 4.0 | 1.00 | 2,124 / 2,330 | 60.4 / 61.4 | 0.528 / 0.512 | 0.14 | **0.34** | 0.20 |
+| 0.25 | 4.0 | 0.22 | **2,728 / 2,863** | 59.4 / 60.8 | 0.533 / 0.539 | 0.40 | 0.34 | 0.15 |
+| 0.10 | 4.0 | 0.22 | 2,468 / 2,739 | 59.1 / 60.0 | **0.554 / 0.547** | 0.25 | **0.22** | 0.17 |
+| 0.25 | 4.0 | 0.08 | 1,865 / 1,993 | 58.4 / 58.7 | 0.475 / 0.445 | **0.88** | 0.34 | 0.14 |
+
+Read the corners:
+
+- **The veto is harmless warm and catastrophic cold.** At temperature 0.22 it puts **85% of the
+  population permanently at rest** with a median exertion of 0.02 — the herd sits down and stops.
+  That is the state the shipped temperature was hiding, and any change that made animals more
+  decisive would have walked straight into it.
+- **The graded drive is neutral warm.** Population and condition match the baseline within seed
+  noise, which is what makes this shippable on its own: a latent pathology removed without moving
+  the equilibrium anyone would notice.
+- **Together they are better than either.** 2,728–2,863 living at the same condition is a **25%
+  larger population** than the shipped corner, with a healthy 40% resting share.
+- **Very cold is still bad** even graded: at 0.08 the herd sits down again, because fatigue's 0.34
+  still beats hunger's 0.14 reliably once the noise is gone.
+
+### What this does not fix
+
+Hunger's spread is 0.15–0.28 throughout. Fatigue is no longer four times louder, but it is still
+louder, and commitment's band (0.29) is comparable to both. **Foraging never rises far above
+chance** — 0.554 at the very best cell against 0.521 shipped. Making hunger actually decide needs
+either the general normalisation or a wider spread of its own, both of which are on #207 and
+neither of which is a tuning change.
+
+### Consequence for #205
+
+Its gate was answered "no" on evidence that is now known to be **conditional on the veto**. With
+fatigue graded, the decisive setting is the best cell measured rather than the worst. That is a
+follow-up for that issue with these numbers, not something this change should smuggle in.

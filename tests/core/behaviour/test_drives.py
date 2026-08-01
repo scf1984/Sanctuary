@@ -65,6 +65,12 @@ GENE_NAMES = (
 GENE_REGISTRY = gene_registry(GENE_NAMES, {"size": 2.0, "speed": 3.0, "sight": 1.0, "insulation": 1.0, "scent_acuity": 0.5})
 SCENT_GENES = ScentGenes(emission_gene="scent_emission", signature_genes=SIGNATURE_GENES)
 
+# Fatigue grades travelling options rather than vetoing them (#207). These are the shipped world's
+# figures; nothing below asserts on them, and `TestFatigueGradesTravel` states its own.
+TRAVEL_EFFORT = 0.25
+CLIMB_TOLERANCE = 4.0
+
+
 # Cue space is signed: a signature is a position in it and an aversion is a direction through it, so
 # the sign is information in both (#104). Everything else here is a quantity.
 CUE_GENES = (*SIGNATURE_GENES, *FLAT_AVERSION)
@@ -752,7 +758,12 @@ class TestFatigue:
         world = World()
         selection = world.spawn(3, health=np.array([1.0, 0.25, 0.0], dtype=np.float32))
 
-        scores = Fatigue(world.store, world.exertion, world.genetics, world.genes, FatigueConfig(weight_gene="fatigue_weight", exertion_saturation=1.0)).urgency(selection)
+        scores = Fatigue(world.store, world.exertion, world.genetics, world.terrain, world.genes, FatigueConfig(
+                weight_gene="fatigue_weight",
+                exertion_saturation=1.0,
+                travel_effort=TRAVEL_EFFORT,
+                climb_tolerance=CLIMB_TOLERANCE,
+            )).urgency(selection)
 
         assert scores == pytest.approx([0.0, 0.75, 1.0])
 
@@ -774,37 +785,59 @@ class TestFatigue:
             world.store,
             world.exertion,
             world.genetics,
+            world.terrain,
             world.genes,
-            FatigueConfig(weight_gene="fatigue_weight", exertion_saturation=1.0),
+            FatigueConfig(
+                weight_gene="fatigue_weight",
+                exertion_saturation=1.0,
+                travel_effort=TRAVEL_EFFORT,
+                climb_tolerance=CLIMB_TOLERANCE,
+            ),
         )
 
         scores = fatigue.urgency(selection)
         assert (scores >= 0.0).all()
         assert scores[0] == pytest.approx(scores[1])
 
-    def test_fatigue_puts_all_of_its_appeal_on_the_null_option(self):
+    def test_fatigue_prefers_resting_without_vetoing_travel(self):
         """Rest needs no mode, no flag and no state column — it is an option in the same contest.
 
-        The null option is the last column by construction (`Behaviour.candidate_positions`), and
-        an animal that picks it proposes no displacement, so `Movement.step` prices a step of zero
-        and it pays nothing. That is what makes exertion recover (#107) with nothing anywhere
-        branching on "is resting".
+        An animal that picks the null option proposes no displacement, so `Movement.step` prices a
+        step of zero and it pays nothing. That is what makes exertion recover (#107) with nothing
+        anywhere branching on "is resting".
+
+        **Travelling scores `1 − travel_effort`, not zero, and that is #207.** Scoring it at zero
+        made this drive's spread across options equal to its entire urgency — the largest voice in
+        the contest, spent on one bit of information — so hunger, which ranks the food correctly
+        0.998 of the time, never once decided a direction. Resting still wins here; it just no
+        longer wins by the whole width of the scale.
         """
         world = World()
-        selection = world.spawn(2, health=np.float32([0.5, 1.0]))
+        # Mid-world, so both travelling candidates are real: `options_at` clips into the world
+        # exactly as `candidate_positions` does, and from the default corner the westward option
+        # clips onto the animal's own position — which is a stay-put option and reads as one.
+        selection = world.spawn(
+            2, health=np.float32([0.5, 1.0]), x=np.float32([4.0, 4.0]), y=np.float32([4.0, 4.0])
+        )
         fatigue = Fatigue(
             world.store,
             world.exertion,
             world.genetics,
+            world.terrain,
             world.genes,
-            FatigueConfig(weight_gene="fatigue_weight", exertion_saturation=1.0),
+            FatigueConfig(
+                weight_gene="fatigue_weight",
+                exertion_saturation=1.0,
+                travel_effort=TRAVEL_EFFORT,
+                climb_tolerance=CLIMB_TOLERANCE,
+            ),
         )
         x, y = options_at(world, selection)
 
         appeal = fatigue.appeal(selection, x, y)
 
         assert appeal[:, NULL] == pytest.approx([1.0, 1.0])
-        assert appeal[:, :NULL] == pytest.approx(np.zeros((2, 2)))
+        assert appeal[:, :NULL] == pytest.approx(np.full((2, 2), 1.0 - TRAVEL_EFFORT))
 
 
 # Cold enough that sampling is effectively the argmax: exp(-4) is about 0.018, so a utility gap of
@@ -845,7 +878,12 @@ def register_four(world):
         )
     )
     world.behaviour.register(
-        Fatigue(world.store, world.exertion, world.genetics, world.genes, FatigueConfig(weight_gene="fatigue_weight", exertion_saturation=1.0))
+        Fatigue(world.store, world.exertion, world.genetics, world.terrain, world.genes, FatigueConfig(
+                weight_gene="fatigue_weight",
+                exertion_saturation=1.0,
+                travel_effort=TRAVEL_EFFORT,
+                climb_tolerance=CLIMB_TOLERANCE,
+            ))
     )
 
 
@@ -895,6 +933,11 @@ class TestDrivesCompeting:
             1,
             energy=np.array([80.0], dtype=np.float32),
             health=np.array([0.1], dtype=np.float32),
+            # Mid-world: from the corner, half the candidate headings clip onto the animal's own
+            # position, and a stay-put option that `Behaviour` records as moving would confuse
+            # what this test is about.
+            x=np.array([4.0], dtype=np.float32),
+            y=np.array([4.0], dtype=np.float32),
         )
         world.genetics.set_genes(selection, gene_rows(DECISIVE))
         world.plants.biomass[:] = 0.0
@@ -904,13 +947,20 @@ class TestDrivesCompeting:
                 HUNGER_CONFIG,
             )
         )
-        world.behaviour.register(Fatigue(world.store, world.exertion, world.genetics, world.genes, FatigueConfig(weight_gene="fatigue_weight", exertion_saturation=1.0)))
+        world.behaviour.register(Fatigue(world.store, world.exertion, world.genetics, world.terrain, world.genes, FatigueConfig(
+                weight_gene="fatigue_weight",
+                exertion_saturation=1.0,
+                travel_effort=TRAVEL_EFFORT,
+                climb_tolerance=CLIMB_TOLERANCE,
+            )))
 
         world.behaviour.choose(selection, np.random.default_rng(0))
         breakdown = world.behaviour.breakdown(selection)
 
-        assert not world.store.choice_moving[selection.to_indices()][0]
-        assert breakdown["fatigue"] == pytest.approx([0.9])
+        # Fatigue no longer vetoes travel (#207), so the decisive animal may take either — what
+        # matters is that the breakdown reports its contribution *to whatever it took*.
+        rested = not world.store.choice_moving[selection.to_indices()][0]
+        assert breakdown["fatigue"] == pytest.approx([0.9 if rested else 0.9 * (1.0 - TRAVEL_EFFORT)])
         assert breakdown["hunger"] == pytest.approx([0.0])
 
 
@@ -1355,7 +1405,12 @@ class TestAllFiveDrivesCompeting:
                 ),
             )
         )
-        world.behaviour.register(Fatigue(world.store, world.exertion, world.genetics, world.genes, FatigueConfig(weight_gene="fatigue_weight", exertion_saturation=1.0)))
+        world.behaviour.register(Fatigue(world.store, world.exertion, world.genetics, world.terrain, world.genes, FatigueConfig(
+                weight_gene="fatigue_weight",
+                exertion_saturation=1.0,
+                travel_effort=TRAVEL_EFFORT,
+                climb_tolerance=CLIMB_TOLERANCE,
+            )))
 
     def _terrified_and_hungry(self, with_predator):
         world = FearWorld(grid=21, capacity=16)
@@ -1496,3 +1551,145 @@ class TestTwoAversionDirections:
         assert self.fear_of(self.WOLF, one_thing, FEAR_CONFIG) == pytest.approx(
             self.fear_of(self.WOLF, both_named, FEAR_CONFIG)
         )
+
+
+def eastward_ramp(gain_per_unit, grid=9):
+    """Ground rising steadily along +x, so the east option climbs and the west one descends."""
+    x = np.arange(grid, dtype=np.float32) * gain_per_unit
+    return np.broadcast_to(x, (grid, grid)).astype(np.float32)
+
+
+class TestFatigueGradesTravelByEffort:
+    """Issue #207: fatigue prefers rest without vetoing movement, and prefers an *easy* direction.
+
+    The defect it replaces was structural rather than a mis-set weight. Scoring 1 on the null
+    option and 0 on every travelling one made this drive's spread across options equal to its
+    entire urgency — measured at 0.921 against hunger's 0.210 — so the loudest voice in the contest
+    was spent on one bit of information, and hunger, which ranks the food correctly 0.998 of the
+    time, never once decided a direction.
+    """
+
+    def fatigue(self, world, travel_effort=TRAVEL_EFFORT, climb_tolerance=CLIMB_TOLERANCE):
+        return Fatigue(
+            world.store,
+            world.exertion,
+            world.genetics,
+            world.terrain,
+            world.genes,
+            FatigueConfig(
+                weight_gene="fatigue_weight",
+                exertion_saturation=1.0,
+                travel_effort=travel_effort,
+                climb_tolerance=climb_tolerance,
+            ),
+        )
+
+    def scored(self, world, **config):
+        """One mid-world animal's appeal over (east, west, null).
+
+        Away from the edge deliberately: `options_at` clips into the world exactly as
+        `candidate_positions` does, so from the fixture's default corner the west option lands on
+        the animal's own position and is a stay-put option rather than a travelling one.
+        """
+        selection = world.spawn(1, x=np.float32([4.0]), y=np.float32([4.0]))
+        return self.fatigue(world, **config).appeal(selection, *options_at(world, selection))[0]
+
+    def test_staying_put_is_worth_more_than_travelling_but_not_everything(self):
+        appeal = self.scored(World())
+
+        assert appeal[NULL] == pytest.approx(1.0)
+        assert appeal[EAST] == pytest.approx(1.0 - TRAVEL_EFFORT)
+
+    def test_its_spread_across_options_is_the_travel_effort_on_level_ground(self):
+        """The quantity this whole issue is about, asserted directly. How far a drive's appeal
+        varies between options is what decides whether it can move a ranking at all — urgency only
+        decides how much it contributes, and a constant added to every option changes nothing.
+        """
+        appeal = self.scored(World())
+
+        assert appeal.max() - appeal.min() == pytest.approx(TRAVEL_EFFORT)
+
+    def test_travel_effort_of_one_is_the_veto_it_replaced(self):
+        """The degenerate case stays reachable, which is why the interval is closed at the top: a
+        world that wants a tired animal to refuse to move at all can still say so, and the old
+        behaviour is recovered exactly rather than approximately."""
+        appeal = self.scored(World(), travel_effort=1.0)
+
+        assert appeal[NULL] == pytest.approx(1.0)
+        assert appeal[:NULL] == pytest.approx(np.zeros(NULL))
+
+    def test_climbing_is_less_restful_than_descending(self):
+        """The direction half. Distance cannot discriminate — every candidate sits one look-ahead
+        away, so it is identical across the options — and relief is the one thing that differs."""
+        appeal = self.scored(World(heights=eastward_ramp(0.5)))
+
+        assert appeal[EAST] < appeal[WEST]
+
+    def test_descending_is_no_more_restful_than_level_ground(self):
+        """Only *gain* counts, which is the identical rule §2.5 settles for what a step costs
+        (#113): descent is charged its horizontal distance and no more. Fatigue calling a downhill
+        option restful while `Movement` charges it as level ground would be two readings of one
+        physical fact drifting apart — the shape of defect #112 was.
+        """
+        downhill = self.scored(World(heights=eastward_ramp(0.5)))[WEST]
+
+        assert downhill == pytest.approx(1.0 - TRAVEL_EFFORT)
+
+    def test_a_steeper_climb_is_less_restful_than_a_gentle_one(self):
+        gentle = self.scored(World(heights=eastward_ramp(0.5)))
+        steep = self.scored(World(heights=eastward_ramp(2.0)))
+
+        assert steep[EAST] < gentle[EAST]
+
+    def test_a_bigger_climb_tolerance_forgives_the_same_slope(self):
+        """The knob does what it says, and it is what keeps this drive from *steering* harder than
+        it should: measured at 1.0 — comparable to the largest rise between an animal and a
+        candidate — fatigue pulled downhill firmly enough to cost condition."""
+        strict = self.scored(World(heights=eastward_ramp(0.5)), climb_tolerance=1.0)
+        forgiving = self.scored(World(heights=eastward_ramp(0.5)), climb_tolerance=8.0)
+
+        assert strict[EAST] < forgiving[EAST] < 1.0 - TRAVEL_EFFORT
+
+    def test_an_option_clipped_onto_the_animal_reads_as_staying_put(self):
+        """At a world corner half the candidate headings clip onto the animal's own position. An
+        option proposing no displacement *is* rest, and identifying the null option by zero
+        displacement rather than by its column index is what makes that fall out rather than
+        needing a case of its own.
+        """
+        world = World()
+        cornered = world.spawn(1)  # the fixture default is the origin
+        appeal = self.fatigue(world).appeal(cornered, *options_at(world, cornered))[0]
+
+        assert appeal[WEST] == pytest.approx(1.0)
+        assert appeal[EAST] == pytest.approx(1.0 - TRAVEL_EFFORT)
+
+
+class TestFatigueConfigRejectsWhatWouldBreakTheContest:
+    def base(self, **overrides):
+        params = dict(
+            weight_gene="fatigue_weight",
+            exertion_saturation=1.0,
+            travel_effort=TRAVEL_EFFORT,
+            climb_tolerance=CLIMB_TOLERANCE,
+        )
+        params.update(overrides)
+        return FatigueConfig(**params)
+
+    @pytest.mark.parametrize("effort", [0.0, -0.1, 1.5])
+    def test_travel_effort_outside_the_unit_interval_is_rejected(self, effort):
+        """At zero, walking is as restful as lying down: a tired animal never stops, exertion never
+        sheds, and the drive that cannot act comes back (#126). Above one, travelling would be
+        *negatively* restful — a reason to move, from the drive that exists to want rest."""
+        with pytest.raises(ValueError, match="travel_effort"):
+            self.base(travel_effort=effort)
+
+    def test_travel_effort_of_exactly_one_is_allowed(self):
+        assert self.base(travel_effort=1.0).travel_effort == 1.0
+
+    @pytest.mark.parametrize("tolerance", [0.0, -1.0])
+    def test_a_non_positive_climb_tolerance_is_rejected(self, tolerance):
+        """At zero any ascent whatsoever makes an option maximally tiring, which turns a graded
+        preference back into the veto this replaced — one applied to terrain instead of to
+        movement."""
+        with pytest.raises(ValueError, match="climb_tolerance"):
+            self.base(climb_tolerance=tolerance)

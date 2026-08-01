@@ -15,6 +15,9 @@ Run from a repository root with `PYTHONPATH=.`; each section is independent.
 3. `spreads()` — how far each drive's appeal varies **across options**, which is the quantity that
    decides who steers. A drive's urgency sets how much it contributes; only its spread moves a
    ranking.
+4. `graded()` — #207's fix and the interaction it exposed. Fatigue's spread and the choice
+   temperature have to be read as a table (§2.1): fixing either alone measures as nothing, and the
+   pathology only shows up in the corner where the old fatigue meets a decisive animal.
 
 The measure throughout is the **forage rank of a chosen heading**: where it sits, by the forage
 field, among the candidates that animal considered. Chance is 0.5. It is used in preference to
@@ -37,6 +40,28 @@ from core.world.assembly import build_world
 STORED = (-2.5, -2.0, -1.5, -1.0, -0.5, 0.0)
 SEEDS = (1, 2, 3)
 TICKS = 400
+
+
+def built(seed, n_entities=200, stored_temperature=None, travel_effort=None,
+          climb_tolerance=None):
+    """A demo world with any of the three knobs #205 and #207 range over overridden.
+
+    Every argument defaults to what the world ships, so a call naming one knob is a statement about
+    that knob and nothing else.
+    """
+    config = demo_world_config(n_entities, seed)
+    if stored_temperature is not None:
+        ranges = dict(config.founder_gene_ranges)
+        # Fixed rather than drawn from a band, so one row reads one temperature. The shipped config
+        # draws from a range for the reason §2.5 gives: selection needs founders to differ.
+        ranges["choice_temperature"] = (stored_temperature, stored_temperature)
+        config = dataclasses.replace(config, founder_gene_ranges=ranges)
+    fatigue = config.fatigue
+    if travel_effort is not None:
+        fatigue = dataclasses.replace(fatigue, travel_effort=travel_effort)
+    if climb_tolerance is not None:
+        fatigue = dataclasses.replace(fatigue, climb_tolerance=climb_tolerance)
+    return build_world(dataclasses.replace(config, fatigue=fatigue), seed=seed)
 
 
 def founded_at(stored, seed, n_entities=200):
@@ -135,7 +160,50 @@ def spreads():
             )
 
 
+def graded():
+    """#207's fix against the temperature it interacts with.
+
+    Read the corners, not the rows: the old fatigue is harmless at the shipped temperature and
+    catastrophic at a decisive one, and the graded fatigue is neutral at the shipped temperature
+    and best at a decisive one. Either knob measured alone says nothing.
+    """
+    print("\n4. graded fatigue against decisiveness\n")
+    print(f"{'effort':>7}{'climb':>7}{'temp':>7}{'seed':>5}{'living':>8}{'energy':>8}"
+          f"{'forage':>8}{'resting':>9}{'fatigue spread':>16}{'hunger spread':>15}")
+    cells = (
+        (1.00, 1.0, 0.0), (1.00, 1.0, -1.5),      # the veto: fine warm, pathological cold
+        (0.25, 4.0, 0.0), (0.25, 4.0, -1.5),      # graded: neutral warm, best cold
+        (0.10, 4.0, -1.5), (0.25, 4.0, -2.5),     # the edges of the useful band
+    )
+    for effort, climb, stored in cells:
+        for seed in SEEDS[:2]:
+            world = built(
+                seed,
+                stored_temperature=stored,
+                travel_effort=effort,
+                climb_tolerance=climb,
+            )
+            world.loop.advance(TICKS)
+            population = Selection.from_mask(world.store.alive & (world.store.age >= 0))
+            chosen, _, contributions, crop = scored(
+                world, population, np.random.default_rng(99)
+            )
+            spread = {
+                name: float((c.max(axis=1) - c.min(axis=1)).mean())
+                for name, c in contributions.items()
+            }
+            resting = float((~world.store.choice_moving[population.to_mask()]).mean())
+            print(
+                f"{effort:>7.2f}{climb:>7.1f}{np.exp(stored):>7.2f}{seed:>5}"
+                f"{len(population):>8}{np.median(world.ecology.energy(population)):>8.1f}"
+                f"{forage_rank(crop, chosen):>8.3f}{resting:>9.3f}"
+                f"{spread['fatigue']:>16.3f}{spread['hunger']:>15.3f}",
+                flush=True,
+            )
+
+
 if __name__ == "__main__":
     sweep()
     attribute()
     spreads()
+    graded()

@@ -430,7 +430,24 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
             breeding_energy=120.0,
             abundant_energy=250.0,
         ),
-        fatigue=FatigueConfig(weight_gene="fatigue_weight", exertion_saturation=20.0),
+        fatigue=FatigueConfig(
+            weight_gene="fatigue_weight",
+            exertion_saturation=20.0,
+            # Measured, not chosen (§8.5, docs/spikes/who-steers.md). At the 1.0 this replaces,
+            # fatigue's spread across options was 0.93 against hunger's 0.20 — it decided every
+            # direction in the world while hunger, which ranks the food correctly 0.998 of the
+            # time, decided none (#207). At 0.25 that spread is 0.34, comparable to the
+            # commitment band's 0.29, and population and condition are unchanged: this is a
+            # latent pathology removed rather than an equilibrium moved.
+            travel_effort=0.25,
+            # World units of ascent. Roughly twice the *largest* rise measured between an animal
+            # and one of its candidates (p50 0.33, p99 1.46, max 1.87 over a settled world), so
+            # the discount is gentle and graded across the whole observed range rather than
+            # saturating on ordinary ground. At 1.0 — comparable to the biggest rises — fatigue
+            # steered downhill hard enough to cost condition (energy 57.0 against 60.4) while
+            # leaving its spread at 0.55, still the loudest voice in the contest.
+            climb_tolerance=4.0,
+        ),
         behaviour=BehaviourConfig(
             # Eight headings is enough that a forager can follow a gradient without the walk
             # visibly staircasing, and the per-entity jitter makes the effective resolution
