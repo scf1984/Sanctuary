@@ -8,7 +8,7 @@ loop or a week's worth from offline catch-up (§2.4), and this loop treats both 
 
 from __future__ import annotations
 
-from typing import Callable, Optional, Sequence
+from typing import Callable, Optional, Protocol, Sequence
 
 import numpy as np
 
@@ -17,6 +17,20 @@ from core.entities.store import EntityStore
 from core.invariants import InvariantRegistry
 
 System = Callable[[], None]
+
+
+class MetricRecorder(Protocol):
+    """Anything that can be offered a tick and decide for itself whether to record it (#30).
+
+    A structural type rather than an import, because `core/` must stay importable standalone (§4)
+    and `metrics/` reads `core/`. Inverting that for one call would make the simulation depend on
+    its own instrumentation, which is the wrong way round: a world that cannot be observed is a
+    smaller loss than a world that cannot run without an observer.
+    """
+
+    def record_if_due(self, tick: int) -> object:
+        """Called once per tick, with the tick just completed. Sampling cadence is the recorder's."""
+        ...
 
 
 class TickLoop:
@@ -42,6 +56,22 @@ class TickLoop:
         one that died during the interval, or to a newborn that inherited the row. Reading
         ``store.alive`` at draw time answers only the first of those, and only for the *current*
         end of the interval (#119).
+    metrics: an optional recorder (`metrics.MetricHistory`, #30), offered every tick and sampling
+        on its own cadence. Optional because the entity invariants and the loop itself are testable
+        against a bare store, and a recorder needs a genetics stack and a plant field to read.
+        **Public and settable after construction**, because those do not exist until `build_world`
+        has finished — attaching it afterwards is what keeps the dependency pointing one way (§4).
+
+        Called here rather than placed in `TICK_ORDER`, and that is a rule rather than a
+        convenience: the order is what a tick *does*, and it is frozen into the MAJOR version
+        (§2.1, §2.8). Recording an observation changes no outcome, so putting it in the tuple would
+        make the sampling cadence part of the rule set and freeze it for the life of a world.
+        Capacity growth sits outside the tuple for the same reason (#127).
+
+        It is offered **every** tick with the tick number, never every `advance()` call, so a world
+        advanced in one batch of a hundred records exactly what one advanced in a hundred batches
+        of one records — §2.4 forbids batching from changing outcomes, and a history that depended
+        on how a client chose to call `advance` would be precisely that.
     growth: an optional capacity policy (`core.entities.growth`, #127), evaluated after every
         tick and **only between ticks**. Growth belongs here rather than in `TICK_ORDER` because a
         system runs mid-tick with others still to follow it, and `EntityStore.grow` replaces every
@@ -64,11 +94,13 @@ class TickLoop:
         invariants: Optional[InvariantRegistry] = None,
         debug_checks: bool = False,
         growth: Optional[GrowthConfig] = None,
+        metrics: Optional[MetricRecorder] = None,
     ) -> None:
         if debug_checks and invariants is None:
             raise ValueError("debug_checks requires an invariants registry")
 
         self._growth = growth
+        self.metrics = metrics
 
         self.systems = tuple(systems)
         self._store = store
@@ -103,6 +135,11 @@ class TickLoop:
                 self._invariants.check_all(self._store, self.tick_count)
             # After the invariants rather than before, so a check never sees a store whose columns
             # were replaced halfway through the tick it is reporting on.
+            if self.metrics is not None:
+                # Before growth rather than after: a sample taken across a reallocation would read
+                # some columns from the old arrays and some from the new (§2.3), and this is the
+                # one caller that holds no view of its own to be invalidated.
+                self.metrics.record_if_due(self.tick_count)
             if self._growth is not None and grow_if_crowded(self._store, self._growth):
                 self._extend_previous_snapshot()
         self.current_positions, self.current_row_ids = self._snapshot()

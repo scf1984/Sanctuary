@@ -46,6 +46,7 @@ from core.world.diffusion import DiffusionConfig
 from core.world.assembly import World, WorldConfig, build_world
 from core.world.climate import ClimateConfig
 from core.world.terrain import TerrainConfig
+from metrics import MetricHistory, MetricsConfig
 
 _GRID = 80
 _CELL_SIZE = 1.0
@@ -526,10 +527,22 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
     )
 
 
+# Every 20 ticks, keeping 2,000 samples — the last 40,000 ticks, which at §2.1's rates is about
+# four sim-months, or two generations. Long enough that a trait mean visibly moves across the
+# window, and fine enough that a population crash does not fall between two samples.
+DEMO_METRICS = MetricsConfig(every_n_ticks=20, history_limit=2_000)
+
+
 def build_demo_world(seed: int, n_entities: int) -> World:
     """The assembled world the viewer runs, reproducible from `seed`.
 
     Generation is a pure function of `seed` (§2.2): the simulation itself is non-deterministic, but
     a world the viewer cannot rebuild is one whose crash cannot be replayed.
     """
-    return build_world(demo_world_config(n_entities, seed), seed=seed)
+    world = build_world(demo_world_config(n_entities, seed), seed=seed)
+    # Attached rather than assembled, because a recorder reads a finished world and `core/` must
+    # stay importable without `metrics/` (§4). This is the composition root doing composition.
+    world.loop.metrics = MetricHistory(
+        world.store, world.genetics, world.plants, world.genes.vocabulary, DEMO_METRICS
+    )
+    return world

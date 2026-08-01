@@ -178,6 +178,22 @@ class EntityStore:
         """Number of free rows allocate() can currently hand out without raising."""
         return len(self._free_rows)
 
+    @property
+    def ids_issued(self) -> int:
+        """How many ids this store has ever handed out — monotonic, and never reduced by a release.
+
+        Exists so that births and deaths can be *derived* rather than reported (#30). Ids are never
+        reused, so this rises by exactly one per row allocated; differenced against the number of
+        occupied rows over the same interval, it gives allocations and releases separately, with
+        nothing having to count them. A counter inside `Conception` and another inside `Death`
+        would be two more places for the truth to live, and they would disagree the first time
+        anything else allocated a row.
+
+        Not derivable from `row_ids()`: the highest id in that array belongs to the newest *live*
+        entity, so a world whose most recent newborn has since died would report the count falling.
+        """
+        return self._next_id
+
     def free_row_mask(self) -> np.ndarray:
         """(capacity,) bool: True where the row is on the free list, available to allocate().
 
