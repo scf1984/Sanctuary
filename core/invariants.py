@@ -38,8 +38,10 @@ from typing import Callable, Optional
 
 import numpy as np
 
+from core.behaviour.movement import Movement
 from core.ecology.plants import Plants
 from core.entities.store import EntityStore
+from core.selection import Selection
 
 
 @dataclass(frozen=True)
@@ -172,6 +174,44 @@ def no_entity_leaves_world_bounds(
     return check
 
 
+def no_entity_exceeds_its_top_speed(movement: Movement) -> Predicate:
+    """Build a predicate flagging alive rows travelling faster than their expressed `speed` gene.
+
+    §2.5 rejected a speed cap outright — top speed is a gene under selection, and an authored
+    ceiling on an evolving trait is what "author the physics, not the outcomes" forbids. What
+    replaced it is an *argument*: `Movement.step` writes velocity from the displacement that
+    actually happened, and that displacement is never longer than the velocity it aimed for, which
+    is on the segment between last tick's velocity and `top_speed × pace`. So the bound holds by
+    induction from a standing start, with no clamp anywhere.
+
+    This is that argument asserted rather than believed, which is exactly what §8.2 asks for when
+    something genuinely cannot occur: a branch in the hot loop would be a defensive check against
+    an impossible condition, and an invariant is where an impossible condition belongs. It would
+    catch a future writer of `velocity_x` that set the column from an intention instead of an
+    outcome — the one mistake the induction depends on nobody making.
+
+    `relative_slack` covers the float32 round-trip on the velocity columns against the float64
+    phenotype the bound is computed in, and nothing else. It is far below any real breach, which
+    would be a whole step rather than a rounding of one.
+    """
+    relative_slack = 1e-5
+
+    def check(store: EntityStore) -> Optional[Violation]:
+        living = Selection.from_mask(store.alive)
+        if not len(living):
+            return None
+        mask = living.to_mask()
+        speed = np.hypot(
+            store.velocity_x[mask].astype(np.float64), store.velocity_y[mask].astype(np.float64)
+        )
+        over = speed > movement.top_speed(living) * (1.0 + relative_slack)
+        return _rows_violation(
+            np.flatnonzero(mask)[over], "alive entities travelling above their top speed"
+        )
+
+    return check
+
+
 def nutrients_are_conserved(plants: Plants, relative_tolerance: float = 1e-9) -> Predicate:
     """Build a predicate asserting the plant field's nutrient total never moves (§2.5, §6).
 
@@ -208,6 +248,7 @@ def default_registry(
     min_y: float,
     max_y: float,
     plants: Optional[Plants] = None,
+    movement: Optional[Movement] = None,
 ) -> InvariantRegistry:
     """The invariants checkable against `core/` as it exists today, over a world of the given
     bounds.
@@ -217,6 +258,9 @@ def default_registry(
         and constructing a field needs a whole terrain, climate and water stack; a world that has
         plants and omits them here simply stops checking a conservation law it could have checked,
         which is why the parameter exists rather than the registry reaching for a global.
+    movement: the world's movement service, if it has one. Supplying it adds the top-speed bound,
+        which needs a phenotype and therefore a genetics stack — optional on the same terms as
+        `plants`, and for the same reason.
     """
     registry = InvariantRegistry()
     registry.register("no_alive_entity_occupies_a_free_row", no_alive_entity_occupies_a_free_row)
@@ -226,4 +270,8 @@ def default_registry(
     )
     if plants is not None:
         registry.register("nutrients_are_conserved", nutrients_are_conserved(plants))
+    if movement is not None:
+        registry.register(
+            "no_entity_exceeds_its_top_speed", no_entity_exceeds_its_top_speed(movement)
+        )
     return registry

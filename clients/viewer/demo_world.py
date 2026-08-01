@@ -93,6 +93,32 @@ _GENES = (
         description="Top speed, in world units per tick — a length, since the tick is unitless.",
     ),
     GeneSpec(
+        name="agility",
+        # Costed like speed, and it must be costed at all: turning faster is pure benefit, so a
+        # free agility gene runs away in every world (§2.5's rule for insulation). `Movement`
+        # refuses to build without a positive figure here.
+        cost=0.01,
+        expression_mode=ExpressionMode.MAGNITUDE,
+        unit=Unit.LENGTH,
+        description=(
+            "How fast velocity may change, in world units per tick per tick — a length, since the "
+            "tick is unitless. Divided by size, so a big body corners badly and speed trades "
+            "against nimbleness (#204)."
+        ),
+    ),
+    GeneSpec(
+        name="haste",
+        cost=0.0,
+        expression_mode=ExpressionMode.EXPONENTIAL,
+        unit=Unit.DIMENSIONLESS,
+        description=(
+            "How readily a reason to move becomes speed: the scale on which a utility advantage "
+            "over resting is read as a pace. Exponential because it is a scale and must stay "
+            "strictly positive — a negative one would make a better option slower. Free, because "
+            "hurrying already pays `exertion_premium` on every world unit (#203)."
+        ),
+    ),
+    GeneSpec(
         name="insulation",
         cost=0.01,
         expression_mode=ExpressionMode.MAGNITUDE,
@@ -372,9 +398,14 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
         movement=MovementConfig(
             speed_gene="speed",
             size_gene="size",
+            agility_gene="agility",
+            haste_gene="haste",
             transport_cost=0.5,
             exertion_premium=2.0,
             climb_cost=1.0,
+            # The pace an animal uses when moving buys it nothing over standing still. Everything
+            # above this is bought with `haste` against a real utility advantage, and the gap to 1
+            # is what the premium finally has to multiply (#203).
             walking_pace=0.4,
         ),
         exertion=ExertionConfig(recovery_rate=0.2),
@@ -418,6 +449,11 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
         founder_gene_ranges={
             "size": (0.8, 1.2),
             "speed": (1.0, 3.0),
+            # World units per tick per tick, against top speeds of 1–3 and sizes around 1, so a
+            # founder needs roughly two to five ticks to reach its own top speed from rest and as
+            # long again to reverse. Wide enough that founders differ in nimbleness from the first
+            # generation, which is what selection needs to build a predator and its prey out of.
+            "agility": (0.3, 0.9),
             "insulation": (0.0, 0.5),
             "sight": (2.0, 6.0),
             "scent_emission": (0.5, 1.5),
@@ -449,6 +485,14 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
             # Around zero, so `exp` puts founding temperatures around 1 — the scale at which a
             # utility difference of one is a decisive preference rather than a faint one.
             "choice_temperature": (-0.3, 0.3),
+            # Read through `exp`, so this founds haste between 1 and about 4. Chosen against a
+            # measurement rather than by feel (§8.5): over 400 founders at tick 60 the drive
+            # advantage of the best option over resting has a median of ~0 and a 99th percentile
+            # of ~0.2, so haste 1 leaves even a strongly-motivated animal ambling at 0.44 while
+            # haste 4 puts it at 0.73 — the band across which the gene visibly does something.
+            # Founders therefore differ from "barely hurries" to "hurries readily", which is what
+            # selection needs to act on. See docs/spikes/pace-and-momentum.md.
+            "haste": (0.0, 1.4),
             # Spread across zero, which the logistic squash reads as allocations either side of an
             # even split. Founders are therefore *undecided* about what they eat rather than
             # declared herbivores — this world holds only plants, so selection settles it within a

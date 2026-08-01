@@ -18,6 +18,8 @@ _COLUMN_NAMES = (
     "x",
     "y",
     "z",
+    "velocity_x",
+    "velocity_y",
     "energy",
     "age",
     "health",
@@ -26,14 +28,15 @@ _COLUMN_NAMES = (
     "drive_scores",
     "choice_heading",
     "choice_moving",
+    "choice_urge",
     "genes",
     "alive",
 )
 
 # Callers seed these via allocate()'s initial_values kwargs. "alive" is set by allocate() itself;
 # the rest of the exclusions each record something the entity *did*, and an entity that has just
-# been allocated has done nothing, so a reused row must not inherit its predecessor's tiredness
-# or the direction it was last walking.
+# been allocated has done nothing, so a reused row must not inherit its predecessor's tiredness,
+# the direction it was last walking, how badly it wanted to, or the speed it was carrying.
 #
 # `age` is seedable, and deliberately so: a gestating entity is allocated at conception with a
 # **negative** age and is born when `Aging` counts it up to zero (#20). It still defaults to 0,
@@ -43,7 +46,23 @@ _SEEDABLE_COLUMN_NAMES = frozenset(_COLUMN_NAMES) - {
     "exertion",
     "choice_heading",
     "choice_moving",
+    "choice_urge",
+    "velocity_x",
+    "velocity_y",
 }
+
+# Zeroed by allocate() on every row it hands out: a newborn is at rest, facing nowhere, having
+# decided nothing, and none of that is what the row's previous occupant left behind. Exactly the
+# non-seedable set above, listed separately because that one is a *rule* about what a caller may
+# pass and this one is the loop that enforces it — `alive` belongs to the first and not the second.
+_CLEARED_ON_ALLOCATE = (
+    "exertion",
+    "choice_heading",
+    "choice_moving",
+    "choice_urge",
+    "velocity_x",
+    "velocity_y",
+)
 
 
 class EntityStoreFull(Exception):
@@ -70,6 +89,11 @@ class EntityStore:
     Columns, each shape ``(capacity,)`` unless noted:
       x, y, z: float32, world units. z is stored from the start per CLAUDE.md §2.6 ("z-capable
           data model first"), even though nothing yet moves along it.
+      velocity_x, velocity_y: float32, world units per tick — how the entity is *actually*
+          travelling, which is not the same as the direction it chose. `core.behaviour.movement`
+          owns them and changes them at a bounded rate, so a body cannot reverse for free and a
+          chase can therefore have an outcome (#204). No `velocity_z`: movement is surface-locked
+          (§2.6), so z is read from the terrain rather than integrated.
       energy: float32, energy units.
       age: int64, ticks lived — the tick is the only clock (CLAUDE.md §2.1).
       health: float32, unit-free fraction, 0 (dead) to 1 (full health).
@@ -88,6 +112,11 @@ class EntityStore:
         (#114, #100).
         Stored as a heading rather than an option index because an index would silently mean a
         different direction if the candidate count were retuned.
+      choice_urge: ``(capacity,)`` float32, unit-free utility: how much better the chosen option
+        was than standing still, summed over the drives. This is what makes an animal *hurry* —
+        `Movement` reads it and converts it to a pace, so a strong reason to move is a fast move
+        and an idle one is a stroll (#203). Not derivable from `choice_heading`, which is why it
+        is a column: the utilities it is a difference of are gone by the time movement runs.
       drive_scores: ``(capacity, n_drives)`` float32, unit-free utility scores. Which drives
           exist is owned by the behaviour system (CLAUDE.md §8.3); this module only provides a
           column block of the width it's told to.
@@ -126,6 +155,8 @@ class EntityStore:
         self.x = np.zeros(capacity, dtype=np.float32)
         self.y = np.zeros(capacity, dtype=np.float32)
         self.z = np.zeros(capacity, dtype=np.float32)
+        self.velocity_x = np.zeros(capacity, dtype=np.float32)
+        self.velocity_y = np.zeros(capacity, dtype=np.float32)
         self.energy = np.zeros(capacity, dtype=np.float32)
         self.age = np.zeros(capacity, dtype=np.int64)
         self.health = np.zeros(capacity, dtype=np.float32)
@@ -134,6 +165,7 @@ class EntityStore:
         self.drive_scores = np.zeros((capacity, self._n_drives), dtype=np.float32)
         self.choice_heading = np.zeros(capacity, dtype=np.float32)
         self.choice_moving = np.zeros(capacity, dtype=np.bool_)
+        self.choice_urge = np.zeros(capacity, dtype=np.float32)
         self.genes = np.zeros((capacity, self._n_genes), dtype=np.float32)
         self.alive = np.zeros(capacity, dtype=np.bool_)
 
@@ -177,11 +209,11 @@ class EntityStore:
         """Allocate ``n`` new rows from the free list and return their stable ids.
 
         Every column defaults to its zero value except ``alive`` (True), ``age`` (0, and
-        seedable — see `_SEEDABLE_COLUMN_NAMES` on why gestation seeds it negative),
-        ``exertion`` (0), ``choice_heading`` (0) and ``choice_moving`` (False) — the last four reset
-        explicitly rather than relying on the row being clean, since a reused row still holds its
-        predecessor's years, its tiredness and the direction it was last walking, and a newborn has
-        none of them (#114). Pass
+        seedable — see `_SEEDABLE_COLUMN_NAMES` on why gestation seeds it negative), and the
+        columns in `_CLEARED_ON_ALLOCATE` — reset explicitly rather than relying on the row being
+        clean, since a reused row still holds its predecessor's years, its tiredness, the direction
+        it was last walking and the speed it was carrying, and a newborn has none of them
+        (#114, #204). Pass
         column-name keyword arguments of length ``n`` to seed specific columns in the same
         vectorized write — e.g. ``allocate(3, x=..., energy=...)`` — since the ids this call
         returns are the only supported way to address these rows again.
@@ -209,9 +241,8 @@ class EntityStore:
 
         self.alive[rows] = True
         self.age[rows] = 0
-        self.exertion[rows] = 0.0
-        self.choice_heading[rows] = 0.0
-        self.choice_moving[rows] = False
+        for name in _CLEARED_ON_ALLOCATE:
+            getattr(self, name)[rows] = 0
         self._row_to_id[rows] = ids
         for id_, row in zip(ids.tolist(), rows.tolist()):
             self._id_to_row[id_] = row

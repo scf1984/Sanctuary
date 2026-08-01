@@ -20,13 +20,15 @@ from core.genetics.registry import ExpressionMode, GeneRegistry, GeneSpec, Unit
 # everything else the suite names is a quantity that cannot go negative (#104).
 _SIGNED_PREFIXES = ("signature_", "aversion")
 
-# Top speed is world units per tick and the tick is unitless, so it is the one length among the
-# gene names the suite uses. `Movement` asserts this, which is the point of the unit field (#111).
-_LENGTH_GENES = frozenset({"speed"})
+# Top speed is world units per tick and agility world units per tick per tick; the tick is
+# unitless, so both are lengths, and they are the only ones among the gene names the suite uses.
+# `Movement` asserts this, which is the point of the unit field (#111).
+_LENGTH_GENES = frozenset({"speed", "agility"})
 
-# A Boltzmann temperature is read through `exp` so it is strictly positive however far the gene
-# drifts (#114); `abs` would fold it at zero, and a zero temperature is a division by zero.
-_EXPONENTIAL_GENES = frozenset({"choice_temperature"})
+# Read through `exp` so they are strictly positive however far the gene drifts: `abs` would fold
+# at zero, and a zero temperature is a division by zero (#114) while a zero haste would leave an
+# animal unable to hurry for any reason at all (#203).
+_EXPONENTIAL_GENES = frozenset({"choice_temperature", "haste"})
 
 # Diet is an allocation rather than a set of capacities (#102): the genes say how a fixed budget is
 # *split*, so they are read on [0, 1] and the shares they imply sum to one by construction.

@@ -12,6 +12,7 @@ from core.invariants import (
     default_registry,
     no_alive_entity_has_negative_energy,
     no_alive_entity_occupies_a_free_row,
+    no_entity_exceeds_its_top_speed,
     no_entity_leaves_world_bounds,
     nutrients_are_conserved,
 )
@@ -274,6 +275,24 @@ class TestDefaultRegistry:
         registry = default_registry(min_x=0, max_x=10, min_y=0, max_y=10)
         assert "nutrients_are_conserved" not in [inv.name for inv in registry._invariants]
 
+    def test_omits_the_top_speed_bound_when_the_world_has_no_movement_service(self):
+        """Optional on the same terms as the plant field: the bound needs a phenotype, so a bare
+        store cannot be asked the question at all."""
+        registry = default_registry(min_x=0, max_x=10, min_y=0, max_y=10)
+        assert "no_entity_exceeds_its_top_speed" not in [i.name for i in registry._invariants]
+
+    def test_registers_the_top_speed_bound_when_given_a_movement_service(self):
+        store = make_store()
+        store.allocate(1)
+        store.velocity_x[0] = 9.0
+        registry = default_registry(
+            min_x=0, max_x=10, min_y=0, max_y=10, movement=FixedTopSpeed(3.0)
+        )
+
+        with pytest.raises(InvariantViolation) as excinfo:
+            registry.check_all(store, tick=1)
+        assert excinfo.value.invariant_name == "no_entity_exceeds_its_top_speed"
+
     def test_registers_nutrient_conservation_when_given_a_plant_field(self):
         plants = make_plants()
         store = make_store()
@@ -342,3 +361,78 @@ class TestFieldInvariantsUnderTheTickLoop:
         assert excinfo.value.invariant_name == "nutrients_are_conserved"
         assert excinfo.value.tick == 1
         assert loop.tick_count == 1
+
+
+class FixedTopSpeed:
+    """Whatever `Movement` a world has, this invariant asks it exactly one question.
+
+    Stubbed rather than assembled because building a real `Movement` needs a genetics stack, a
+    terrain, an ecology and a metabolism — none of which this predicate reads. The same argument
+    `ConstantDrive` makes in the behaviour tests: exercise the contract, not the collaborators.
+    """
+
+    def __init__(self, speed):
+        self.speed = float(speed)
+
+    def top_speed(self, selection):
+        return np.full(len(selection), self.speed, dtype=np.float64)
+
+
+class TestNoEntityExceedsItsTopSpeed:
+    """§2.5 rejected a speed cap, so the bound is an argument rather than a clamp: velocity is
+    written from the displacement that happened, which is never longer than the one intended.
+    This is that argument asserted (§6, §8.2) — it would catch a future writer of `velocity_x`
+    that set the column from an intention instead of an outcome.
+    """
+
+    def moving(self, store, velocity_x, velocity_y=0.0):
+        """Allocate `n` rows and set their velocity behind `Movement`'s back.
+
+        The columns are deliberately not seedable — a newborn is at rest and a reused row must not
+        inherit what its predecessor was carrying — so writing them directly is both the only way
+        to stage this and an exact rehearsal of the bug the invariant exists to catch: something
+        other than `Movement.step` putting a number in the column.
+        """
+        rows = np.arange(len(velocity_x))
+        store.allocate(len(velocity_x))
+        store.velocity_x[rows] = np.asarray(velocity_x, dtype=np.float32)
+        store.velocity_y[rows] = velocity_y
+
+    def test_passes_when_everything_travels_within_its_own_top_speed(self):
+        store = make_store()
+        self.moving(store, [0.0, 1.5, 3.0])
+
+        assert no_entity_exceeds_its_top_speed(FixedTopSpeed(3.0))(store) is None
+
+    def test_measures_the_whole_velocity_and_not_one_axis(self):
+        """A per-axis check would let a diagonal carry `sqrt(2)` times the top speed, which is the
+        grid leaking into the physics — the same defect the magnitude cap in `_accelerate` avoids.
+        """
+        store = make_store()
+        self.moving(store, [2.5], velocity_y=2.5)
+
+        violation = no_entity_exceeds_its_top_speed(FixedTopSpeed(3.0))(store)
+
+        assert violation is not None
+        assert violation.rows.tolist() == [0]
+
+    def test_flags_only_the_rows_that_are_over(self):
+        store = make_store()
+        self.moving(store, [1.0, 9.0, 2.0])
+
+        violation = no_entity_exceeds_its_top_speed(FixedTopSpeed(3.0))(store)
+
+        assert violation.rows.tolist() == [1]
+        assert "top speed" in violation.detail
+
+    def test_ignores_a_dead_row_that_kept_its_last_velocity(self):
+        """`release` leaves the movement columns alone, exactly as it leaves `x` and `y` (#119), so
+        a freed row still holds whatever it was carrying when it died."""
+        store = make_store()
+        self.moving(store, [9.0])
+        store.release(store.row_ids()[[0]])
+
+        assert no_entity_exceeds_its_top_speed(FixedTopSpeed(3.0))(store) is None
+
+    def test_an_empty_world_holds_the_invariant(self):
+        assert no_entity_exceeds_its_top_speed(FixedTopSpeed(3.0))(make_store()) is None

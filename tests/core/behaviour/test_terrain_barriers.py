@@ -34,7 +34,7 @@ from tests.support.genes import gene_registry
 from tests.support.plants import plant_field
 
 
-GENE_NAMES = ("size", "speed", "insulation", "mutability")
+GENE_NAMES = ("size", "speed", "agility", "haste", "insulation", "mutability")
 
 # Every gene declares how its stored value is read (#104). These are all quantities, so all fold
 # across zero; `mutability` is in the vocabulary because inheritance's spread floor is a gene, and
@@ -43,7 +43,13 @@ GENETICS_CONFIG = GeneticsConfig(
     mutability_gene="mutability",
     drift_margin=2.0,
 )
-GENE_REGISTRY = gene_registry(GENE_NAMES, {"size": 0.5, "speed": 0.5, "insulation": 1.0})
+# `agility` is costed nominally rather than at the rate size and speed pay. It has to charge
+# *something* — `Movement` refuses a free agility gene, since turning faster is otherwise pure
+# benefit (§2.5, #204) — but this fixture's economy is a statement about what a ridge costs, and
+# the crossing budget below was derived against upkeep that had no agility term in it.
+GENE_REGISTRY = gene_registry(
+    GENE_NAMES, {"size": 0.5, "speed": 0.5, "agility": 0.01, "insulation": 1.0}
+)
 
 METABOLISM_CONFIG = MetabolismConfig(
     basal_rate=0.2,
@@ -55,6 +61,8 @@ METABOLISM_CONFIG = MetabolismConfig(
 MOVEMENT_CONFIG = MovementConfig(
     speed_gene="speed",
     size_gene="size",
+    agility_gene="agility",
+    haste_gene="haste",
     transport_cost=1.0,
     exertion_premium=2.0,
     climb_cost=0.5,
@@ -66,6 +74,10 @@ CELL_SIZE = 1.0
 WORLD_SPAN = (GRID - 1) * CELL_SIZE
 
 COHORT_SIZE = 150
+# No cohort here has any reason to hurry, and `Movement.pace` reads a zero advantage over resting
+# as exactly `walking_pace` — so this is "everyone ambles", stated as the decision rather than as
+# the speed it produces (#203).
+AMBLING = np.zeros(COHORT_SIZE, dtype=np.float64)
 # Enough to walk the world's width several times over on the flat, so a failure to cross a ridge
 # is the climb charge and not simply a short journey. Derived rather than guessed: the flat
 # traverse costs transport_cost x span x (1 + exertion_premium x walking_pace) per unit of size.
@@ -129,6 +141,9 @@ class World:
         genes = np.zeros((n, len(GENE_NAMES)), dtype=np.float32)
         genes[:, GENE_NAMES.index("speed")] = np.clip(rng.normal(2.0, 0.3, n), 0.1, None)
         genes[:, GENE_NAMES.index("size")] = np.clip(rng.normal(1.0, 0.15, n), 0.1, None)
+        # Nimble relative to those speeds, so a cohort reaches its walking velocity in a tick or
+        # two and the thing being measured stays the climb charge rather than acceleration (#204).
+        genes[:, GENE_NAMES.index("agility")] = np.clip(rng.normal(2.0, 0.3, n), 0.1, None)
 
         ids = self.store.allocate(
             n,
@@ -162,7 +177,7 @@ def crossings(heights, seed, max_ticks=MAX_TICKS):
     east_y = world.store.y[cohort.to_mask()].astype(np.float64)
 
     for _ in range(max_ticks):
-        world.movement.step(cohort, east_x, east_y, MOVEMENT_CONFIG.walking_pace)
+        world.movement.step(cohort, east_x, east_y, AMBLING)
         world.ecology.drain(cohort)
 
     return int((world.store.x[cohort.to_mask()] >= WORLD_SPAN).sum())
@@ -202,7 +217,7 @@ class TestSteepTerrainSuppressesCrossingRates:
         east_y = world.store.y[cohort.to_mask()].astype(np.float64)
 
         for _ in range(MAX_TICKS):
-            world.movement.step(cohort, east_x, east_y, MOVEMENT_CONFIG.walking_pace)
+            world.movement.step(cohort, east_x, east_y, AMBLING)
             world.ecology.drain(cohort)
 
         x = world.store.x[cohort.to_mask()]
@@ -236,14 +251,16 @@ class TestALongRunOfMovementHoldsEveryInvariant:
                 cohort,
                 rng.uniform(0.0, WORLD_SPAN, COHORT_SIZE),
                 rng.uniform(0.0, WORLD_SPAN, COHORT_SIZE),
-                MOVEMENT_CONFIG.walking_pace,
+                AMBLING,
             )
             world.ecology.drain(cohort)
 
         loop = TickLoop(
             world.store,
             systems=[wander],
-            invariants=default_registry(0.0, WORLD_SPAN, 0.0, WORLD_SPAN),
+            invariants=default_registry(
+                0.0, WORLD_SPAN, 0.0, WORLD_SPAN, movement=world.movement
+            ),
             debug_checks=True,
         )
 
@@ -268,7 +285,7 @@ class TestALongRunOfMovementHoldsEveryInvariant:
                 cohort,
                 rng.uniform(0.0, WORLD_SPAN, COHORT_SIZE),
                 rng.uniform(0.0, WORLD_SPAN, COHORT_SIZE),
-                MOVEMENT_CONFIG.walking_pace,
+                AMBLING,
             )
 
         mask = cohort.to_mask()

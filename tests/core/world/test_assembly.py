@@ -54,6 +54,8 @@ AVERSION_GENES = (
 GENE_NAMES = (
     "size",
     "speed",
+    "agility",
+    "haste",
     "insulation",
     "sight",
     "scent_emission",
@@ -77,7 +79,7 @@ GENE_NAMES = (
 # everything else here is a quantity that cannot go negative (#104).
 CUE_GENES = (*SIGNATURE_GENES, *AVERSION_GENES[0], *AVERSION_GENES[1])
 # The genes §2.5 costs at zero: their counterweight is a selective consequence rather than upkeep.
-FREE_GENES = (*CUE_GENES, "mutability", "choice_temperature", "commitment")
+FREE_GENES = (*CUE_GENES, "mutability", "choice_temperature", "commitment", "haste")
 
 GENE_REGISTRY = gene_registry(
     GENE_NAMES,
@@ -153,6 +155,8 @@ def world_config(**overrides):
         movement=MovementConfig(
             speed_gene="speed",
             size_gene="size",
+            agility_gene="agility",
+            haste_gene="haste",
             transport_cost=0.5,
             exertion_premium=2.0,
             climb_cost=1.0,
@@ -202,6 +206,12 @@ def world_config(**overrides):
         founder_gene_ranges={
             "size": (0.8, 1.2),
             "speed": (1.0, 3.0),
+            # World units per tick per tick, against those speeds: a founder needs a few ticks to
+            # reach its own top speed and as long again to reverse (#204).
+            "agility": (0.3, 0.9),
+            # Read through `exp`, so haste founds between 1 and about 4 — the band across which
+            # the gene visibly changes a pace at the drive advantages this world produces (#203).
+            "haste": (0.0, 1.4),
             "insulation": (0.0, 0.5),
             "sight": (2.0, 6.0),
             "scent_emission": (0.5, 1.5),

@@ -137,7 +137,7 @@ def per_row(store, **row_values):
 class TestColumnOwnership:
     def test_claims_every_column_it_writes(self):
         world = World()
-        for column in ("drive_scores", "choice_heading", "choice_moving"):
+        for column in ("drive_scores", "choice_heading", "choice_moving", "choice_urge"):
             assert world.columns.owner_of(column) == "Behaviour"
 
     def test_a_rival_service_cannot_also_claim_them(self):
@@ -812,3 +812,91 @@ class TestInspection:
         world.behaviour.choose(selection, np.random.default_rng(7))
 
         assert world.behaviour.headings(selection).shape == (6,)
+
+
+class TestChoiceUrge:
+    """What `Behaviour` records about *how badly* an animal wanted the option it took (#203).
+
+    `Movement` turns this into a pace, so it is the whole of how a drive comes to make an animal
+    hurry: by scoring, never by naming a speed. The quantity is a difference against the null
+    option rather than an absolute utility, because the choice itself is shift-invariant — a
+    constant added to every option changes nothing about which is picked — so an absolute reading
+    would carry a component no decision depends on.
+    """
+
+    def test_an_animal_that_stays_put_has_no_urge(self):
+        world = World()
+        world.behaviour.register(wanting(NULL, urgency=1.0))
+        stayer = world.spawn(1)
+
+        world.behaviour.choose(stayer, np.random.default_rng(0))
+
+        assert not world.store.choice_moving[stayer.to_indices()][0]
+        assert world.behaviour.chosen_urge(stayer) == pytest.approx(0.0)
+
+    def test_urge_is_the_drive_advantage_of_the_chosen_option_over_resting(self):
+        """One drive with one clear favourite: the recorded urge is exactly what the drives gained
+        by taking it rather than doing nothing."""
+        world = World()
+        world.behaviour.register(wanting(3, urgency=2.0))
+        forager = world.spawn(1)
+
+        world.behaviour.choose(forager, np.random.default_rng(0))
+
+        # urgency 2 x (appeal 1 on the favoured heading - appeal 0 on the null option).
+        assert world.behaviour.chosen_urge(forager) == pytest.approx(2.0, abs=1e-6)
+
+    def test_a_drive_that_prefers_resting_lowers_the_urge_of_moving(self):
+        """Fatigue is exactly this shape: it makes the null option attractive, so an animal that
+        moves against it wanted the move less than the one beside it that had no such reason to
+        stay. Net rather than best-of, because the cost of moving is part of how much you want to.
+        """
+        eager = World()
+        eager.behaviour.register(wanting(3, urgency=2.0))
+        keen = eager.spawn(1)
+        eager.behaviour.choose(keen, np.random.default_rng(0))
+
+        reluctant = World()
+        reluctant.behaviour.register(wanting(3, urgency=2.0))
+        reluctant.behaviour.register(wanting(NULL, urgency=1.0))
+        tired = reluctant.spawn(1)
+        reluctant.behaviour.choose(tired, np.random.default_rng(0))
+
+        assert reluctant.behaviour.chosen_urge(tired) == pytest.approx(
+            float(eager.behaviour.chosen_urge(keen)[0]) - 1.0, abs=1e-6
+        )
+
+    def test_an_animal_carried_by_commitment_alone_records_no_urge(self):
+        """Commitment decides *which* option wins, not how badly it is wanted (#100), so it is
+        excluded — which is why the urge reads the per-drive contributions rather than the total
+        `utilities` returns.
+
+        Folding it in would make an animal hurry simply for already being in motion, and dawdle
+        toward something genuinely urgent because it had settled: the hysteresis band would become
+        an accelerator. Here the drives are indifferent and only the bonus moves the animal, so an
+        urge of anything but zero would be the bonus leaking in.
+        """
+        world = World()
+        world.behaviour.register(ConstantDrive("flat", urgency=1.0, appeal=1.0))
+        dogged = world.spawn(1, commitment=5.0)
+        world.travelling(dogged, 0.0)
+
+        world.behaviour.choose(dogged, np.random.default_rng(0))
+
+        assert world.store.choice_moving[dogged.to_indices()][0]
+        assert world.behaviour.chosen_urge(dogged) == pytest.approx(0.0)
+
+    def test_a_reused_row_does_not_keep_its_predecessors_urge(self):
+        """A newborn has wanted nothing yet, and #119 makes reuse the ordinary path rather than an
+        edge case: a row freed by a death is handed straight to a birth in the same tick."""
+        world = World()
+        world.behaviour.register(wanting(3, urgency=2.0))
+        first = world.spawn(1)
+        world.behaviour.choose(first, np.random.default_rng(0))
+        assert float(world.behaviour.chosen_urge(first)[0]) > 0.0
+
+        world.store.release(world.store.row_ids()[first.to_indices()])
+        second = world.spawn(1)
+
+        assert list(second.to_indices()) == list(first.to_indices())
+        assert world.behaviour.chosen_urge(second) == pytest.approx(0.0)
