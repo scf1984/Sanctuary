@@ -46,6 +46,7 @@ from core.world.diffusion import DiffusionConfig
 from core.world.assembly import World, WorldConfig, build_world
 from core.world.climate import ClimateConfig
 from core.world.terrain import TerrainConfig
+from core.world.interventions import Interventions
 from metrics import MetricHistory, MetricsConfig
 
 _GRID = 80
@@ -532,6 +533,12 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
 # window, and fine enough that a population crash does not fall between two samples.
 DEMO_METRICS = MetricsConfig(every_n_ticks=20, history_limit=2_000)
 
+# What the player starts with. A round number and openly arbitrary: what *generates* intervention
+# currency is an open question (§5) settled only in the negative so far, so a demo world is handed a
+# balance and nothing here creates more. Culling costs one per animal (#26), which makes this a few
+# hundred animals' worth of stewardship before the budget is the constraint rather than the ecology.
+DEMO_BUDGET = 500.0
+
 
 def build_demo_world(seed: int, n_entities: int) -> World:
     """The assembled world the viewer runs, reproducible from `seed`.
@@ -545,4 +552,5 @@ def build_demo_world(seed: int, n_entities: int) -> World:
     world.loop.metrics = MetricHistory(
         world.store, world.genetics, world.plants, world.genes.vocabulary, DEMO_METRICS
     )
+    world.loop.interventions = Interventions(balance=DEMO_BUDGET)
     return world

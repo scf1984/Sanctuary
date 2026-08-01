@@ -20,6 +20,7 @@ import pygame
 from clients.viewer.charts import stack_charts, world_charts
 from clients.viewer.demo_world import build_demo_world
 from clients.viewer.export import export_history
+from core.world.cull import Cull
 from clients.viewer.playback import Playback
 from clients.viewer.render import (
     PLANT_LAYERS,
@@ -50,6 +51,12 @@ _PANEL_TEXT = (232, 232, 226)
 # the inspection panel at the top.
 _CHART_SIZE = (320, 54)
 _EXPORT_DIRECTORY = Path("exports")
+
+# What one keypress removes, and the floor it will not go below. Both are the viewer's choice
+# rather than the world's: §2.7 forbids eradicating a species by a single action and `Cull` is what
+# enforces that, so this is only how large a bite this particular button takes.
+_CULL_SIZE = 10
+_CULL_SURVIVORS = 20
 
 # What the overlay key cycles through. `None` is terrain alone, and it leads so that the view
 # opens on the same picture it always has.
@@ -93,6 +100,32 @@ def _draw_charts(screen, font, history, gene) -> None:
         y = top + index * (chart_height + 7)
         screen.blit(font.render(label, True, color), (width + 16, y))
         screen.blit(font.render(detail, True, _PANEL_TEXT), (width + 16, y + 14))
+
+
+def _cull(world, species_id: int) -> str:
+    """Queue a cull of the selected animal's species, and say what will be attempted.
+
+    Only *queued* — it lands at the next tick boundary and may be refused there (§2.7's rule, or an
+    empty budget), which is why the outcome is read back out of the history rather than reported
+    here. Saying "done" now would be reporting something that has not happened.
+    """
+    world.loop.interventions.request(
+        Cull(world.ecology, world.store, species_id, _CULL_SIZE, _CULL_SURVIVORS)
+    )
+    return f"cull of {_CULL_SIZE} from species {species_id} queued"
+
+
+def _last_outcome(world) -> str:
+    """The most recent intervention's result, for the status line. Empty until one has run.
+
+    The status line is the only place a viewer can tell the player anything, and a refusal that
+    reached nobody is the failure §2.7's whole design exists to avoid.
+    """
+    history = world.loop.interventions.history
+    if not history:
+        return ""
+    last = history[-1]
+    return f"{last.name}: {last.refusal or f'done, {world.loop.interventions.balance:g} left'}"
 
 
 def _export(world, seed: int) -> str:
@@ -166,6 +199,12 @@ def run(seed: int = 0, n_entities: int = 200) -> None:
                     gene_index = (gene_index + 1) % (len(gene_names) + 1)
                 elif event.key == pygame.K_e:
                     exported = _export(world, seed)
+                elif event.key == pygame.K_x and selected is not None:
+                    # Only meaningful with an animal selected: a cull names a *species*, and
+                    # clicking one is how the player says which. Silently doing nothing without a
+                    # selection is better than culling an arbitrary species (§8.7 cuts both ways —
+                    # the loud failure here would be culling the wrong thing).
+                    exported = _cull(world, int(world.store.species_id[selected]))
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 # Pick against the *living*, so a gestating row and a freed one are both
                 # unselectable — the first has not been born and the second is not there (#119).
@@ -233,9 +272,10 @@ def run(seed: int = 0, n_entities: int = 200) -> None:
         status = (
             f"{'PAUSED' if playback.paused else 'playing'} | "
             f"speed x{playback.speed:g} | tick {world.loop.tick_count} | "
-            f"[tab] {layer or 'terrain'} | [c] charts [g] trait [e] export"
+            f"[tab] {layer or 'terrain'} | [c] charts [g] trait [e] export [x] cull"
             f" | click an animal to inspect"
             + (f" | {exported}" if exported else "")
+            + (f" | {_last_outcome(world)}" if _last_outcome(world) else "")
         )
         screen.blit(font.render(status, True, (255, 255, 255)), (8, 8))
 

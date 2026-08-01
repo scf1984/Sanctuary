@@ -19,6 +19,19 @@ from core.invariants import InvariantRegistry
 System = Callable[[], None]
 
 
+class InterventionQueue(Protocol):
+    """Anything holding player requests that can be drained at a tick boundary (#26).
+
+    A structural type rather than an import for the same reason `MetricRecorder` is one below: this
+    module is the loop, and a loop that could not run without a player is the wrong dependency —
+    every headless world (#101's founder evolution, #42's competitions) has no player at all.
+    """
+
+    def apply_pending(self, store: EntityStore, tick: int) -> object:
+        """Apply everything queued and record each outcome. Called once per tick, before systems."""
+        ...
+
+
 class MetricRecorder(Protocol):
     """Anything that can be offered a tick and decide for itself whether to record it (#30).
 
@@ -56,6 +69,15 @@ class TickLoop:
         one that died during the interval, or to a newborn that inherited the row. Reading
         ``store.alive`` at draw time answers only the first of those, and only for the *current*
         end of the interval (#119).
+    interventions: an optional `core.world.interventions.Interventions`, drained at the *start* of
+        every tick — which is a tick boundary, and the one that puts what the player just did in
+        front of the same tick's invariant pass (§6). An intervention that broke a conservation
+        law is then caught by the world it broke, on the tick it broke it, rather than surfacing
+        later somewhere that did nothing wrong.
+
+        Before the systems rather than after them for that reason and for one more: a cull applied
+        at the top of a tick is a world the tick then *reacts* to, which is what a player watching
+        expects. Applied after, the change would sit inert until the following tick.
     metrics: an optional recorder (`metrics.MetricHistory`, #30), offered every tick and sampling
         on its own cadence. Optional because the entity invariants and the loop itself are testable
         against a bare store, and a recorder needs a genetics stack and a plant field to read.
@@ -95,12 +117,14 @@ class TickLoop:
         debug_checks: bool = False,
         growth: Optional[GrowthConfig] = None,
         metrics: Optional[MetricRecorder] = None,
+        interventions: Optional[InterventionQueue] = None,
     ) -> None:
         if debug_checks and invariants is None:
             raise ValueError("debug_checks requires an invariants registry")
 
         self._growth = growth
         self.metrics = metrics
+        self.interventions = interventions
 
         self.systems = tuple(systems)
         self._store = store
@@ -128,6 +152,8 @@ class TickLoop:
             self.current_row_ids,
         )
         for _ in range(n_ticks):
+            if self.interventions is not None:
+                self.interventions.apply_pending(self._store, self.tick_count)
             for system in self.systems:
                 system()
             self.tick_count += 1
