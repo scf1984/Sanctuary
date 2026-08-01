@@ -12,10 +12,14 @@ redraw-the-whole-figure model.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pygame
 
+from clients.viewer.charts import stack_charts, world_charts
 from clients.viewer.demo_world import build_demo_world
+from clients.viewer.export import export_history
 from clients.viewer.playback import Playback
 from clients.viewer.render import (
     PLANT_LAYERS,
@@ -40,6 +44,12 @@ _ENTITY_RADIUS = 4
 _PICK_RADIUS = 3.0
 _PANEL_BACKGROUND = (12, 12, 14)
 _PANEL_TEXT = (232, 232, 226)
+
+# The chart panel: wide enough that a few hundred samples are one pixel column apart, and short
+# enough that four stacked charts leave most of the world visible. It sits bottom-left, away from
+# the inspection panel at the top.
+_CHART_SIZE = (320, 54)
+_EXPORT_DIRECTORY = Path("exports")
 
 # What the overlay key cycles through. `None` is terrain alone, and it leads so that the view
 # opens on the same picture it always has.
@@ -69,6 +79,37 @@ def _draw_panel(screen, font, lines: tuple[str, ...]) -> None:
         y += surface.get_height()
 
 
+def _draw_charts(screen, font, history, gene) -> None:
+    """Blit the metric panel bottom-left. Layout only — `charts.py` decides where a point goes,
+    because that module is collectable in CI and this one is not (#110)."""
+    charts = world_charts(history, gene)
+    width, chart_height = _CHART_SIZE
+    image, labels = stack_charts(charts, width, chart_height)
+    if not image.size:
+        return
+    top = screen.get_height() - image.shape[0] - 8
+    screen.blit(pygame.surfarray.make_surface(np.transpose(image, (1, 0, 2))), (8, top))
+    for index, (label, detail, color) in enumerate(labels):
+        y = top + index * (chart_height + 7)
+        screen.blit(font.render(label, True, color), (width + 16, y))
+        screen.blit(font.render(detail, True, _PANEL_TEXT), (width + 16, y + 14))
+
+
+def _export(world, seed: int) -> str:
+    """Write the recorded history beside the working directory, and say where it went.
+
+    Returns the message rather than printing it: the status line is the only place a viewer can
+    tell the user anything, and a `print` behind a game window is a message nobody reads (§8.7
+    applies to success too — an export that says nothing is one the user repeats).
+    """
+    stem = f"seed{seed}-tick{world.loop.tick_count}"
+    try:
+        csv_path, _ = export_history(world.loop.metrics, _EXPORT_DIRECTORY, stem)
+    except ValueError as refused:
+        return str(refused)
+    return f"wrote {csv_path} (+ .json)"
+
+
 def run(seed: int = 0, n_entities: int = 200) -> None:
     pygame.init()
     screen = pygame.display.set_mode(_SCREEN_SIZE)
@@ -88,6 +129,10 @@ def run(seed: int = 0, n_entities: int = 200) -> None:
 
     layer_index = 0
     selected: int | None = None
+    charts_shown = True
+    gene_names = world.genes.vocabulary.names
+    gene_index = gene_names.index("speed") if "speed" in gene_names else len(gene_names)
+    exported = ""
     background = _scaled_surface(terrain_rgb, _SCREEN_SIZE)
     redraw_background = False
 
@@ -112,6 +157,15 @@ def run(seed: int = 0, n_entities: int = 200) -> None:
                 elif event.key in (pygame.K_TAB, pygame.K_f):
                     layer_index = (layer_index + 1) % len(_LAYER_CYCLE)
                     redraw_background = True
+                elif event.key == pygame.K_c:
+                    charts_shown = not charts_shown
+                elif event.key == pygame.K_g:
+                    # Cycle which trait is plotted, ending on `None` — population and condition
+                    # alone. Which gene is under selection is the question being asked, and it
+                    # changes run to run, so it is a key rather than a constant.
+                    gene_index = (gene_index + 1) % (len(gene_names) + 1)
+                elif event.key == pygame.K_e:
+                    exported = _export(world, seed)
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 # Pick against the *living*, so a gestating row and a freed one are both
                 # unselectable — the first has not been born and the second is not there (#119).
@@ -166,13 +220,22 @@ def run(seed: int = 0, n_entities: int = 200) -> None:
         for screen_x, screen_y, color in zip(px.tolist(), py.tolist(), colors.tolist()):
             pygame.draw.circle(screen, color, (screen_x, screen_y), _ENTITY_RADIUS)
 
+        if charts_shown:
+            _draw_charts(
+                screen,
+                font,
+                world.loop.metrics,
+                None if gene_index == len(gene_names) else gene_names[gene_index],
+            )
         if selected is not None:
             _draw_panel(screen, font, describe_entity(world, selected))
 
         status = (
             f"{'PAUSED' if playback.paused else 'playing'} | "
             f"speed x{playback.speed:g} | tick {world.loop.tick_count} | "
-            f"[tab] {layer or 'terrain'} | click an animal to inspect"
+            f"[tab] {layer or 'terrain'} | [c] charts [g] trait [e] export"
+            f" | click an animal to inspect"
+            + (f" | {exported}" if exported else "")
         )
         screen.blit(font.render(status, True, (255, 255, 255)), (8, 8))
 

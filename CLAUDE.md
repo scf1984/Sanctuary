@@ -1137,6 +1137,36 @@ species colour, forever. `TickLoop` consequently snapshots `row_ids` at the same
 positions, and the renderer's entry point takes both — the mistake is unrepresentable rather than
 merely documented.
 
+**The viewer plots time as well as space** — #39. A position snapshot cannot show a crash, because
+a crash is a shape in *time*: `clients/viewer/charts.py` draws the series `metrics.MetricHistory`
+records (#30), stacked bottom-left, with population and condition always present and one gene's
+mean and spread beside them on a key. Which trait is under selection is the question being asked
+and it changes run to run, so it is a keypress rather than a constant.
+
+Three things about it are rules rather than preferences:
+
+- **A chart is handed numbers that already crossed the metric boundary**, and reduces nothing. That
+  is what keeps it drawable against a series that arrived over a socket rather than out of the
+  process (§3.1, §4). If a client ever has to compute what it draws, the reduction is on the wrong
+  side of the boundary.
+- **Geometry lives in a collectable module, never in `app.py`**, which is #110's rule applied
+  again: `charts.py` decides where a point goes and is tested without a display, and `app.py`
+  blits the surface and binds the keys. An inverted axis is otherwise invisible — a chart drawn
+  upside down looks entirely plausible.
+- **A flat series is drawn centred**, not pinned to an edge. A population holding steady and one
+  that has flatlined at zero are both flat, and putting them at different heights would read
+  meaning into a constant that does not carry any. The label carries the value; the line carries
+  the shape.
+
+**Export is a client's job and only a client's.** `core/` may perform no I/O at all (§4) and
+`metrics/` deliberately performs none either — it produces serialisable values and stops, because
+on the shared machine §3.1 is heading for, the process that records a series is not the process
+that writes a file. `clients/viewer/export.py` writes both CSV and JSON: the flat one is what a
+spreadsheet and a notebook open without being told anything, and the nested one is the sample as
+recorded, which is the same shape that would come off a socket. Per-gene columns are **named**
+rather than positional, because a positional column silently means a different gene the first time
+the vocabulary is widened, which §2.3 makes an additive and expected event.
+
 **Occupancy is identity, not a flag.** Ids are never reused, so comparing two id snapshots
 distinguishes the three cases an `alive` bit cannot: a row still holding the same entity (blend
 it), a row now empty (drop it), and **a row freed and handed to a newborn inside the interval**

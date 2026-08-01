@@ -20,3 +20,6 @@ venv*/
 .coverage.*
 coverage.json
 htmlcov/
+
+# Metric exports written by the viewer's [e] key (#39). Run output, not source.
+exports/
