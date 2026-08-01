@@ -996,6 +996,42 @@ by" hunger and no animal stands still merely because the drive that won has no m
   species by a single action), terraforming, introducing species, and standing policies.
 - Metrics — biodiversity, population trends, inter-species interaction — are a secondary surface,
   suitable for a dashboard client or a phone widget.
+- **An intervention is recorded data applied at a tick boundary, never a mutation from outside** —
+  settled in #26, which owns the framework. Every part of that sentence is load-bearing:
+
+  - *Recorded*, so a world's history is a list of what the player did rather than a diff nobody can
+    read. §3.2 stores it beside the snapshot, and #33's standing policies write into the same list.
+  - *Applied at a tick boundary*, so nothing edits a column halfway through a vectorized pass — the
+    hazard §2.3 makes capacity growth wait for, and the same answer.
+  - *Never a mutation from outside*, so `clients/` and `service/` cannot reach into a store at all.
+    Without it the live path and the offline path would be two mechanisms, and §2.4 forbids
+    batching from changing outcomes — which it silently would, if a click went one way and a
+    caught-up policy went another.
+
+  **Refusals are recorded too**, and not for symmetry: a player who was away for three days needs
+  to know their emergency cull did not happen and why. §2.4 makes absence the normal case, so an
+  intervention that quietly did nothing is exactly the obituary this section exists to avoid. A
+  refusal is never charged, and it is not retried at a later boundary — retrying would fire it at
+  some unpredictable moment against a world the player made no decision about.
+
+  **The queue drains at the *start* of a tick**, before the systems. That puts what the player just
+  did in front of the same tick's invariant pass (§6), so an intervention that breaks a
+  conservation law is caught by the world it broke rather than surfacing later somewhere blameless;
+  and it means the tick *reacts* to the intervention rather than leaving it inert until the next
+  one.
+
+  **A cull returns the bodies to the ground they fell on**, and no invariant made it. That is worth
+  recording because the obvious justification is wrong and was checked: releasing animals holding
+  1,950 energy units leaves `total_nutrients()` unchanged either way, because the ledger counts
+  their energy as *exported* whether or not it ever comes back. Conservation holds over a world
+  where the nutrient is stranded — a gap in the check itself, filed as #214. So the argument is
+  ecological: a body decomposes where it falls, a cull is that compressed into one tick, and a cull
+  that skipped it would sterilise the ground the player used it on.
+
+  **The catalogue and the currency are still open** (§5). #26 built the framework and one
+  intervention; #27's fence and #28's siblings own their own effects, and what *generates* the
+  player's budget is a design decision rather than a number — so the ledger spends a balance it is
+  given and nothing creates one.
 
 ### 2.8 Rule versions
 
