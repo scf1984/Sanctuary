@@ -14,7 +14,9 @@ the option of staying put, every drive scores every candidate, and the animal sa
   paralysis, which is what #126 needed and what makes it safe to add a drive before its senses.
 - **Fear needs no flee-target machinery** — it is appeal with the sign flipped.
 - **Rest needs no mode or state column** — it is the null option winning, and an animal that picks
-  it pays no transport cost and therefore recovers (#107).
+  it is handed its own position to steer at, which `Movement` reads as wanting zero velocity. It
+  therefore coasts to a halt over a tick or two under momentum (#204) and then pays no transport
+  cost at all, which is what lets it recover (#107). Nothing here branches on resting.
 
 **Explainability survives and improves.** #22's load-bearing property was that "it fled because fear
 outscored hunger" is recoverable from the store. The replacement is a per-drive decomposition of the
@@ -134,7 +136,7 @@ class Behaviour(DomainService):
     a sum does not care in what order it was accumulated.
     """
 
-    owns = ("drive_scores", "choice_heading", "choice_moving")
+    owns = ("drive_scores", "choice_heading", "choice_moving", "choice_urge")
 
     # Narrows DomainService.store (typed `object`, the base being store-shape-agnostic) to the
     # concrete EntityStore whose blocks this service fills.
@@ -358,7 +360,31 @@ class Behaviour(DomainService):
             "choice_heading", selection, np.where(stayed, previous, walked).astype(np.float32)
         )
         self.write("choice_moving", selection, ~stayed)
+        self.write("choice_urge", selection, self._urge(contributions, chosen).astype(np.float32))
         self._record(selection, contributions, chosen)
+
+    def _urge(self, contributions: dict[str, np.ndarray], chosen: np.ndarray) -> np.ndarray:
+        """(n,) unit-free: how much more the drives wanted the chosen option than staying put.
+
+        This is what `Movement` converts into a pace (#203), so it is the whole of how an animal
+        comes to hurry. The quantity has to be a *difference* rather than an absolute utility,
+        because the choice itself is shift-invariant — a constant added to every option changes
+        nothing about which is picked, so an absolute utility carries a component no decision
+        depends on. Measuring against the null option is measuring against the one thing every
+        animal always has available, which makes it the natural zero: an animal that gains nothing
+        by moving has no reason to spend more than a stroll on it.
+
+        **The commitment bonus is deliberately excluded**, which is why this reads the per-drive
+        contributions rather than the total `utilities` returned. Commitment decides *which* option
+        wins, not how badly the animal wants it (#100), so folding it in would make an animal
+        already in motion hurry for no reason beyond being in motion, and a settled one dawdle
+        toward something genuinely urgent — the hysteresis band would become an accelerator.
+        """
+        rows = np.arange(chosen.shape[0])
+        urge = np.zeros(chosen.shape[0], dtype=np.float64)
+        for contribution in contributions.values():
+            urge += contribution[rows, chosen] - contribution[:, self.config.n_candidates]
+        return urge
 
     def _record(
         self, selection: Selection, contributions: dict[str, np.ndarray], chosen: np.ndarray
@@ -394,6 +420,16 @@ class Behaviour(DomainService):
         """(len(selection),) float32 radians: the direction each entity last chose to travel."""
         return self.store.choice_heading[selection.to_mask()]
 
+    def chosen_urge(self, selection: Selection) -> np.ndarray:
+        """(len(selection),) float32, unit-free: how much better than resting the last choice was.
+
+        Read out of the store rather than returned from `choose` for the same reason
+        `chosen_target` is (below): drive scoring and movement are two systems separated by §2.1's
+        declared order, and a value handed directly between them would make that order a detail of
+        this module rather than a rule.
+        """
+        return self.store.choice_urge[selection.to_mask()]
+
     def chosen_target(self, selection: Selection) -> tuple[np.ndarray, np.ndarray]:
         """(x, y) each (len(selection),) float64: where the stored decision points.
 
@@ -402,9 +438,11 @@ class Behaviour(DomainService):
         separate — scoring runs at position 3 in the tick and movement at 4, and fusing them into
         one call would make the order a detail of this module rather than a declared rule.
 
-        An animal that chose to stay is handed its own position, so `Movement.step` prices a step
-        of zero and it pays nothing — which is exactly what makes rest recover exertion (#107)
-        without anything branching on a resting state.
+        An animal that chose to stay is handed its own position, which `Movement.step` reads as
+        wanting zero velocity: it brakes at whatever rate its agility allows and then costs
+        nothing, which is what makes rest recover exertion (#107) without anything branching on a
+        resting state. The point returned is a **bearing reference and not a destination** —
+        momentum means no animal stops on a mark, so a fast one overshoots it (#204).
         """
         mask = selection.to_mask()
         x = self.store.x[mask].astype(np.float64)

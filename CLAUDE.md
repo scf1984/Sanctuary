@@ -321,11 +321,96 @@ by" hunger and no animal stands still merely because the drive that won has no m
 
   **The premium is a per-world-unit multiplier on `pace`, not a flag naming the drive.** Pricing
   distance alone would make a chase merely long; it is the per-unit term that makes it expensive.
-  `pace` is a fraction of top speed supplied per call, so `core.behaviour.movement` knows nothing
-  about what fleeing *is* — a drive that wants urgency passes a higher number, and #19's chase and
-  #24's flight are priced without that module changing. A `MovementConfig` therefore declares
-  `walking_pace` and `exertion_premium` as one pair: they are the two halves of the walk/sprint
-  ratio, and §2.1's warning about constants drifting apart applies to them exactly.
+  `core.behaviour.movement` therefore knows nothing about what fleeing *is*. A `MovementConfig`
+  declares `walking_pace` and `exertion_premium` as one pair: they are the two halves of the
+  walk/sprint ratio, and §2.1's warning about constants drifting apart applies to them exactly.
+
+  **Pace is bought with the advantage the chosen option held over standing still** — settled in
+  #203, which owned it. `pace` had been a *scalar argument*, and the only caller passed
+  `walking_pace`, so `exertion_premium` multiplied a constant: no animal had ever hurried, and the
+  whole walk/sprint mechanism was machinery nothing could exercise. The rule that replaced it:
+
+  ```
+  urge  = Σ_drives ( appeal_d(chosen) − appeal_d(rest) ) × urgency_d      recorded as `choice_urge`
+  pace  = 1 − (1 − walking_pace) × exp(−haste × max(urge, 0))
+  ```
+
+  **A drive makes an animal hurry by scoring, not by naming a speed.** That is what the earlier
+  wording — "a drive that wants urgency passes a higher number" — turns out to mean once #114
+  removed the single winning drive: there is no drive to ask, only a summed utility, so the number
+  a drive passes is its own urgency and it arrives through the sum. #24's flight and #179's chase
+  are then priced without this module changing, exactly as promised, and without either of them
+  declaring a pace.
+
+  **Measured against resting, because the choice is shift-invariant.** A constant added to every
+  option changes nothing about which is picked, so an absolute utility carries a component no
+  decision depends on; the null option is the one thing every animal always has, which makes it
+  the natural zero. **The commitment bonus is excluded**: it decides *which* option wins, not how
+  badly it is wanted (#100), and folding it in would make an animal hurry for already being in
+  motion and dawdle toward real danger for having settled — the hysteresis band would become an
+  accelerator.
+
+  **Saturating rather than linear, and scaled by a gene rather than a constant.** The utility sum
+  has no ceiling, so anything linear needs a cutoff, and a cutoff is a second constant to keep in
+  step with `walking_pace`; exponential decay of the *remaining* headroom needs neither. The scale
+  is `haste` because "how much advantage counts as a lot" is not a fact about the world that could
+  be measured once — it depends on the drive weights an animal carries, which are themselves genes
+  (#23). Selection therefore calibrates it per lineage. `haste` charges no upkeep for the reason
+  §2.5 exempts `mutability`: hurrying already pays the premium on every world unit, so the
+  selective consequence is immediate.
+
+  This mechanism is **correct and very nearly inert today**, and that is worth stating rather than
+  discovering later: at the founding `choice_temperature` an animal takes its best option 13–27% of
+  the time against 11% by chance, so the option it did take is mostly noise and its advantage over
+  resting is negative for the median animal. Only 0.5% of decisions in a settled world produce any
+  hurry at all. The cause is #205's, not this rule's, and it suppresses #24 and #179 the same way.
+
+  **Velocity is state, and it changes at a bounded rate** — settled in #204, which owned it.
+  Nothing had momentum: an animal was repositioned toward a target each tick, so one at full speed
+  could reverse for free.
+
+  ```
+  desired  = pace × top_speed, pointed at the target (zero for an animal asking to stop)
+  velocity ← velocity + clamp(desired − velocity, agility / size)
+  ```
+
+  **This is what lets a chase have an outcome.** With free turning a pursuit is not a pursuit —
+  the faster animal simply arrives, because there is nothing to out-manoeuvre. Given velocity that
+  cannot change instantly, a fast heavy predator overshoots and a nimble prey jinks, so whether the
+  two come into contact is an outcome of the physics. **#179 therefore needs no kill rule**: contact
+  decides, exactly as contact already decides mating (#20). If that issue ships a resolution
+  formula, momentum was missing and the formula is standing in for it.
+
+  **Divided by size, so mass resists a change of direction.** That is free physics rather than an
+  authored penalty, and it gives `size` its first downside beyond upkeep — a real speed-against-
+  agility axis, which is the difference between a predator and its prey being *different kinds of
+  animal* and being two speed values. `agility` must charge a positive cost, per the insulation
+  rule above: there is no world in which turning faster is worse.
+
+  **The change is capped in magnitude, never per axis**, or an animal would turn faster along the
+  diagonals than along the axes — the grid leaking into the physics, which is the same defect
+  §2.5 rejects 8-way movement for.
+
+  **Velocity is written from the displacement that happened, never the one intended.** An animal
+  that could only afford half its step carries half the speed into the next tick and one that ran
+  into the world edge carries none, so running out of energy and running into a wall each need no
+  rule of their own. It is also what bounds velocity by top speed **without a cap**: the new value
+  is never longer than the intended one, which lies between the old velocity and `top_speed × pace`,
+  so the bound holds by induction from a standing start. §2.5 rejected a speed cap outright and this
+  is what replaces it — an argument, asserted by `no_entity_exceeds_its_top_speed` in the invariant
+  harness (§6) rather than clamped in a hot loop (§8.2).
+
+  **A target is a bearing reference, not a destination.** A step used to be `min(reach, distance to
+  target)`, so an animal stopped dead on its mark; that is not expressible once velocity is state,
+  and `Behaviour.chosen_target` never asked for it — the point it returns is `position + look_ahead
+  × heading`, a sample of which way is good. A fast animal therefore overshoots it. **Stopping is
+  the same rule and not a branch**: an animal handed its own position wants zero velocity and brakes
+  at its agility, which is what stops "sprint, then brake free" being a way out of a chase that
+  costs nothing.
+
+  Both are **MAJOR** under §2.8, and both were free because nothing had shipped. Measurements —
+  the urge and pace distributions, what momentum costs in effective travel, and the throughput of
+  the step — are in [`docs/spikes/pace-and-momentum.md`](docs/spikes/pace-and-momentum.md).
 
   **Only elevation *gain* is charged.** Descent costs its horizontal distance and no more —
   raising a body against gravity is work in a way that lowering it is not. That asymmetry alone is

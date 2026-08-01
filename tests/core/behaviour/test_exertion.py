@@ -25,7 +25,7 @@ from core.world.terrain import Terrain
 from tests.support.genes import gene_registry
 from tests.support.plants import plant_field
 
-GENE_NAMES = ("size", "speed", "insulation", "fatigue_weight", "mutability")
+GENE_NAMES = ("size", "speed", "agility", "haste", "insulation", "fatigue_weight", "mutability")
 
 # Every gene declares how its stored value is read (#104). These are all quantities, so all fold
 # across zero; `mutability` is in the vocabulary because inheritance's spread floor is a gene, and
@@ -34,7 +34,8 @@ GENETICS_CONFIG = GeneticsConfig(
     mutability_gene="mutability",
     drift_margin=2.0,
 )
-GENE_REGISTRY = gene_registry(GENE_NAMES, {"insulation": 1.0})
+# `agility` is costed because `Movement` refuses to build without it (§2.5, #204).
+GENE_REGISTRY = gene_registry(GENE_NAMES, {"insulation": 1.0, "agility": 1.0})
 
 # Nothing but locomotion moves an energy pool here, so a cohort's exertion is attributable to the
 # steps under test. Insulation carries a cost because MetabolismConfig requires one, and no cohort
@@ -49,6 +50,8 @@ FREE_METABOLISM = MetabolismConfig(
 MOVEMENT_CONFIG = MovementConfig(
     speed_gene="speed",
     size_gene="size",
+    agility_gene="agility",
+    haste_gene="haste",
     transport_cost=1.0,
     exertion_premium=2.0,
     climb_cost=0.5,
@@ -123,6 +126,10 @@ class World:
         genes = np.zeros((n, len(GENE_NAMES)), dtype=np.float32)
         genes[:, GENE_NAMES.index("speed")] = speed
         genes[:, GENE_NAMES.index("size")] = size
+        # Nimble enough that no step here is limited by acceleration: these tests are about what
+        # effort a step *records*, and momentum (#204) has its own tests. `haste` is left at a
+        # stored zero, which `exp` reads as 1, so `urge_for` inverts the pace map exactly.
+        genes[:, GENE_NAMES.index("agility")] = 1e6
         # Drive weights are genes now (#23); these tests were written against a scalar 1.0.
         genes[:, GENE_NAMES.index("fatigue_weight")] = 1.0
 
@@ -141,12 +148,20 @@ class World:
         return selection
 
     def step_toward(self, selection, target_x, target_y, pace):
+        """Step at a stated `pace`, converting it to the `choice_urge` that produces it.
+
+        Tests state a pace because a pace is what effort is a function of; how an animal comes to
+        want one is `Movement.pace`'s business and is tested there (#203). A pace of 1 inverts to
+        an infinite urge, which the map carries back to exactly 1.
+        """
         n = len(selection)
+        headroom = 1.0 - self.movement.config.walking_pace
+        urge = np.inf if pace == 1.0 else -np.log((1.0 - pace) / headroom)
         self.movement.step(
             selection,
             np.full(n, target_x, dtype=np.float64),
             np.full(n, target_y, dtype=np.float64),
-            pace,
+            np.full(n, urge, dtype=np.float64),
         )
 
 

@@ -87,6 +87,20 @@ class TestPicking:
 
 
 class TestTheatPanel:
+    def test_it_reports_speed_against_top_speed_and_urge_against_pace(self):
+        """The two readings momentum and haste are only visible through (#203, #204). A position
+        cannot say whether an animal is being held below its own pace by agility or by an empty
+        pool, and "why did this population crash" is what the panel exists to answer (§3.3).
+        """
+        w = world()
+        row = int(np.flatnonzero(w.store.alive)[0])
+        w.loop.advance(5)
+
+        line = next(line for line in describe_entity(w, row) if line.startswith("speed "))
+
+        assert "top" in line
+        assert "urge" in line and "pace" in line
+
     def test_it_names_the_species_and_the_row(self):
         w = world()
         row = int(np.flatnonzero(w.store.alive)[0])

@@ -28,7 +28,7 @@ from tests.support.genes import gene_registry
 from tests.support.plants import plant_field
 
 
-GENE_NAMES = ("size", "speed", "insulation", "mutability")
+GENE_NAMES = ("size", "speed", "agility", "haste", "insulation", "mutability")
 
 # Every gene declares how its stored value is read (#104). These are all quantities, so all fold
 # across zero; `mutability` is in the vocabulary because inheritance's spread floor is a gene, and
@@ -37,7 +37,10 @@ GENETICS_CONFIG = GeneticsConfig(
     mutability_gene="mutability",
     drift_margin=2.0,
 )
-GENE_REGISTRY = gene_registry(GENE_NAMES, {"insulation": 1.0})
+# `agility` is costed because `Movement` refuses to build without it: turning faster is pure
+# benefit, so a free agility gene runs away in every world (§2.5, #204). It is the only cost that
+# matters to a step, since the locomotion charge under test is what these tests measure.
+GENE_REGISTRY = gene_registry(GENE_NAMES, {"insulation": 1.0, "agility": 1.0})
 
 # Free metabolism: every gene costs nothing and there is no basal rate, so the only thing that
 # moves an energy pool in these tests is the locomotion charge under test. Insulation still carries
@@ -53,6 +56,8 @@ FREE_METABOLISM = MetabolismConfig(
 MOVEMENT_CONFIG = MovementConfig(
     speed_gene="speed",
     size_gene="size",
+    agility_gene="agility",
+    haste_gene="haste",
     transport_cost=1.0,
     exertion_premium=2.0,
     climb_cost=0.5,
@@ -61,6 +66,10 @@ MOVEMENT_CONFIG = MovementConfig(
 
 GRID = 41
 CELL_SIZE = 1.0
+
+# World units per tick per tick. Larger than any speed any test expresses, so velocity always
+# reaches what was asked for within the tick and momentum never confounds a pricing assertion.
+_NIMBLE = 1e6
 
 
 def flat_heights(elevation=0.0):
@@ -128,14 +137,25 @@ class World:
         )
         self.species_id = self.species.register(GENE_NAMES)
 
-    def place(self, x, y, *, speed, size=1.0, energy=1e6):
-        """Allocate one entity per (x, y) pair and settle it onto the surface."""
+    def place(self, x, y, *, speed, size=1.0, energy=1e6, agility=_NIMBLE):
+        """Allocate one entity per (x, y) pair and settle it onto the surface.
+
+        agility defaults high enough that no step is ever limited by it, so every test below
+        describes an animal **already up to speed** and momentum (#204) is out of the way. That is
+        the honest default here: these tests price a step and check where it lands, which are
+        questions about the walk and not about acceleration. `TestVelocityChangesAtABoundedRate`
+        is where momentum is the subject, and it passes a real agility.
+        """
         x = np.atleast_1d(np.asarray(x, dtype=np.float32))
         y = np.atleast_1d(np.asarray(y, dtype=np.float32))
         n = x.shape[0]
         genes = np.zeros((n, len(GENE_NAMES)), dtype=np.float32)
         genes[:, GENE_NAMES.index("speed")] = speed
         genes[:, GENE_NAMES.index("size")] = size
+        genes[:, GENE_NAMES.index("agility")] = agility
+        # `haste` is read through `exp`, so a stored zero expresses 1 and `urge_for` below inverts
+        # the pace map without carrying a coefficient.
+        genes[:, GENE_NAMES.index("haste")] = 0.0
 
         ids = self.store.allocate(
             n,
@@ -160,13 +180,28 @@ class World:
     def energy(self, selection):
         return self.ecology.energy(selection)
 
+    def urge_for(self, pace):
+        """The `choice_urge` that produces `pace` for an animal of expressed haste 1.
+
+        `Movement.pace` is `1 − (1 − walking_pace)·exp(−haste·urge)`, so this is its exact inverse
+        and not an approximation of one. A full pace of 1 inverts to an infinite urge, which the
+        map carries back to exactly 1 — `exp(-inf)` is 0 — so "flat out" stays expressible.
+
+        Tests state a pace rather than an urge because a pace is what they are about: what a step
+        covers and what it costs. How an animal comes to want that pace is `TestPaceIsBoughtWithUrge`.
+        """
+        headroom = 1.0 - self.movement.config.walking_pace
+        if pace == 1.0:
+            return np.inf
+        return -np.log((1.0 - pace) / headroom)
+
     def step_toward(self, selection, target_x, target_y, pace):
         n = len(selection)
         self.movement.step(
             selection,
             np.full(n, target_x, dtype=np.float64),
             np.full(n, target_y, dtype=np.float64),
-            pace,
+            np.full(n, self.urge_for(pace), dtype=np.float64),
         )
 
 
@@ -178,6 +213,8 @@ class TestConfigRejectsValuesThatWouldBreakTheEnergyBudget:
             MovementConfig(
                 speed_gene="speed",
                 size_gene="size",
+                agility_gene="agility",
+                haste_gene="haste",
                 transport_cost=0.0,
                 exertion_premium=2.0,
                 climb_cost=0.5,
@@ -190,6 +227,8 @@ class TestConfigRejectsValuesThatWouldBreakTheEnergyBudget:
             MovementConfig(
                 speed_gene="speed",
                 size_gene="size",
+                agility_gene="agility",
+                haste_gene="haste",
                 transport_cost=1.0,
                 exertion_premium=-0.1,
                 climb_cost=0.5,
@@ -203,18 +242,22 @@ class TestConfigRejectsValuesThatWouldBreakTheEnergyBudget:
             MovementConfig(
                 speed_gene="speed",
                 size_gene="size",
+                agility_gene="agility",
+                haste_gene="haste",
                 transport_cost=1.0,
                 exertion_premium=2.0,
                 climb_cost=-1.0,
                 walking_pace=0.4,
             )
 
-    @pytest.mark.parametrize("pace", [0.0, 1.5])
+    @pytest.mark.parametrize("pace", [0.0, 1.0, 1.5])
     def test_walking_pace_must_be_a_real_fraction_of_top_speed(self, pace):
         with pytest.raises(ValueError, match="walking_pace"):
             MovementConfig(
                 speed_gene="speed",
                 size_gene="size",
+                agility_gene="agility",
+                haste_gene="haste",
                 transport_cost=1.0,
                 exertion_premium=2.0,
                 climb_cost=0.5,
@@ -248,14 +291,24 @@ class TestAStepGoesWhereItWasAimed:
         assert x == pytest.approx(3.0)
         assert y == pytest.approx(4.0)
 
-    def test_it_stops_on_the_target_rather_than_overshooting(self):
+    def test_a_fast_animal_overshoots_its_target_rather_than_stopping_on_it(self):
+        """The target is a **bearing reference, not a destination** (#204).
+
+        A step used to be `min(reach, distance to target)`, so an animal stopped dead on its mark.
+        That is not expressible once velocity is state: a body carrying momentum cannot halt on a
+        coordinate, and `Behaviour.chosen_target` never asked it to — the point it returns is
+        `position + look_ahead × heading`, a sample of which way is good, not somewhere to be.
+
+        What replaced the stop is the deceleration rule: an animal asking for zero velocity brakes
+        at its agility, which is the test below.
+        """
         world = World(flat_heights())
-        walker = world.place(10.0, 10.0, speed=50.0)
+        walker = world.place(10.0, 10.0, speed=6.0)
 
         world.step_toward(walker, 12.0, 10.0, pace=1.0)
 
         x, y, _ = world.position(walker)
-        assert (x, y) == pytest.approx((12.0, 10.0))
+        assert (x, y) == pytest.approx((16.0, 10.0))
 
     def test_an_animal_already_on_its_target_neither_moves_nor_pays(self):
         """`Hunger.forage_target` returns the animal's own position when it can see no food, so a
@@ -374,7 +427,8 @@ class TestWhatAStepCosts:
     def test_an_unexpressed_size_gene_is_neither_charged_nor_carried(self):
         """Cost follows the expressed phenotype (§2.5), the same rule metabolism obeys."""
         world = World(flat_heights())
-        weightless_id = world.species.register(("speed", "insulation"))
+        # Everything but size, so the only thing this species is missing is the one under test.
+        weightless_id = world.species.register(("speed", "agility", "haste", "insulation"))
         heavy = world.place(0.0, 10.0, speed=4.0, size=3.0)
         weightless = world.place(0.0, 10.0, speed=4.0, size=3.0)
         world.genetics.speciate(weightless, weightless_id)
@@ -618,3 +672,253 @@ class TestAStepIsPricedAlongItsWholePath:
         world.step_toward(walkers, 28.0, 20.0, pace=1.0)
 
         assert (world.energy(walkers) >= 0.0).all()
+
+
+class TestPaceIsBoughtWithUrge:
+    """Issue #203: how much an animal wants something is what decides how fast it goes.
+
+    Before this, `step` took one scalar pace for the entire world, so no animal could ever hurry
+    and `exertion_premium` multiplied a constant — the walk/sprint machinery §2.5 describes existed
+    and had never been exercised by anything. What replaced the scalar is a per-entity conversion
+    from `choice_urge`, which is the advantage the chosen option held over standing still.
+    """
+
+    def paces(self, urges, haste=0.0):
+        """`Movement.pace` over one animal per urge, all carrying the same stored haste."""
+        world = World(flat_heights())
+        n = len(urges)
+        cohort = world.place(np.full(n, 10.0), np.full(n, 10.0), speed=5.0)
+        genes = world.genetics.genes(cohort)
+        genes[:, GENE_NAMES.index("haste")] = haste
+        world.genetics.set_genes(cohort, genes)
+        return world.movement.pace(cohort, np.asarray(urges, dtype=np.float64))
+
+    def test_no_advantage_over_resting_is_a_walk(self):
+        """`walking_pace` is the floor and not the speed: an animal whose chosen option was worth
+        exactly as much as standing still has no reason to spend the premium on it."""
+        assert self.paces([0.0]) == pytest.approx(MOVEMENT_CONFIG.walking_pace)
+
+    def test_an_option_worse_than_resting_is_still_only_a_walk(self):
+        """The Boltzmann draw can pick an option the drives rank below the null (#114), so a
+        negative advantage is an ordinary tick. It must not read as a *negative* hurry, which the
+        exponential would happily supply — pace would exceed 1 and buy speed nothing charged for.
+        """
+        assert self.paces([-5.0, -0.1]) == pytest.approx(MOVEMENT_CONFIG.walking_pace)
+
+    def test_pace_rises_with_urge_and_saturates_at_top_speed(self):
+        """Saturating rather than linear, because the utility sum has no ceiling: anything linear
+        would need a cutoff, and a cutoff is a second constant to keep in step with `walking_pace`.
+
+        The ceiling is *approached* in exact arithmetic and *reached* in float64 — past an urge of
+        about 90 the remaining headroom rounds away, exactly as the unit-interval reading saturates
+        in float32 (#146). That is left alone for the same reason: flat out is a legitimate state,
+        and what must never happen is a pace above one, which would buy speed nothing charged for.
+        """
+        rising = self.paces([0.0, 0.25, 1.0, 4.0])
+
+        assert (np.diff(rising) > 0).all()
+        assert (rising < 1.0).all()
+        assert float(self.paces([1e3])[0]) == 1.0
+
+    def test_a_hastier_animal_hurries_more_for_the_same_reason(self):
+        """The gene is what makes this temperament rather than tuning: two animals seeing the same
+        opportunity disagree about whether it is worth running for, and selection settles which was
+        right (§2.5).
+        """
+        placid = float(self.paces([1.0], haste=0.0)[0])
+        eager = float(self.paces([1.0], haste=1.5)[0])
+
+        assert MOVEMENT_CONFIG.walking_pace < placid < eager < 1.0
+
+    def test_an_animal_that_does_not_express_haste_never_hurries(self):
+        """Cost follows the expressed phenotype and so does benefit (§2.5). A species without the
+        gene ambles at any provocation, which is the same rule `top_speed` obeys."""
+        world = World(flat_heights())
+        walker = world.place(10.0, 10.0, speed=5.0)
+        placid_id = world.species.register(("size", "speed", "agility", "insulation"))
+        world.genetics.speciate(walker, placid_id)
+
+        assert world.movement.pace(walker, np.array([4.0])) == pytest.approx(
+            MOVEMENT_CONFIG.walking_pace
+        )
+
+    def test_two_animals_in_one_call_move_at_their_own_paces(self):
+        """The regression test for #203, and it is the *shape* of the call that carries it.
+
+        `step` used to take a scalar pace, so this comparison could not be written at all: one
+        vectorized pass over the whole population meant one speed for the whole population. An
+        urgent animal and an idle one now separate inside a single call, which is what a chase
+        (#179) and a flight (#24) both need and neither could have had.
+        """
+        world = World(flat_heights())
+        cohort = world.place(np.array([0.0, 0.0]), np.array([10.0, 20.0]), speed=5.0)
+
+        world.movement.step(
+            cohort,
+            np.array([40.0, 40.0]),
+            np.array([10.0, 20.0]),
+            np.array([0.0, 4.0]),
+        )
+
+        idle, urgent = world.position(cohort)[0]
+        assert idle == pytest.approx(5.0 * MOVEMENT_CONFIG.walking_pace)
+        assert urgent > idle
+
+    def test_hurrying_costs_more_per_world_unit_than_ambling(self):
+        """`exertion_premium` finally multiplies something that varies. The per-unit comparison is
+        the point rather than the total: covering more ground would cost more even at a flat rate,
+        and §2.5's claim is that the *rate itself* rises with effort.
+        """
+        world = World(flat_heights())
+        cohort = world.place(np.array([0.0, 0.0]), np.array([10.0, 20.0]), speed=5.0)
+        before = world.energy(cohort).copy()
+
+        world.movement.step(
+            cohort,
+            np.array([40.0, 40.0]),
+            np.array([10.0, 20.0]),
+            np.array([0.0, 4.0]),
+        )
+
+        spent = before - world.energy(cohort)
+        covered = world.position(cohort)[0]
+        assert spent[1] / covered[1] > spent[0] / covered[0]
+
+
+class TestVelocityChangesAtABoundedRate:
+    """Issue #204: an animal carries momentum, so it cannot reverse for free.
+
+    Without this a pursuit is not a pursuit — turning costs nothing, so the faster animal simply
+    arrives and there is nothing to out-manoeuvre. With it, whether a chase ends in contact is an
+    outcome of the physics rather than of a kill formula, which is what #179 leans on.
+
+    Every animal below passes a real `agility`, unlike the rest of this file: momentum is the
+    subject here rather than something to keep out of the way.
+    """
+
+    def run_east(self, world, cohort, ticks, pace=1.0):
+        """Hold a bearing due east for `ticks`, returning what each tick covered."""
+        covered = []
+        for _ in range(ticks):
+            before = world.position(cohort)[0].copy()
+            world.step_toward(cohort, 39.0, 10.0, pace=pace)
+            covered.append(world.position(cohort)[0] - before)
+        return np.array(covered)
+
+    def test_an_animal_at_rest_takes_several_ticks_to_reach_its_top_speed(self):
+        world = World(flat_heights())
+        walker = world.place(1.0, 10.0, speed=4.0, agility=1.0)
+
+        covered = self.run_east(world, walker, ticks=6)[:, 0]
+
+        # One agility per tick until top speed, then flat: 1, 2, 3, 4, 4, 4.
+        assert covered == pytest.approx([1.0, 2.0, 3.0, 4.0, 4.0, 4.0])
+
+    def test_it_cannot_reverse_in_one_tick(self):
+        """The property the whole issue reduces to. An animal at full tilt asked to go the other
+        way spends the tick slowing down, and only then turns — which is the time a pursuer has to
+        close and a fleeing animal has to lose."""
+        world = World(flat_heights())
+        runner = world.place(1.0, 10.0, speed=4.0, agility=1.0)
+        self.run_east(world, runner, ticks=6)
+
+        at_speed = float(world.position(runner)[0][0])
+        world.step_toward(runner, 0.0, 10.0, pace=1.0)
+
+        # Still travelling east, merely slower: it shed one agility of the four it was carrying.
+        assert float(world.position(runner)[0][0]) - at_speed == pytest.approx(3.0)
+
+    def test_a_bigger_body_turns_more_slowly_at_the_same_agility(self):
+        """`agility / size`: mass resisting a change of direction is free physics, and it is what
+        gives size its first downside beyond upkeep. A speed-against-nimbleness axis is what makes
+        a predator and its prey different kinds of animal rather than two speed values."""
+        world = World(flat_heights())
+        light = world.place(1.0, 10.0, speed=8.0, agility=2.0, size=1.0)
+        heavy = world.place(1.0, 20.0, speed=8.0, agility=2.0, size=4.0)
+
+        world.step_toward(light, 39.0, 10.0, pace=1.0)
+        world.step_toward(heavy, 39.0, 20.0, pace=1.0)
+
+        assert float(world.position(light)[0][0]) == pytest.approx(3.0)
+        assert float(world.position(heavy)[0][0]) == pytest.approx(1.5)
+
+    def test_choosing_to_rest_brakes_rather_than_stopping_dead(self):
+        """A resting animal is handed its own position (#114), which reads here as wanting zero
+        velocity — so it coasts to a halt at its agility instead of stopping on the spot. Without
+        that, an animal could sprint one tick and brake free the next, which is a way out of a
+        chase that costs nothing."""
+        world = World(flat_heights())
+        runner = world.place(1.0, 10.0, speed=4.0, agility=1.0)
+        self.run_east(world, runner, ticks=6)
+
+        coasting = []
+        for _ in range(5):
+            before = float(world.position(runner)[0][0])
+            x, y, _ = world.position(runner)
+            world.movement.step(runner, x.astype(np.float64), y.astype(np.float64), np.zeros(1))
+            coasting.append(float(world.position(runner)[0][0]) - before)
+
+        assert coasting == pytest.approx([3.0, 2.0, 1.0, 0.0, 0.0])
+
+    def test_velocity_records_what_happened_and_not_what_was_asked_for(self):
+        """An animal that could only afford half its step carries half the speed into the next
+        tick. Writing the intended velocity instead would let a starving animal accumulate speed it
+        never travelled at, and the top-speed invariant (§6) rests on exactly this."""
+        world = World(flat_heights())
+        faint = world.place(1.0, 10.0, speed=4.0, agility=1.0, energy=0.5)
+
+        world.step_toward(faint, 39.0, 10.0, pace=1.0)
+
+        travelled = float(world.position(faint)[0][0]) - 1.0
+        carried = float(world.store.velocity_x[faint.to_mask()][0])
+        assert 0.0 < travelled < 1.0
+        assert carried == pytest.approx(travelled, rel=1e-5)
+
+    def test_running_into_the_edge_of_the_world_stops_an_animal(self):
+        """Clipping the *landing* rather than the target is what makes a wall a wall: velocity is
+        rewritten from the displacement that happened, so an animal pinned against the boundary
+        carries nothing into the next tick rather than sliding along it."""
+        world = World(flat_heights())
+        runner = world.place(35.0, 10.0, speed=4.0, agility=4.0)
+
+        for _ in range(4):
+            world.step_toward(runner, 40.0, 10.0, pace=1.0)
+
+        assert float(world.position(runner)[0][0]) == pytest.approx(world.terrain.world_width)
+        assert float(world.store.velocity_x[runner.to_mask()][0]) == pytest.approx(0.0)
+
+    def test_a_freshly_placed_animal_starts_at_rest(self):
+        """A reused row still holds its predecessor's velocity, and a newborn inherits no speed
+        from whatever died in its slot (#119 makes that the ordinary path, not an edge case)."""
+        world = World(flat_heights())
+        runner = world.place(20.0, 10.0, speed=4.0, agility=4.0)
+        self.run_east(world, runner, ticks=3)
+        assert float(world.store.velocity_x[runner.to_mask()][0]) > 0.0
+
+        row = int(runner.to_indices()[0])
+        world.store.release(world.store.row_ids()[[row]])
+        reborn = world.place(5.0, 5.0, speed=4.0, agility=4.0)
+
+        assert int(reborn.to_indices()[0]) == row
+        assert float(world.store.velocity_x[reborn.to_mask()][0]) == pytest.approx(0.0)
+        assert float(world.store.velocity_y[reborn.to_mask()][0]) == pytest.approx(0.0)
+
+
+class TestAgilityMustBePaidFor:
+    def test_a_free_agility_gene_is_rejected_at_construction(self):
+        """§2.5's rule for insulation and senescence resistance, and agility is the same shape:
+        there is no world in which turning faster is worse, so a gene that only ever buys it and
+        charges nothing runs away everywhere. Refused where the cost and the caller's intent first
+        meet, rather than noticed later as a lineage that corners impossibly (§8.7)."""
+        world = World(flat_heights())
+        with pytest.raises(ValueError, match="agility"):
+            Movement(
+                world.store,
+                ColumnRegistry(),
+                world.ecology,
+                world.exertion,
+                world.genetics,
+                world.terrain,
+                gene_registry(GENE_NAMES, {"insulation": 1.0}),
+                MOVEMENT_CONFIG,
+            )

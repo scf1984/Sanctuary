@@ -373,6 +373,13 @@ def describe_entity(world: "World", row: int) -> tuple[str, ...]:
         f"   exertion {float(store.exertion[row]):.3f}",
         f"position ({float(store.x[row]):.1f}, {float(store.y[row]):.1f},"
         f" {float(store.z[row]):.1f})",
+        # Speed against top speed and pace against `walking_pace` are the two readings momentum and
+        # haste are only visible through (#203, #204): an animal held below its own pace is being
+        # limited by agility or by an empty pool, and neither shows in a position.
+        f"speed {float(np.hypot(store.velocity_x[row], store.velocity_y[row])):.2f}"
+        f" of {float(world.movement.top_speed(selection)[0]):.2f} top"
+        f"   urge {float(store.choice_urge[row]):+.3f}"
+        f" → pace {float(world.movement.pace(selection, store.choice_urge[[row]])[0]):.2f}",
         "",
     ]
 

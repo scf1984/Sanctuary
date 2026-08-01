@@ -327,13 +327,17 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
         aging,
         conception,
         rng,
-        config.movement.walking_pace,
     )
     loop = TickLoop(
         store,
         systems=_ordered(systems),
         invariants=default_registry(
-            0.0, terrain.world_width, 0.0, terrain.world_height, plants=plants
+            0.0,
+            terrain.world_width,
+            0.0,
+            terrain.world_height,
+            plants=plants,
+            movement=movement,
         ),
         debug_checks=debug_checks,
         growth=config.growth,
@@ -399,7 +403,6 @@ def _build_systems(
     aging: Aging,
     conception: Conception,
     rng: np.random.Generator,
-    walking_pace: float,
 ) -> dict[str, Callable[[], None]]:
     """One zero-argument callable per system, by name. `_ordered` decides the sequence.
 
@@ -434,11 +437,15 @@ def _build_systems(
 
     def move_chosen() -> None:
         # Everyone moves, because everyone chose — including the animals that chose to stay, whose
-        # target is their own position and whose step therefore costs nothing (#114). There is no
-        # longer a subset "driven by" one drive: a heading is the sum of every drive's opinion.
+        # target is their own position and which therefore ask to come to a halt (#114). There is
+        # no longer a subset "driven by" one drive: a heading is the sum of every drive's opinion.
+        #
+        # The urge travels with the target because it is *the same decision* read two ways — which
+        # way, and how badly. Movement turns the second into a pace, so a drive makes an animal
+        # hurry by scoring rather than by naming a speed (#203).
         population = living()
         target_x, target_y = behaviour.chosen_target(population)
-        movement.step(population, target_x, target_y, walking_pace)
+        movement.step(population, target_x, target_y, behaviour.chosen_urge(population))
 
     return {
         "plant_growth": plants.grow,
