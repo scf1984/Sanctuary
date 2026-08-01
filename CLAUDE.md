@@ -1168,6 +1168,21 @@ clients/     diagnostic viewer, dashboard. never import core internals, only api
 Rules:
 
 - Nothing in `core/` may read a wall clock, perform I/O, or import from `clients/` or `service/`.
+- **`metrics/` reads `core/`, and never the reverse.** A world that cannot be observed is a smaller
+  loss than one that cannot run without an observer, and `core/` staying importable standalone is
+  what §3.1's stage 1 rests on. `TickLoop` therefore names its recorder by a structural type
+  (`MetricRecorder`) rather than importing one, and `build_world` does not construct it — the
+  composition root attaches it afterwards, because a recorder reads a *finished* world.
+- **A metric crossing this boundary is a plain value, never an array view.** §3.1 puts the
+  simulation on a shared machine with clients asking for view information, so anything returned is
+  something a client may hold across a tick and send over a socket: floats, ints, and lists of them.
+  Equally, **statistics are computed on the core side, never in a client** — a histogram reduced in
+  `clients/` cannot cross a socket, and it puts a pass over the whole gene matrix on the wrong side
+  of the boundary. The client draws what it is handed.
+- **A series is recorded as the world runs, never recomputed on request.** The simulation is
+  non-deterministic (§2.2), so a replay answers a different question than the one asked; and a
+  metric that only exists while somebody is watching has a hole in it for every absence, which
+  §2.4's offline advancement makes the normal case rather than the exception.
 - Every domain service owns its arrays. Row indices do not cross service boundaries.
 - Iterate snapshots, never live views. The prototype's `World.update` iterated a live `dict` view
   and would have raised as soon as reproduction worked.
@@ -1192,7 +1207,19 @@ Not yet decided. Do not assume answers — ask.
   generates it is what the game rewards, so it is a design decision rather than a number. Candidates
   and their consequences are recorded on #26. Any income defined on ecosystem state waits on the
   metric definitions below.
-- Precise metric definitions (species count vs. Shannon index vs. within-species genetic diversity).
+- **The remaining half of the metric definitions.** Species count and Shannon entropy over species
+  abundance are still open, and they are deferred *with* #16 — with one species they read 1 and 0
+  forever, so there is nothing yet to argue about and nothing to test an argument against. #30 owns
+  them and reserves them rather than leaving them for whoever reaches for them first.
+
+  The third — within-species genetic diversity — is settled as far as the numbers to compute it
+  *from*: `metrics.Sample.expressed_spread`, the per-gene standard deviation of the expressed
+  phenotype. The composition into one scalar is **deliberately not shipped**, and the reason is
+  measured: the obvious mean-of-variances reads 17.5 on the demo world, of which almost all is
+  `maturity_age` alone, because it is founded over 40–120 ticks while `size` is founded over
+  0.8–1.2. That is #193's defect on the genetic *distance* metric, and it wants one scale-free
+  composition rather than two — so the scalar waits on #193, and a misleading number was not
+  shipped in the meantime (§8.7).
 - Competition format: replicate count, duration, termination condition, what is measured.
 - Whether the player names species on speciation, and how lineage is displayed. The mechanic
   itself is settled (§2.5): `core.genetics.speciation` splits a diverged population and records
