@@ -1,5 +1,28 @@
 # Conception: does the world breed, and what binds it?
 
+---
+
+# ⚠️ Superseded — re-measured under #200
+
+Measured while `speciation_threshold` was rejecting 94% of candidate couples (#199), so the rates
+below are roughly **24 times too low**. Corrected figures, with the gate open:
+
+| | here | corrected |
+|---|---:|---:|
+| conceptions | 53 per 900 ticks per 200 animals | 22,588 per 3,000 ticks (seed 1) |
+| peak allocation in a tick | — | 3.25% of occupancy |
+| peak concurrent gestation | 1–6 rows against 200 | 35% of occupancy |
+
+The **capacity-bound** conclusion below still stands for the world as it was then, and is exactly
+why the figures were wrong: free rows sat at zero throughout, so the run was measuring an array and
+not an ecology. It measured a *second* limit at the same time without knowing it.
+
+See `docs/spikes/capacity-growth.md` for the corrected numbers and
+`docs/spikes/capacity_rate_bench.py` for the tool.
+
+---
+
+
 Measured while implementing #20's conception slice. The second question is #127's, and this is where
 its number finally comes from.
 

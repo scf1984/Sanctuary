@@ -1,4 +1,54 @@
-# Capacity growth: the reserve, and the first world that found its own ceiling
+# Capacity growth: the reserve, and a ceiling that turned out to be a bug
+
+---
+
+# ⚠️ Superseded in part — re-measured under #200
+
+**Everything below was measured while `speciation_threshold` was suppressing reproduction 24-fold**
+(#199). The reserve conclusion survives; the population curve does not.
+
+## What survives
+
+`reserve_fraction = 0.1` is **vindicated, with a thinner margin than it appeared to have.**
+Re-measured with the gate open (`docs/spikes/capacity_rate_bench.py`, two seeds, 1,200–3,000 ticks):
+
+| | throttled | corrected |
+|---|---:|---:|
+| peak allocation in a tick | 0.43% of occupancy | **3.25%** |
+| 99th-percentile allocation | — | 1.8% |
+| peak concurrent gestation | 19% of occupancy | **35%** |
+| conceptions, seed 1, 3,000 ticks | — | 22,588 |
+
+**Ticks on which conception ran out of rows: 0. Ticks clipped: 0.** The silent failure #200 was
+filed to look for is not happening — but the reserve clears the worst observed tick by a factor of
+three rather than the twenty the original figure implied.
+
+## What does not survive: "the first world that found its own ceiling"
+
+The claim below — that the population overshoots to 5,212, falls back to 4,761, and settles — was
+an artefact of the throttle. With the gate open the population **does not settle at all** within the
+observed window:
+
+| tick | living (seed 1) | free rows | capacity |
+|---:|---:|---:|---:|
+| 900 | 4,372 | 5,967 | 10,560 |
+| 1,500 | 5,487 | 4,741 | 10,560 |
+| 2,100 | 7,013 | 3,275 | 10,560 |
+| 2,700 | **7,881** | 2,407 | 10,560 |
+
+Monotonic, no plateau, and free rows falling toward the next doubling. So the correct statement is
+narrower than the one below:
+
+- **The array is no longer binding.** That part holds — free rows are plentiful throughout and
+  nothing is pinned against capacity, which is what #127 set out to fix.
+- **The ecological carrying capacity is above 7,881 and has not been observed.** Crude arithmetic
+  on this field's regrowth puts it far higher; finding it is a soak-test question (#48), not a
+  1,200-tick spike.
+
+The lesson is the same one #199 recorded: a plateau was measured, and it was the plateau of a bug.
+
+---
+
 
 Measured while implementing #127. That issue refused to pick a trigger without "a measurement of a
 breeding world in hand", and there was no breeding world until #191.

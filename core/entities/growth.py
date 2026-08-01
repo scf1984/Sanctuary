@@ -47,8 +47,14 @@ class GrowthConfig:
         It must clear one tick's worth of allocation, since growth happens between ticks and a tick
         that runs short conceives fewer young (`core.ecology.conception`) rather than raising —
         which would be an array quietly suppressing births, exactly the engine reaching into the
-        ecology that §2.3 forbids. Measured: at the steepest growth observed, allocation ran at
-        about 1% of occupancy per tick, so the default sits an order of magnitude above it.
+        ecology that §2.3 forbids.
+
+        Measured in `docs/spikes/capacity-growth.md`: peak allocation reaches **3.25% of occupancy
+        in a single tick**, with a 99th percentile of 1.8%, so a tenth leaves roughly a threefold
+        margin over the worst tick observed. The figure this was originally sized against was
+        0.43%, taken while a misconfigured interbreeding gate suppressed births 24-fold (#199,
+        #200). The reserve survived that correction — but with a margin of three rather than the
+        twenty it appeared to have, which is worth knowing before the birth rate rises again.
     """
 
     reserve_fraction: float
