@@ -26,7 +26,9 @@ from core.ecology.conception import ConceptionConfig
 from core.entities.growth import GrowthConfig
 from core.ecology.cues import CueFieldConfig, ScentGenes
 from core.ecology.diet import DietConfig
+from core.ecology.carrion import CarrionConfig
 from core.ecology.feeding import FeedingConfig
+from core.ecology.predation import PredationConfig
 from core.ecology.metabolism import MetabolismConfig
 from core.ecology.plants import PlantsConfig
 from core.genetics.expression import GeneticsConfig
@@ -141,6 +143,8 @@ def world_config(**overrides):
         ),
         diet=DietConfig(animal_derived_gene="diet_animal_derived", frontier_exponent=2.0),
         feeding=FeedingConfig(intake_rate=0.6, assimilation_max=0.5, size_gene="size"),
+        predation=PredationConfig(strike_range=1.0, strike_power=20.0),
+        carrion=CarrionConfig(decay_rate=0.1),
         cue_field=CueFieldConfig(diffusion_range=3.0),
         metabolism=MetabolismConfig(
             basal_rate=0.05,
@@ -262,7 +266,7 @@ class TestTheOrderIsDeclaredData:
 
     def test_a_system_built_but_not_placed_is_rejected(self):
         with pytest.raises(SystemOrderError, match="unplaced"):
-            _ordered({name: (lambda: None) for name in TICK_ORDER + ("decomposition",)})
+            _ordered({name: (lambda: None) for name in TICK_ORDER + ("speciation",)})
 
     def test_an_order_naming_a_system_that_does_not_exist_is_rejected(self):
         """Otherwise a name in TICK_ORDER with nothing behind it is a silent gap in the tick."""
@@ -382,7 +386,11 @@ class TestABuiltWorldRuns:
 
         world.loop.advance(10)
 
-        assert np.all(world.store.age[world.store.alive] == 10)
+        # The living, not every allocated row: predation frees rows and conception fills them, so
+        # a world ten ticks old can already hold a gestating young at a negative age (#20). That is
+        # the same `living()` distinction the tick loop itself draws.
+        born = world.store.alive & (world.store.age >= 0)
+        assert np.all(world.store.age[born] == 10)
 
     def test_animals_move(self):
         """Movement is wired to a real decision: `Behaviour` picks a winner and the foragers among

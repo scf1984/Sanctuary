@@ -39,7 +39,9 @@ from dataclasses import dataclass
 import numpy as np
 
 from core.behaviour.exertion import Exertion
+from core.ecology.carrion import Carrion
 from core.ecology.cues import Scent
+from core.ecology.diet import Diet
 from core.ecology.plants import Plants
 from core.ecology.service import Ecology
 from core.entities.store import EntityStore
@@ -135,6 +137,9 @@ class Hunger:
         ecology: Ecology,
         genetics: Genetics,
         plants: Plants,
+        carrion: Carrion,
+        scent: Scent,
+        diet: Diet,
         genes: GeneRegistry,
         config: HungerConfig,
     ) -> None:
@@ -142,6 +147,9 @@ class Hunger:
         self.ecology = ecology
         self.genetics = genetics
         self.plants = plants
+        self.carrion = carrion
+        self.scent = scent
+        self.diet = diet
         self.config = config
         # Raises KeyError naming the vocabulary version if the gene does not exist. Acuity
         # scales what is sampled from a field rather than a radius (#93), so it is dimensionless.
@@ -154,27 +162,64 @@ class Hunger:
         return (self._weight.of(selection) * np.clip(deficit, 0.0, 1.0)).astype(np.float32)
 
     def appeal(self, selection: Selection, x: np.ndarray, y: np.ndarray) -> np.ndarray:
-        """(n, n_options) float32 in [0, 1]: how much grazing each option leads toward.
+        """(n, n_options) float32 in [0, 1]: how much *food* each option leads toward.
 
-        The diffused forage field read at each candidate, scaled by the sight phenotype and gated
-        by `detection_threshold` — the same rule `forage_target` applied to a single gradient, now
-        applied to every option. **Detection is a threshold, not a radius**: one field serves the
-        whole population, so sight cannot narrow what is sampled, only scale it (§2.5, #93).
+        **Food is whatever this animal's diet is allocated toward**, so one drive points a herbivore
+        at grass and a carnivore at meat, and nothing had to decide which of the two an animal is
+        (#179):
 
-        Normalised by each animal's own best option, which does two things at once. It puts appeal
-        on the same [0, 1] scale every other drive uses, so summed utilities are comparable; and it
-        makes an animal that detects nothing return **all zeros** rather than a flat non-zero
-        preference — so hunger drops out of the sum entirely and the null option can win. An animal
-        with no food in sight rests instead of marching whichever way the numerical noise leaned,
-        which is the failure `forage_target` had to special-case.
+            appeal = (1 − animal_share) × grazing_appeal + animal_share × prey_appeal
+
+        The blend is the diet allocation itself and not a second gene, because "what am I looking
+        for" and "what can I digest" are the same question asked before and after the meal. An
+        omnivore genuinely splits its attention, which is the behavioural half of #102's frontier:
+        being mediocre at both foods now also means steering toward both at once.
+
+        **Grazing** is the diffused forage field read at each candidate, scaled by the sight
+        phenotype and gated by `detection_threshold`. **Detection is a threshold, not a radius**:
+        one field serves the whole population, so sight cannot narrow what is sampled, only scale
+        it (§2.5, #93).
+
+        **Prey** is *meat in that direction*, of either kind: the cue field summed over its
+        channels — how much live animal lies that way, with no opinion about which — plus the
+        diffused carrion field, which is how a scavenger finds a body it is not already standing on.
+        Summing them rather than ranking them is what makes hunting and scavenging one appetite: a
+        lineage does not choose between the two strategies, it is drawn to whichever is nearer, and
+        which one it ends up living on is an outcome of where it happens to be. That answers #179's Decision 1 with the option that
+        needs no new gene, and the cost is that a predator cannot specialise on one prey's
+        signature: smell is blunt here exactly as §2.5 requires it to be for fear, and for the same
+        reason — the air holds a blend, and only a linear readout composes correctly on a blend.
+        A per-lineage appetite *direction* in cue space is the richer answer and is additive to the
+        vocabulary rather than a replacement, so it stays open (recorded on #179).
+
+        Each half is normalised by the animal's own best option before blending, which does two
+        things at once. It puts appeal on the same [0, 1] scale every other drive uses, so summed
+        utilities are comparable; and it makes an animal that detects nothing return **all zeros**
+        rather than a flat non-zero preference — so hunger drops out of the sum entirely and the
+        null option can win. An animal with no food in sight rests instead of marching whichever way
+        the numerical noise leaned, which is the failure `forage_target` had to special-case.
         """
-        sight = self.genetics.expressed(selection)[:, self._sight_index].astype(np.float64)
-        reading = sight[:, None] * self.plants.forage_at(self.plants.forage, x, y)
+        phenotype = self.genetics.expressed(selection)
+        sight = phenotype[:, self._sight_index].astype(np.float64)
+        grazing = sight[:, None] * self.plants.forage_at(self.plants.forage, x, y)
+        # Summed over cue channels: how much animal lies that way, with no opinion about which.
+        # Signed channels can cancel, and a cancelled blend is *less* smell rather than a negative
+        # amount of it, so the sum is floored rather than allowed to invert the appeal.
+        prey = sight[:, None] * (
+            np.maximum(self.scent.perceived_at(selection, x, y).sum(axis=-1), 0.0)
+            + self.plants.forage_at(self.carrion.scent, x, y)
+        )
+
+        share = self.diet.animal_share(phenotype).astype(np.float64)[:, None]
+        return (
+            (1.0 - share) * self._detected(grazing) + share * self._detected(prey)
+        ).astype(np.float32)
+
+    def _detected(self, reading: np.ndarray) -> np.ndarray:
+        """(n, n_options) float64 in [0, 1]: a field reading gated, then scaled to its own best."""
         found = np.where(reading >= self.config.detection_threshold, reading, 0.0)
         best = found.max(axis=1, keepdims=True)
-        return np.divide(
-            found, best, out=np.zeros_like(found), where=best > 0.0
-        ).astype(np.float32)
+        return np.divide(found, best, out=np.zeros_like(found), where=best > 0.0)
 
 
 @dataclass(frozen=True)

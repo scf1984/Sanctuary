@@ -70,10 +70,32 @@ class DomainService:
 
         Raises ColumnOwnershipError if `column` is not in this service's declared `owns`.
         """
+        self._guard(column)
+        getattr(self.store, column)[selection.to_mask()] = values
+
+    def write_at(self, column: str, rows: object, values: object) -> None:
+        """Vectorized-write `values` into `column` at explicit `rows`, in the caller's order.
+
+        The ordered sibling of `write`, and it exists because a `Selection` is a mask: masks are
+        always ascending, so they cannot express a pairing whose members cross in row space. #191
+        established the reading half of this (`Genetics.genes_at`, `expressed_at`) after a pairing
+        built from *position* was silently rewired; predation (#179) is the first writer that needs
+        the same, since a prey and the animal eating it are paired by where they are standing.
+
+        Same ownership guard as `write`, deliberately — the guard is the point of the base class,
+        and an ordered write that skipped it would be the cross-service mutation §2.3 forbids.
+
+        Rows must be unique. A repeated row is written once under fancy indexing rather than
+        accumulated, so a caller that pairs one entity twice would silently lose a term; that is a
+        property of the caller's pairing, checked where the pairing is made rather than here (§8.2).
+        """
+        self._guard(column)
+        getattr(self.store, column)[rows] = values
+
+    def _guard(self, column: str) -> None:
         if column not in self.owns:
             owner = self._registry.owner_of(column)
             raise ColumnOwnershipError(
                 f"{type(self).__name__} cannot write column '{column}'; "
                 f"it is owned by {owner or 'no one'}"
             )
-        getattr(self.store, column)[selection.to_mask()] = values

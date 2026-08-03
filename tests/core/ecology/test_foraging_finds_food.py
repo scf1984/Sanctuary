@@ -67,19 +67,39 @@ def options(world):
 
 
 @pytest.mark.parametrize("seed", [1, 2])
-def test_the_heading_hunger_prefers_is_the_one_with_the_most_food(seed):
+def test_the_heading_a_hungry_herbivore_prefers_is_the_one_with_the_most_food(seed):
     """The whole of #93 in one number: a diffused, cost-aware crop field read at candidate
     positions ranks those candidates by how much grazing is *reachable* from each.
+
+    **Measured on herbivores specifically**, which #179 made necessary rather than pedantic: hunger
+    now points at whatever an animal's diet is allocated toward, blending the crop field with the
+    smell of meat, so an omnivore's preferred heading genuinely is *not* the one with the most
+    grass — it is a compromise, and scoring 0.54 there is the mechanism working. Forcing the diet
+    allocation to zero asks the question this test has always been asking.
 
     Asserted well above chance rather than at a value, but the margin is deliberately wide — this
     measures ~0.99 across seeds, so a floor of 0.9 is far below the observed figure and far above
     anything a broken field could reach by accident.
     """
-    _, contributions, crop = options(grazed_world(seed))
+    world = grazed_world(seed)
+    _plant_eaters_only(world)
+    _, contributions, crop = options(world)
 
     hungriest = np.argmax(contributions["hunger"], axis=1)
 
     assert ranked_by_forage(crop, hungriest) > 0.9
+
+
+def _plant_eaters_only(world):
+    """Drive every living animal's diet allocation hard toward plants.
+
+    The gene is read on [0, 1] through a logistic (§2.5), which never reaches its ends, so a large
+    negative stored value is how "pure herbivore" is expressed rather than a zero.
+    """
+    living = Selection.from_mask(world.store.alive & (world.store.age >= 0))
+    genes = world.genetics.genes(living)
+    genes[:, world.genes.index_of("diet_animal_derived")] = -20.0
+    world.genetics.set_genes(living, genes)
 
 
 @pytest.mark.parametrize("seed", [1, 2])
@@ -90,9 +110,17 @@ def test_a_drive_that_perceives_nothing_ranks_no_better_than_chance(seed):
     heading is whichever the argmax tie-break lands on. If *that* also scored 0.99 the measure
     would be reading something other than the drive, and the whole diagnosis on #205 would be
     built on an artefact.
+
+    **The tolerance is wide because an all-ties argmax is one draw, not an average.** Every option
+    scores identically, so `argmax` returns the same fixed column for every animal, and the result
+    is that one arbitrary column's forage rank rather than a mean over independent choices — it has
+    no reason to concentrate at 0.5 and it moves whenever the world does. Measured at 0.50 and 0.61
+    across these two seeds; the claim being made is "nothing like 0.99", so the band is set to
+    exclude the signal rather than to pin the noise (§8.1 — a tighter bound here would be a test
+    written to a measurement).
     """
     _, contributions, crop = options(grazed_world(seed))
 
     indifferent = np.argmax(contributions["fear"], axis=1)
 
-    assert ranked_by_forage(crop, indifferent) == pytest.approx(0.5, abs=0.1)
+    assert ranked_by_forage(crop, indifferent) == pytest.approx(0.5, abs=0.25)

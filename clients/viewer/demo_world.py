@@ -40,6 +40,8 @@ from core.ecology.diet import DietConfig
 from core.ecology.feeding import FeedingConfig
 from core.ecology.metabolism import MetabolismConfig
 from core.ecology.plants import PlantsConfig
+from core.ecology.carrion import CarrionConfig
+from core.ecology.predation import PredationConfig
 from core.genetics.expression import GeneticsConfig
 from core.genetics.registry import ExpressionMode, GeneSpec, Unit
 from core.world.diffusion import DiffusionConfig
@@ -372,6 +374,22 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
             # which in a world holding only plants is a strong pull toward herbivory — and that
             # pull is the point: nothing here declares these creatures herbivores.
             frontier_exponent=2.0,
+        ),
+        predation=PredationConfig(
+            # Half the mating range: reaching a mate is a meeting and reaching prey is a catch.
+            strike_range=1.0,
+            # Energy units taken out of an equally-sized victim at full flesh allocation. Set
+            # against a founder's 180 and a settled adult's ~50, so a committed carnivore kills a
+            # healthy grazer in one or two strikes rather than gnawing it for a dozen ticks — the
+            # force limit, deliberately an order of magnitude above `intake_rate`'s gut limit.
+            strike_power=60.0,
+        ),
+        carrion=CarrionConfig(
+            # A carcass loses a twentieth of itself per tick, so half of it is gone in ~14 ticks.
+            # Long enough that a predator eating at `intake_rate` can finish a kill it stays with,
+            # short enough that the ground does not fill with meat nobody claims — the two halves
+            # of "is a kill worth defending", tuned as one against `intake_rate` (§2.1).
+            decay_rate=0.05,
         ),
         feeding=FeedingConfig(
             # Chosen so a *naive* founder population is viable, which is a stricter and temporary

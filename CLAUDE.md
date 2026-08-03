@@ -511,6 +511,86 @@ by" hunger and no animal stands still merely because the drive that won has no m
   plant (a fruiting tree an animal returns to), and as a new issue rather than a retrofit.
   Nutrients are conserved exactly, across soil, standing biomass, and a ledger of what grazing has
   carried out of the field and decomposition has yet to return.
+- **Predation: killing and eating are two acts, and conflating them makes both impossible** —
+  settled in #179, which owned it, and it is what finally gave #185's carrion field a mass source.
+  Before it, every animal in every world was a grazer: `diet_animal_derived` was inherited and
+  expressed, and its animal half bought **nothing**, so an allocation away from plants was pure loss
+  and selection could only drive it to zero. Half of #102's encoding was unreachable, and with it
+  the whole reason cue space exists — an arms race needs something to run from.
+
+  ```
+  damage  = strike_power × (size / prey_size) × animal_share ** p     out of the victim's pool
+  carrion = damage                                                    onto the ground it fell on
+  meal    = intake_rate × size × animal_share                         grazed off that ground, later
+  ```
+
+  **The first build made a strike *be* a mouthful, and the measurement refuted it before the
+  reasoning did.** Over 2,000 ticks the flesh allocation fell from 0.50 to **0.04** — carnivory
+  selected out of the world entirely, in every world tried. A body is an order of magnitude larger
+  than a mouthful (~50 energy units against ~4), so killing took a dozen consecutive ticks of
+  contact that two moving animals never have, while the allocation charged its opportunity cost in
+  grass from the first tick. The trade could not pay at any sun.
+
+  Killing is bounded by **force** and eating by a **gut**, and nothing makes those one number. The
+  gap between them is not destroyed — it is the body lying on the ground, which is exactly the mass
+  source #185 was waiting for. So the two issues are one delivery rather than a dependency.
+
+  **A strike feeds the attacker nothing directly.** It eats by *standing on* the carcass and
+  grazing it, with the identical contended verb `Plants.graze` uses. Three things then exist that
+  nobody implemented: **scavenging**, a **reason to defend a kill** (a second animal on the same
+  cell takes a share), and the first real payoff for #100's `commitment` — a lineage too flighty to
+  hold a bearing kills and walks away from the meal.
+
+  **Damage follows the frontier, not the raw allocation**, and this is the sharper half of the
+  rule. `Feeding` deliberately does not scale a grazing mouthful by diet, because the only victim
+  of a wasted mouthful is the eater's own tick. A bite taken from another animal is different in
+  kind: the cost falls on a **third party**, so selection cannot correct it. Read linearly, every
+  grazer 7% allocated toward meat wounded whichever neighbour it stood beside, and the population
+  bled into the carrion field faster than anything could eat it — **35,000 energy units of meat
+  standing at 2,000 ticks** while the flesh allocation collapsed to 0.07. Pricing the weapon on
+  `share ** p` — the same convex curve #102 already prices the gut on — is what makes a half-hearted
+  predator harmless, and it is the general rule: **a trait whose cost lands on someone else must be
+  priced convexly, because the budget cannot bound it.**
+
+  **Size divides, so a big animal is hard to kill.** Free physics rather than an authored defence,
+  and it gives `size` its first benefit beyond a larger mouthful — until now it only ever charged
+  upkeep (#17), locomotion (#25) and turning inertia (#204). A predator/prey axis needs both
+  directions to be worth having.
+
+  **Nothing here decides a kill**, exactly as §2.5 settled when momentum shipped. There is no chase
+  resolution, no success probability, no trait ratio deciding an outcome: contact decides, getting
+  there is a pursuit fought out in `core.behaviour.movement`, and whether a wound is fatal is
+  `Ecology.starving` reading an empty pool. The cap at what the victim holds is the kill rule and
+  the multi-tick kill at once.
+
+  **Hunger points at whatever the diet is allocated toward**, blending the forage field with the
+  smell of meat — live animals through the cue field, carcasses through a diffusion of the carrion
+  mass by the plant field's own operator. So one drive steers a grazer to grass and a carnivore to
+  prey, and an omnivore genuinely splits its attention, which is the behavioural half of #102's
+  frontier. Answering #179's "how is prey located" with the cue field rather than sight (#24) keeps
+  this a one-system delivery; the consequence accepted is that **a predator cannot specialise on one
+  prey's signature**, because smell is a blend. An *appetite direction* in cue space — the mirror of
+  `aversion` — is the richer answer and stays open on #179.
+
+  **Measured, and the result is a negative worth recording** (§8.5).
+  [`docs/spikes/predation_viability.py`](docs/spikes/predation_viability.py): the world survives,
+  carrion cycles rather than accumulating, and the flesh allocation settles near **0.11–0.29**
+  instead of collapsing — but **no world produces a specialist carnivore.** Sweeping `strike_power`
+  over 60/200/600 and `decay_rate` over 0.05/0.15 raises the mean allocation (0.16 → 0.33) and
+  crushes the population (3,067 → 17); not one cell of that grid held a single animal above 0.7.
+
+  The likely cause is not a coefficient: **one interbreeding population cannot hold two strategies.**
+  `p > 1` makes the middle the worst place to be, so a herbivore and a carnivore lineage should
+  separate — but every generation recombines them straight back into it. What predation is missing
+  is **reproductive isolation**, which is #16. That is the design's own claim arriving as a
+  measurement rather than an argument: a trophic pyramid needs speciation, and speciation is
+  deferred until a world can be watched. Recorded on #179 rather than tuned around.
+
+  **A consequence for #216**: the forecast now over-predicts by roughly **10×** (5,361 against 521
+  living at 700 ticks), because it divides field production by per-animal upkeep and predation opens
+  a second exit — energy into carrion that rots having fed nobody. The model needs a predation drain
+  term; filed rather than fixed here (§7.2).
+
 - **Foraging perception is a diffused field; foraging *choice* is the gradient of it** — decided in
   #93, which owned it. `core.world.diffusion.CostAwareDiffusion` spreads standing crop over the
   terrain, so every cell holds how much grazing is *reachable* from it, and a forager reads a

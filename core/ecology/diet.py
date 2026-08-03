@@ -121,3 +121,28 @@ class Diet:
         """
         plant_share = 1.0 - phenotype[:, self.animal_derived_index]
         return np.power(plant_share, self.config.frontier_exponent, dtype=np.float32)
+
+    def animal_share(self, phenotype: np.ndarray) -> np.ndarray:
+        """(n,) float32, dimensionless in [0, 1]: how much of the feeding effort goes to flesh.
+
+        The allocation itself, not the frontier. Predation reads this to size a *strike* while
+        reading `animal_efficiency` to size the *meal*, and the two are deliberately different
+        questions — see `core.ecology.predation` for why a bite is gated where a mouthful of grass
+        is not.
+        """
+        return phenotype[:, self.animal_derived_index].astype(np.float32)
+
+    def animal_efficiency(self, phenotype: np.ndarray) -> np.ndarray:
+        """(n,) float32, dimensionless in [0, 1]: what fraction of eaten flesh converts.
+
+        The mirror of `plant_efficiency` across the one branch the stick-breaking tree has, and the
+        thing that finally makes `diet_animal_derived` mean something in both directions (#179).
+        Until this existed the gene was charged nothing and bought nothing on its animal half: an
+        allocation away from plants was pure loss, so selection could only ever drive it to zero.
+
+        Bounded by [0, 1] structurally, for the identical reason `plant_efficiency` is: the
+        allocation it reads is, and the exponent exceeds 1. A conversion above 1 would mint energy
+        out of a carcass, and there is no branch here that could fail to prevent it (§6).
+        """
+        animal_share = phenotype[:, self.animal_derived_index]
+        return np.power(animal_share, self.config.frontier_exponent, dtype=np.float32)

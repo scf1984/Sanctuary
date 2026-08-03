@@ -73,6 +73,7 @@ from core.behaviour.exertion import Exertion, ExertionConfig
 from core.behaviour.movement import Movement, MovementConfig
 from core.behaviour.service import Behaviour, BehaviourConfig
 from core.ecology.aging import Aging
+from core.ecology.carrion import Carrion, CarrionConfig
 from core.ecology.conception import Conception, ConceptionConfig
 from core.ecology.cues import CueField, CueFieldConfig, Scent, ScentGenes
 from core.ecology.death import Death
@@ -80,6 +81,7 @@ from core.ecology.diet import Diet, DietConfig
 from core.ecology.feeding import Feeding, FeedingConfig
 from core.ecology.metabolism import Metabolism, MetabolismConfig
 from core.ecology.plants import Plants, PlantsConfig
+from core.ecology.predation import Predation, PredationConfig
 from core.ecology.service import Ecology
 from core.entities.growth import GrowthConfig
 from core.entities.store import EntityStore
@@ -99,12 +101,15 @@ TICK_ORDER: tuple[str, ...] = (
     "plant_growth",
     "cue_field_rebuild",
     "forage_field_rebuild",
+    "carrion_scent_rebuild",
     "drive_scoring",
     "movement",
     "exertion_recovery",
     "feeding",
+    "predation",
     "metabolic_upkeep",
     "death",
+    "decomposition",
     "age_increment",
     "conception",
 )
@@ -149,6 +154,8 @@ class WorldConfig:
     conception: ConceptionConfig
     diet: DietConfig
     feeding: FeedingConfig
+    predation: PredationConfig
+    carrion: CarrionConfig
     cue_field: CueFieldConfig
     metabolism: MetabolismConfig
     genetics: GeneticsConfig
@@ -205,6 +212,8 @@ class World:
     genetics: Genetics
     ecology: Ecology
     feeding: Feeding
+    predation: Predation
+    carrion: Carrion
     death: Death
     conception: Conception
     exertion: Exertion
@@ -265,14 +274,13 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
         Metabolism(genes, config.metabolism),
         plants,
     )
-    feeding = Feeding(
-        store,
-        plants,
-        genetics,
-        ecology,
-        Diet(genes, config.diet),
-        genes,
-        config.feeding,
+    # One `Diet` for both halves of the allocation: grazing reads its plant side and predation its
+    # animal side, and two instances would be two readings of one gene that could disagree.
+    diet = Diet(genes, config.diet)
+    carrion = Carrion(terrain, plants, config.carrion)
+    feeding = Feeding(store, plants, carrion, genetics, ecology, diet, genes, config.feeding)
+    predation = Predation(
+        store, ecology, genetics, carrion, diet, genes, config.feeding, config.predation
     )
     death = Death(store, ecology)
     conception = Conception(store, ecology, genetics, genes, config.conception)
@@ -292,7 +300,9 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
         config.scent_genes,
     )
 
-    hunger = Hunger(store, ecology, genetics, plants, genes, config.hunger)
+    hunger = Hunger(
+        store, ecology, genetics, plants, carrion, scent, diet, genes, config.hunger
+    )
     drives = (
         hunger,
         Thirst(store, climate, genetics, genes, config.thirst),
@@ -328,6 +338,8 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
         exertion,
         ecology,
         feeding,
+        predation,
+        carrion,
         death,
         aging,
         conception,
@@ -360,6 +372,8 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
         genetics=genetics,
         ecology=ecology,
         feeding=feeding,
+        predation=predation,
+        carrion=carrion,
         death=death,
         conception=conception,
         exertion=exertion,
@@ -405,6 +419,8 @@ def _build_systems(
     exertion: Exertion,
     ecology: Ecology,
     feeding: Feeding,
+    predation: Predation,
+    carrion: Carrion,
     death: Death,
     aging: Aging,
     conception: Conception,
@@ -461,8 +477,11 @@ def _build_systems(
         "movement": move_chosen,
         "exertion_recovery": lambda: exertion.recover(living()),
         "feeding": lambda: feeding.feed(living()),
+        "predation": lambda: predation.strike(living(), rng),
         "metabolic_upkeep": lambda: ecology.drain(living()),
         "death": lambda: death.reap(living()),
+        "carrion_scent_rebuild": lambda: carrion.rebuild_scent(),
+        "decomposition": lambda: carrion.decompose(),
         "age_increment": lambda: aging.advance(gestating_or_living()),
         "conception": lambda: conception.conceive(living(), rng),
     }

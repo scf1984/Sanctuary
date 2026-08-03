@@ -14,7 +14,7 @@ import numpy as np
 # from a schema that never shipped would be untestable by construction. What *is* here is the
 # refusal — an unknown version raises rather than being read hopefully, which is what makes the
 # first real migration a change to this module rather than an archaeology exercise.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # Every array the world cannot recompute. Terrain, water, the cue field and the forage field are
 # all pure functions of the config or of the state below, so storing them would be storing a
@@ -96,6 +96,10 @@ def save(world, path: Path) -> Path:
     arrays["species_masks"] = world.species.mask_table()
     arrays["plants.biomass"] = world.plants.biomass
     arrays["plants.soil_nutrients"] = world.plants.soil_nutrients
+    # Carrion mass is state, not a derivation: a body on the ground is the record of a kill
+    # that already happened and nothing can recompute where it fell (§3.2). Its `scent` is
+    # derived from it every tick and is therefore deliberately absent.
+    arrays["carrion.mass"] = world.carrion.mass
     np.savez(path, meta=np.array(json.dumps(meta)), **arrays)
     return path
 
@@ -125,6 +129,7 @@ def load(world, path: Path) -> None:
         world.species.restore(archive["species_masks"])
         world.plants.biomass[...] = archive["plants.biomass"]
         world.plants.soil_nutrients[...] = archive["plants.soil_nutrients"]
+        world.carrion.mass[...] = archive["carrion.mass"]
 
     world.plants.exported_nutrients = meta["exported_nutrients"]
     world.plants.rebuild_forage()

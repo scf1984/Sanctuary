@@ -120,32 +120,38 @@ class TestItRefusesWhatItCannotAnswer:
 
 
 class TestHowCloseItGets:
-    """The measurement that says how far to trust it, and the reason this is not a formula.
+    """What the forecast is still true about, and what predation took away from it.
 
-    Measured across a fourfold range of sunlight on two seeds
-    (`docs/spikes/forecast_accuracy.py`): +18% at a quarter sun, +4-5% at the shipped one, and
-    +1% to -3% at double. Systematic rather than noisy — in a sparse world animals travel further
-    to eat, so both the capture fraction and the real upkeep exceed what a founding population
-    implies.
+    The model was measured on a world of pure grazers and landed within 5% (`docs/spikes/
+    forecast_accuracy.py`). #179 broke that, and not by a little: with predation running, a settled
+    world reaches **about a tenth** of the forecast — 521 living against 5,361 at 700 ticks.
 
-    The bound below is deliberately much looser than the observed error. It is a guard against the
-    model being *wrong* — off by a factor rather than by a fifth — not a pin on a number that
-    §2.2 makes non-deterministic anyway. A tight bound here would be a test written to a
-    measurement rather than to a contract (§8.1).
+    The reason is structural rather than a mis-tuned coefficient. The forecast divides the field's
+    production by what one animal costs to keep alive, which assumes every captured unit of energy
+    ends up paying upkeep. Predation opens a second exit: a strike moves energy out of an animal
+    into carrion, and whatever is not scavenged before it rots goes back to the soil having fed
+    nobody. The whole of that drain is missing from the model.
+
+    Fixing it belongs to #216, which owns the forecast (§7.2), so what is asserted here is the half
+    that survives: **it is a ceiling, and a world stays under it.** That is still worth pinning —
+    a world exceeding its own production forecast would mean energy arriving from somewhere the
+    ledger does not know about.
     """
 
-    def test_a_settled_world_lands_near_its_forecast(self):
-        """Two hundred founders and seven hundred ticks, which is what the spike measured against —
-        a *capacity* is a ceiling a world climbs toward, and a young one sits well below it through
-        no fault of the model. Sixty founders at five hundred ticks reach about 970 against a
-        forecast of 5,557, and that gap is arrival time rather than error."""
+    def test_a_settled_world_stays_under_its_forecast(self):
+        """Two hundred founders and seven hundred ticks, which is what the spike measured against.
+
+        The lower bound is deliberately far below the observed tenth: this is a guard against the
+        model inverting, not a pin on a number that #216 is expected to move once the predation
+        drain is in it (§8.1).
+        """
         built = build_demo_world(seed=1, n_entities=200)
         predicted = forecast(built).carrying_capacity
 
         built.loop.advance(700)
         actual = len(Selection.from_mask(built.store.alive & (built.store.age >= 0)))
 
-        assert 0.6 < actual / predicted < 1.6, (
-            f"forecast {predicted:.0f} against {actual} living: the model is wrong by a factor, "
-            "not by a margin"
+        assert 0.0 < actual / predicted < 1.0, (
+            f"forecast {predicted:.0f} against {actual} living: a world above its own production "
+            "forecast is energy from outside the ledger"
         )

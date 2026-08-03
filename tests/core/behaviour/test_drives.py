@@ -17,6 +17,8 @@ from core.behaviour.drives import (
 )
 from core.behaviour.exertion import Exertion, ExertionConfig
 from core.behaviour.service import Behaviour, BehaviourConfig
+from core.ecology.carrion import Carrion, CarrionConfig
+from core.ecology.diet import Diet, DietConfig
 from core.ecology.cues import CueField, CueFieldConfig, Scent, ScentGenes
 from core.ecology.metabolism import Metabolism, MetabolismConfig
 from core.ecology.plants import Plants, PlantsConfig
@@ -56,6 +58,8 @@ GENE_NAMES = (
     "choice_temperature",
     "commitment",
     "maturity_age",
+    # Hunger points at whatever the diet is allocated toward (#179), so it resolves this gene.
+    "diet_animal_derived",
     "hunger_weight",
     "thirst_weight",
     "fear_weight",
@@ -191,6 +195,11 @@ class World:
         self.scent = Scent(
             self.store, self.genetics, self.cue_field, self.genes, SCENT_GENES
         )
+        self.carrion = Carrion(self.terrain, self.plants, CarrionConfig(decay_rate=0.1))
+        self.diet = Diet(
+            self.genes,
+            DietConfig(animal_derived_gene="diet_animal_derived", frontier_exponent=2.0),
+        )
         self.species_id = self.species.register(GENE_NAMES)
 
     def spawn(self, n, **columns):
@@ -213,10 +222,17 @@ def gene_rows(*rows):
 
     Drive weights default to 1.0 rather than 0: they are genes now (#23) and a zero weight is an
     animal that wants nothing, which is not the neutral starting point these fixtures assume.
+
+    The diet allocation defaults hard toward plants for the same reason. Hunger points at whatever
+    an animal is allocated toward (#179), and a zeroed gene reads as 0.5 through the logistic — a
+    perfect omnivore, half of whose appetite is for meat. These fixtures were written to ask
+    questions about grazing, so a herbivore is their neutral starting point; a test about meat says
+    so by setting the gene.
     """
     matrix = np.zeros((len(rows), len(GENE_NAMES)), dtype=np.float32)
     for drive in ("hunger", "thirst", "fear", "lust", "fatigue"):
         matrix[:, GENE_NAMES.index(f"{drive}_weight")] = 1.0
+    matrix[:, GENE_NAMES.index("diet_animal_derived")] = -20.0
     for i, genes in enumerate(rows):
         for name, value in genes.items():
             matrix[i, GENE_NAMES.index(name)] = value
@@ -228,7 +244,7 @@ class TestHungerScore:
         world = World()
         selection = world.spawn(3, energy=np.array([100.0, 50.0, 0.0], dtype=np.float32))
         hunger = Hunger(
-            world.store, world.ecology, world.genetics, world.plants, world.genes,
+            world.store, world.ecology, world.genetics, world.plants, world.carrion, world.scent, world.diet, world.genes,
             HUNGER_CONFIG,
         )
 
@@ -241,7 +257,7 @@ class TestHungerScore:
         world = World()
         selection = world.spawn(1, energy=np.array([500.0], dtype=np.float32))
         hunger = Hunger(
-            world.store, world.ecology, world.genetics, world.plants, world.genes,
+            world.store, world.ecology, world.genetics, world.plants, world.carrion, world.scent, world.diet, world.genes,
             HUNGER_CONFIG,
         )
 
@@ -262,7 +278,7 @@ class TestHungerScore:
             sight_gene="sight",
         )
         hunger = Hunger(
-            world.store, world.ecology, world.genetics, world.plants, world.genes, config
+            world.store, world.ecology, world.genetics, world.plants, world.carrion, world.scent, world.diet, world.genes, config
         )
 
         assert hunger.urgency(selection) == pytest.approx([3.0, 1.0])
@@ -311,6 +327,9 @@ class TestHungerAppeal:
             world.ecology,
             world.genetics,
             world.plants,
+            world.carrion,
+            world.scent,
+            world.diet,
             world.genes,
             config or HUNGER_CONFIG,
         )
@@ -850,7 +869,7 @@ def register_four(world):
     """Hunger, thirst, lust and fatigue against one world, at equal weight."""
     world.behaviour.register(
         Hunger(
-            world.store, world.ecology, world.genetics, world.plants, world.genes, HUNGER_CONFIG
+            world.store, world.ecology, world.genetics, world.plants, world.carrion, world.scent, world.diet, world.genes, HUNGER_CONFIG
         )
     )
     world.behaviour.register(
@@ -943,7 +962,7 @@ class TestDrivesCompeting:
         world.plants.biomass[:] = 0.0
         world.behaviour.register(
             Hunger(
-                world.store, world.ecology, world.genetics, world.plants, world.genes,
+                world.store, world.ecology, world.genetics, world.plants, world.carrion, world.scent, world.diet, world.genes,
                 HUNGER_CONFIG,
             )
         )
@@ -1374,7 +1393,7 @@ class TestAllFiveDrivesCompeting:
     def register_all(self, world):
         world.behaviour.register(
             Hunger(
-                world.store, world.ecology, world.genetics, world.plants, world.genes,
+                world.store, world.ecology, world.genetics, world.plants, world.carrion, world.scent, world.diet, world.genes,
                 HUNGER_CONFIG,
             )
         )

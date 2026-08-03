@@ -189,6 +189,42 @@ class Ecology(DomainService):
         self.write("energy", donors, available - energy)
         self.write("energy", recipients, self.energy(recipients) + energy)
 
+    def kill(self, rows: np.ndarray, damage: np.ndarray) -> np.ndarray:
+        """Take `damage` out of each row's pool without crediting it anywhere; return what was taken.
+
+        Addressed by **row index** rather than by `Selection`, because predation pairs an attacker
+        with a victim by *position* and a mask carries no order — the defect #191 hit on
+        `Genetics.inherit` and fixed the same way.
+
+        This is the fourth thing that can happen to the pool, and it is none of the other three.
+        `spend` destroys energy and excretes the nutrients it was carried in (#21); `gain` is income
+        from outside; `transfer` moves energy between pools losslessly (#20). A kill *removes* it
+        from the animal without destroying it and without handing it to anybody — the flesh is
+        still there, it is simply no longer alive. `core.ecology.predation` hands the same quantity
+        to the carrion field in the same tick, which is what makes that true rather than a leak.
+
+        **Nothing is excreted here**, deliberately, and that is what distinguishes this from
+        `spend`. What a body loses to a wound is not respired: it lies on the ground as meat, still
+        outstanding on `Plants.exported_nutrients` exactly as it was while alive, and it is
+        `Carrion.decompose` that finally pays it back. Excreting it here *and* depositing it would
+        return the same nutrients twice, which is the double entry §2.5's closed loop cannot
+        survive (§6).
+
+        Returns `(n,) float32, energy units` — what each row actually lost, capped at what it held,
+        because a body cannot yield more than it is. **That cap is the kill rule and the multi-tick
+        kill at once**: a strike larger than the victim's whole pool simply empties it, and a
+        smaller one leaves a wounded animal to be finished later. Nothing decides "does it die" —
+        `Ecology.starving` reads an empty pool and `Death` frees the row, both already in the tick.
+        """
+        damage = np.asarray(damage, dtype=np.float32)
+        if np.any(damage < 0.0):
+            raise ValueError(
+                "kill() removes energy and cannot be negative; a wound that heals is not this"
+            )
+        taken = np.minimum(self.store.energy[rows], damage).astype(np.float32)
+        self.write_at("energy", rows, self.store.energy[rows] - taken)
+        return taken
+
     def starving(self, selection: Selection) -> Selection:
         """The entities in `selection` whose pool has run out — energy at or below zero.
 

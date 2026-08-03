@@ -13,6 +13,7 @@ locked in by `tests/core/ecology/test_grazing_equilibrium.py`.
 import numpy as np
 import pytest
 
+from core.ecology.carrion import Carrion, CarrionConfig
 from core.ecology.diet import Diet, DietConfig
 from core.ecology.feeding import Feeding, FeedingConfig
 from core.ecology.metabolism import Metabolism, MetabolismConfig
@@ -92,9 +93,11 @@ def make_world(intake_rate=1.0, assimilation_max=0.6, frontier_exponent=2.0, set
             animal_derived_gene="diet_animal_derived", frontier_exponent=frontier_exponent
         ),
     )
+    carrion = Carrion(terrain, plants, CarrionConfig(decay_rate=0.1))
     feeding = Feeding(
         store,
         plants,
+        carrion,
         genetics,
         ecology,
         diet,
