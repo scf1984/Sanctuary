@@ -1,14 +1,16 @@
 """One walk over this repository's Python sources, and one way to read them.
 
-Both checks in this directory ask "does any file under X do Y?", and both got the same two things
-wrong in the same way, because the second was written by copying the first (#88): each decoded
-source with the *locale's* encoding, which is cp1252 on Windows and raises on the first byte that
-codepage cannot map, and the legacy check walked the entire repository including virtualenvs. CI
-never saw either, since Linux's locale encoding is already UTF-8 and the runner has no virtualenv
-in the tree.
+A check in this directory asks "does any file under X do Y?", and the two that existed when this
+module was written got the same two things wrong in the same way, because the second was written by
+copying the first (#88): each decoded source with the *locale's* encoding, which is cp1252 on
+Windows and raises on the first byte that codepage cannot map, and one of them walked the entire
+repository including virtualenvs. CI never saw either, since Linux's locale encoding is already
+UTF-8 and the runner has no virtualenv in the tree.
 
-The reason to share the walk rather than fix it twice is that fixing it twice leaves the next
-check to be written by copying one of them, and inheriting the third copy of the bug.
+The reason to share the walk rather than fix it per check is that fixing it twice leaves the next
+check to be written by copying one of them, and inheriting the third copy of the bug. Only one
+caller remains (#220 deleted the other), and this stays shared for exactly that reason: it is the
+landing place for the next one, not indirection over a single use.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 
-def iter_source_files(root: Path, skip_names: frozenset[str] = frozenset()) -> Iterator[Path]:
+def iter_source_files(root: Path) -> Iterator[Path]:
     """Every `.py` file under `root` that is part of this project, in sorted path order.
 
     Sorted so that a failing run names its offences in the same sequence twice, which is what
@@ -38,8 +40,6 @@ def iter_source_files(root: Path, skip_names: frozenset[str] = frozenset()) -> I
       not match it, and `venv/` without the leading dot is as common a convention as `.venv/`.
 
     skip_names: directories the caller excludes as a matter of *project rule* rather than
-        environment hygiene — `legacy/` for the legacy-import check, which must not scan the
-        prototype it exists to quarantine.
     """
     for directory, subdirectories, filenames in root.walk():
         # Assigning into the slice is what prunes the walk: `Path.walk` reads this list to decide
@@ -49,7 +49,6 @@ def iter_source_files(root: Path, skip_names: frozenset[str] = frozenset()) -> I
             name
             for name in subdirectories
             if not name.startswith(".")
-            and name not in skip_names
             and not (directory / name / "pyvenv.cfg").exists()
         )
         for filename in sorted(filenames):
