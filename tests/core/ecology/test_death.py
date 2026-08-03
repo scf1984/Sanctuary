@@ -32,6 +32,7 @@ GENE_NAMES = ("size", "insulation", "mutability")
 GENE_REGISTRY = gene_registry(GENE_NAMES, {"insulation": 1.0})
 GENETICS_CONFIG = GeneticsConfig(mutability_gene="mutability", drift_margin=2.0)
 METABOLISM_CONFIG = MetabolismConfig(
+    dehydration_penalty=0.0,
     basal_rate=1.0,
     thermoregulation_rate=0.5,
     neutral_temperature=20.0,

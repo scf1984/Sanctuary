@@ -18,6 +18,7 @@ from core.behaviour.drives import (
 from core.behaviour.exertion import Exertion, ExertionConfig
 from core.behaviour.service import Behaviour, BehaviourConfig
 from core.ecology.carrion import Carrion, CarrionConfig
+from core.ecology.hydration import Hydration, HydrationConfig
 from core.ecology.diet import Diet, DietConfig
 from core.ecology.cues import CueField, CueFieldConfig, Scent, ScentGenes
 from core.ecology.metabolism import Metabolism, MetabolismConfig
@@ -67,6 +68,14 @@ GENE_NAMES = (
     "fatigue_weight",
 )
 GENE_REGISTRY = gene_registry(GENE_NAMES, {"size": 2.0, "speed": 3.0, "sight": 1.0, "insulation": 1.0, "scent_acuity": 0.5})
+HYDRATION_CONFIG = HydrationConfig(
+    loss_rate=0.05,
+    heat_scaling=0.0,
+    neutral_temperature=20.0,
+    drink_rate=0.5,
+    reachability=DiffusionConfig(range=4.0, climb_penalty=0.5),
+)
+THIRST_CONFIG = ThirstConfig(weight_gene="thirst_weight", detection_threshold=1e-6)
 SCENT_GENES = ScentGenes(emission_gene="scent_emission", signature_genes=SIGNATURE_GENES)
 
 # Fatigue grades travelling options rather than vetoing them (#207). These are the shipped world's
@@ -84,6 +93,7 @@ GENETICS_CONFIG = GeneticsConfig(
 )
 
 METABOLISM_CONFIG = MetabolismConfig(
+    dehydration_penalty=0.0,
     basal_rate=1.0,
     thermoregulation_rate=0.5,
     neutral_temperature=20.0,
@@ -196,6 +206,14 @@ class World:
             self.store, self.genetics, self.cue_field, self.genes, SCENT_GENES
         )
         self.carrion = Carrion(self.terrain, self.plants, CarrionConfig(decay_rate=0.1))
+        self.hydration = Hydration(
+            self.store,
+            self.columns,
+            self.terrain,
+            self.climate,
+            self.water,
+            HYDRATION_CONFIG,
+        )
         self.diet = Diet(
             self.genes,
             DietConfig(animal_derived_gene="diet_animal_derived", frontier_exponent=2.0),
@@ -532,69 +550,75 @@ class TestHungerAppeal:
 
 
 class TestThirst:
-    def test_thirst_rises_with_ambient_heat(self):
-        config = ThirstConfig(weight_gene="thirst_weight", onset_temperature=20.0, saturation_temperature=40.0)
+    """Urgency is the deficit and appeal is the water field — both new in #156.
 
-        scores = []
-        for temperature in (15.0, 30.0, 50.0):
-            world = World(temperature=temperature)
-            selection = world.spawn(1)
-            scores.append(Thirst(world.store, world.climate, world.genetics, world.genes, config).urgency(selection)[0])
+    What these replace is worth stating, because the old tests were *correct about the old
+    contract*: thirst scored ambient heat and returned a flat appeal, so it wanted water it could
+    not find and could not have drunk if it had. Heat is not deleted — it moved to
+    `HydrationConfig` as the scaling on water *loss*, which is where `test_heat_dries_an_animal_
+    faster` now asserts it (tests/core/ecology/test_hydration.py).
+    """
 
-        # Below onset, halfway up the span, and clamped at saturation.
-        assert scores == pytest.approx([0.0, 0.5, 1.0])
+    def test_urgency_is_how_much_water_has_been_lost(self):
+        world = World()
+        selection = world.spawn(3)
+        world.store.dehydration[selection.to_indices()] = [0.0, 0.5, 1.0]
 
-    def test_thirst_is_read_at_each_entitys_own_position(self):
-        """The climate field is what makes hot ground push animals toward water, so two members of
-        one species in different places must want different things.
-        """
-        world = World(grid=21, cell_size=1.0)
-        world.climate = Climate(
-            world.terrain,
-            ClimateConfig(equator_y=0.0, equator_temperature=40.0, latitude_gradient=1.0),
-        )
-        selection = world.spawn(
-            2,
-            x=np.array([0.0, 0.0], dtype=np.float32),
-            y=np.array([0.0, 20.0], dtype=np.float32),
-        )
-        config = ThirstConfig(weight_gene="thirst_weight", onset_temperature=20.0, saturation_temperature=40.0)
-
-        scores = Thirst(world.store, world.climate, world.genetics, world.genes, config).urgency(selection)
-
-        # y=0 sits at 40 degC (saturated); y=20 sits at 20 degC, exactly at onset.
-        assert scores == pytest.approx([1.0, 0.0])
-
-    def test_saturation_must_exceed_onset(self):
-        with pytest.raises(ValueError):
-            ThirstConfig(weight_gene="thirst_weight", onset_temperature=30.0, saturation_temperature=30.0)
-
-    def test_thirst_rates_every_option_alike_because_nothing_can_find_water(self):
-        """A drive with no perception is *indifferent*, which is the whole of #126's fix.
-
-        Before #114 a thirsty animal in a world with no drinking mechanic won the argmax and then
-        stood still, and nothing said so — the first assembled world had all forty founders wanting
-        water and not one moved for the entire run. Now thirst still registers its appetite in the
-        breakdown, but a flat appeal shifts no ranking, so whichever drive *can* perceive something
-        decides. #156 replaces this with a reading of `Water.depth` at each candidate.
-        """
-        world = World(temperature=30.0)
-        selection = world.spawn(2, x=np.float32([4.0, 4.0]), y=np.float32([4.0, 4.0]))
         thirst = Thirst(
+            world.store, world.hydration, world.genetics, world.genes, THIRST_CONFIG
+        )
+
+        assert thirst.urgency(selection) == pytest.approx([0.0, 0.5, 1.0])
+
+    def test_urgency_needs_no_satiation_constant(self):
+        """Unlike hunger's pool, the column is already a fraction — how dry you are *is* how much
+        you want to drink, so there is no second number deciding what "thirsty" means."""
+        assert not hasattr(THIRST_CONFIG, "satiation")
+
+    def test_a_thirsty_animal_prefers_the_heading_with_more_water(self):
+        """The half that did not exist at all. A flat appeal cannot steer, and #114's whole
+        argument is that a drive which perceives nothing degrades to indifference rather than to
+        paralysis — so thirst was safe, and useless."""
+        world = World()
+        world.water.depth[:, :2] = 3.0
+        world.hydration = Hydration(
             world.store,
+            ColumnRegistry(),
+            world.terrain,
             world.climate,
-            world.genetics,
-            world.genes,
-            ThirstConfig(weight_gene="thirst_weight", onset_temperature=20.0, saturation_temperature=40.0),
+            world.water,
+            HYDRATION_CONFIG,
+        )
+        selection = world.spawn(4, x=np.float32([4.0] * 4), y=np.float32([4.0] * 4))
+        thirst = Thirst(
+            world.store, world.hydration, world.genetics, world.genes, THIRST_CONFIG
         )
         x, y = options_at(world, selection)
 
         appeal = thirst.appeal(selection, x, y)
 
-        assert appeal.shape == (2, 3)
-        assert appeal == pytest.approx(np.ones((2, 3)))
-        # Thirsty — so the flatness is a statement about direction, not about the appetite.
-        assert thirst.urgency(selection) == pytest.approx([0.5, 0.5])
+        assert (appeal[:, WEST] > appeal[:, EAST]).all()
+
+    def test_an_animal_that_detects_no_water_ranks_every_option_at_zero(self):
+        """All zeros rather than a flat non-zero: thirst then drops out of the summed utility
+        entirely, instead of pushing whichever way the numerical noise leaned."""
+        world = World()
+        selection = world.spawn(2, x=np.float32([4.0, 4.0]), y=np.float32([4.0, 4.0]))
+        world.store.dehydration[selection.to_indices()] = 1.0
+        thirst = Thirst(
+            world.store, world.hydration, world.genetics, world.genes, THIRST_CONFIG
+        )
+        x, y = options_at(world, selection)
+
+        appeal = thirst.appeal(selection, x, y)
+
+        assert appeal == pytest.approx(np.zeros((2, 3)))
+        # Parched — so the flatness is a statement about direction, not about the appetite.
+        assert thirst.urgency(selection) == pytest.approx([1.0, 1.0])
+
+    def test_a_threshold_that_finds_everything_is_refused(self):
+        with pytest.raises(ValueError, match="detection_threshold"):
+            ThirstConfig(weight_gene="thirst_weight", detection_threshold=0.0)
 
 
 class TestLust:
@@ -875,10 +899,10 @@ def register_four(world):
     world.behaviour.register(
         Thirst(
             world.store,
-            world.climate,
+            world.hydration,
             world.genetics,
             world.genes,
-            ThirstConfig(weight_gene="thirst_weight", onset_temperature=25.0, saturation_temperature=40.0),
+            THIRST_CONFIG,
         )
     )
     world.behaviour.register(
@@ -1400,10 +1424,10 @@ class TestAllFiveDrivesCompeting:
         world.behaviour.register(
             Thirst(
                 world.store,
-                world.climate,
+                world.hydration,
                 world.genetics,
                 world.genes,
-                ThirstConfig(weight_gene="thirst_weight", onset_temperature=25.0, saturation_temperature=40.0),
+                THIRST_CONFIG,
             )
         )
         world.behaviour.register(world.fear())

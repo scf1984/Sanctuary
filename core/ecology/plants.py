@@ -231,7 +231,7 @@ class Plants:
         interpolated read would promise a grazer biomass drawn from four cells while `graze`
         depletes one, so the amount an animal can see and the amount it can eat would disagree.
         """
-        rows, cols = self._cell_indices(x, y)
+        rows, cols = self.terrain.cell_indices(x, y)
         return self.biomass[rows, cols]
 
     def graze(self, x: np.ndarray, y: np.ndarray, demand: np.ndarray) -> np.ndarray:
@@ -253,7 +253,7 @@ class Plants:
         if np.any(demand < 0):
             raise ValueError("grazing demand must be non-negative")
 
-        rows, cols = self._cell_indices(x, y)
+        rows, cols = self.terrain.cell_indices(x, y)
         n_cells = self.biomass.size
         flat_cell = rows * self.biomass.shape[1] + cols
 
@@ -325,7 +325,7 @@ class Plants:
                 f"against {self.exported_nutrients} outstanding"
             )
 
-        rows, cols = self._cell_indices(x, y)
+        rows, cols = self.terrain.cell_indices(x, y)
         flat_cell = rows * self.soil_nutrients.shape[1] + cols
         deposited = np.zeros(self.soil_nutrients.size, dtype=np.float64)
         np.add.at(deposited, flat_cell, biomass * self.config.nutrient_per_biomass)
@@ -376,13 +376,13 @@ class Plants:
         """The forage field's value at each ``(x, y)``, in the field's own units.
 
         Accepts any shape, because #114 samples a whole block of candidate options at once —
-        ``(n_entities, n_options)`` — and `_cell_indices` is elementwise, so one call serves the
+        ``(n_entities, n_options)`` — and `cell_indices` is elementwise, so one call serves the
         whole population's whole option set rather than one call per option (§2.3).
 
         Sampled to the containing cell rather than interpolated, matching `biomass_at`: a forager
         that walks there will graze *that* cell, so what it can see and what it can eat agree.
         """
-        rows, cols = self._cell_indices(x, y)
+        rows, cols = self.terrain.cell_indices(x, y)
         return field[rows, cols]
 
     def total_nutrients(self) -> float:
@@ -394,27 +394,6 @@ class Plants:
         """
         bound = float(self.biomass.sum()) * self.config.nutrient_per_biomass
         return float(self.soil_nutrients.sum()) + bound + self.exported_nutrients
-
-    def _cell_indices(self, x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """Grid (row, col) of the cell containing each world position.
-
-        Raises ValueError outside the world, matching `core.world.terrain.bilinear_sample` — a
-        position off the map is a bug in whatever moved the entity, and defaulting it to an edge
-        cell would let animals graze a border strip forever (§8.7).
-        """
-        x = np.asarray(x, dtype=np.float64)
-        y = np.asarray(y, dtype=np.float64)
-        width = self.terrain.world_width
-        height = self.terrain.world_height
-        if not (np.all((x >= 0) & (x <= width)) and np.all((y >= 0) & (y <= height))):
-            raise ValueError("position outside terrain bounds")
-
-        cell_size = self.terrain.cell_size
-        # floor(v + 0.5) rather than np.round: round() is banker's rounding, so a position exactly
-        # on a cell boundary would land in different cells depending on the boundary's parity.
-        cols = np.floor(x / cell_size + 0.5).astype(np.int64)
-        rows = np.floor(y / cell_size + 0.5).astype(np.int64)
-        return rows, cols
 
 
 def _insolation(terrain: Terrain, climate: Climate, config: PlantsConfig) -> np.ndarray:

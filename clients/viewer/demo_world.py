@@ -38,6 +38,7 @@ from core.entities.growth import GrowthConfig
 from core.ecology.cues import CueFieldConfig, ScentGenes
 from core.ecology.diet import DietConfig
 from core.ecology.feeding import FeedingConfig
+from core.ecology.hydration import HydrationConfig
 from core.ecology.metabolism import MetabolismConfig
 from core.ecology.plants import PlantsConfig
 from core.ecology.carrion import CarrionConfig
@@ -384,6 +385,23 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
             # force limit, deliberately an order of magnitude above `intake_rate`'s gut limit.
             strike_power=60.0,
         ),
+        hydration=HydrationConfig(
+            # A fraction of its reserve an animal loses per tick in neutral air. At 0.004 a full
+            # animal is dry in ~250 ticks of never drinking, against a ~1,000-tick lifespan — so
+            # water is a regular errand rather than a background hum or an emergency.
+            loss_rate=0.004,
+            # Per degree above neutral. At 20 degrees over, loss doubles: a hot valley is a place
+            # you must leave to drink, which is what makes climate shape where a herd lives.
+            heat_scaling=0.05,
+            neutral_temperature=20.0,
+            # Twenty-five times the neutral loss rate, so a drink takes ~10 ticks from bone dry.
+            # Long enough that the water's edge is a place a predator can find you (#179), short
+            # enough that drinking is not most of a life. Tuned against `loss_rate` as one pair.
+            drink_rate=0.1,
+            # Water advertises itself further than grass does: a lake is a landmark, and a herd
+            # that cannot find one from outside it dies of thirst beside it.
+            reachability=DiffusionConfig(range=12.0, climb_penalty=0.5),
+        ),
         carrion=CarrionConfig(
             # A carcass loses a twentieth of itself per tick, so half of it is gone in ~14 ticks.
             # Long enough that a predator eating at `intake_rate` can finish a kill it stays with,
@@ -408,6 +426,10 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
         metabolism=MetabolismConfig(
             basal_rate=0.05,
             thermoregulation_rate=0.01,
+            # A bone-dry animal pays six times its ordinary upkeep, so it burns a full pool in a
+            # few dozen ticks rather than surviving indefinitely on fat. This is the whole of how
+            # thirst kills (#156) — tuned against `HydrationConfig.loss_rate` as one pair.
+            dehydration_penalty=5.0,
             neutral_temperature=20.0,
             insulation_gene="insulation",
         ),
@@ -432,9 +454,13 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
         hunger=HungerConfig(
             weight_gene="hunger_weight", satiation_energy=200.0, detection_threshold=0.5, sight_gene="sight"
         ),
-        # Thirst is held quiet on purpose — see its founding range below, which is where the
-        # damping lives now that the weight is a gene (#23).
-        thirst=ThirstConfig(weight_gene="thirst_weight", onset_temperature=25.0, saturation_temperature=40.0),
+        thirst=ThirstConfig(
+            weight_gene="thirst_weight",
+            # The reachable-water reading below which no water has been found. Set against a
+            # diffusion range of 12, so a herd notices a lake from well outside it but not from
+            # across the map — the acuity gate hunger and fear both already use (#93).
+            detection_threshold=0.02,
+        ),
         fear=FearConfig(
             weight_gene="fear_weight",
             scent_acuity_gene="scent_acuity",
@@ -509,13 +535,12 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
             # Drive weights, drawn around 1 so founders differ in temperament from the first
             # generation and selection has something to act on (§2.5, #23).
             "hunger_weight": (0.6, 1.4),
-            # Thirst founds an order of magnitude quieter than the rest, and this is a
-            # workaround rather than a tuning choice: a drive that *wins* with no mechanic
-            # behind it leaves the animal standing still (#126), and nothing drinks (#156).
-            # It was a config weight of 0.2 before the weights became genes (#23); drawing it
-            # from the same range as the others silently discarded that, and thirst then took
-            # 100% of every well-fed animal's decision.
-            "thirst_weight": (0.1, 0.3),
+            # Founded like every other drive since #156. It sat at (0.1, 0.3) — an order of
+            # magnitude quieter — purely because thirst had no mechanic behind it, and a drive
+            # that wants what it cannot have is a drive that must be silenced. Now that water can
+            # be lost, found and drunk, the damping is not a tuning choice to keep but a
+            # workaround to delete.
+            "thirst_weight": (0.6, 1.4),
             "fear_weight": (0.6, 1.4),
             "lust_weight": (0.6, 1.4),
             "fatigue_weight": (0.6, 1.4),

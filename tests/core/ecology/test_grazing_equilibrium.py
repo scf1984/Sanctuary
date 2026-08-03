@@ -50,6 +50,7 @@ PLANTS_CONFIG = PlantsConfig(
     forage_diffusion=DiffusionConfig(range=4.0, climb_penalty=0.5),
 )
 METABOLISM_CONFIG = MetabolismConfig(
+    dehydration_penalty=0.0,
     basal_rate=0.05,
     thermoregulation_rate=0.01,
     neutral_temperature=20.0,

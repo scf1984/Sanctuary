@@ -125,7 +125,7 @@ class CueField:
         shape = self.terrain.heights.shape
         deposit = np.zeros((self.n_channels, *shape), dtype=np.float32)
         if x.shape[0] > 0:
-            grid_rows, grid_cols = self._cell_indices(x, y)
+            grid_rows, grid_cols = self.terrain.cell_indices(x, y)
             cell = grid_rows * shape[1] + grid_cols
             # One scatter-add over a flattened (channel, row, col) index, so depositing a whole
             # population is a single vectorized pass and channels never become a loop (§2.3).
@@ -151,7 +151,7 @@ class CueField:
         diffused field is already smooth at cell scale, so interpolating would cost more and say
         nothing new.
         """
-        grid_rows, grid_cols = self._cell_indices(x, y)
+        grid_rows, grid_cols = self.terrain.cell_indices(x, y)
         # `moveaxis` rather than `.T`, which reverses *every* axis: a caller sampling an
         # (n_entities, n_options) block of candidates would get entities and options
         # transposed silently, and #114 scores options as exactly such a block.
@@ -174,7 +174,7 @@ class CueField:
         """
         emission = np.asarray(emission, dtype=np.float32)
         signature = np.asarray(signature, dtype=np.float32)
-        grid_rows, grid_cols = self._cell_indices(x, y)
+        grid_rows, grid_cols = self.terrain.cell_indices(x, y)
         own = self.self_response[grid_rows, grid_cols]
         return self.sample(x, y) - own[:, None] * emission[:, None] * signature
 
@@ -215,8 +215,8 @@ class CueField:
         """
         emission = np.asarray(emission, dtype=np.float32)
         signature = np.asarray(signature, dtype=np.float32)
-        sample_rows, sample_cols = self._cell_indices(x, y)
-        source_rows, source_cols = self._cell_indices(source_x, source_y)
+        sample_rows, sample_cols = self.terrain.cell_indices(x, y)
+        source_rows, source_cols = self.terrain.cell_indices(source_x, source_y)
 
         # Line the per-sampler arrays up against whatever trailing shape the sample points carry,
         # so one sampler's own deposit is subtracted from every candidate it is considering.
@@ -239,26 +239,6 @@ class CueField:
         )
         return self.sample(x, y) - response[..., None] * own
 
-    def _cell_indices(self, x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """Grid (row, col) of the cell containing each world position.
-
-        Raises ValueError outside the world, matching `Plants._cell_indices` — a position off the
-        map is a bug in whatever moved the entity, and clamping it to an edge cell would pile
-        phantom creatures against the border (§8.7).
-        """
-        x = np.asarray(x, dtype=np.float64)
-        y = np.asarray(y, dtype=np.float64)
-        width = self.terrain.world_width
-        height = self.terrain.world_height
-        if not (np.all((x >= 0) & (x <= width)) and np.all((y >= 0) & (y <= height))):
-            raise ValueError("position outside terrain bounds")
-
-        cell_size = self.terrain.cell_size
-        # floor(v + 0.5) rather than np.round, which is banker's rounding: a position exactly on a
-        # cell boundary would otherwise land in different cells depending on the boundary's parity.
-        cols = np.floor(x / cell_size + 0.5).astype(np.int64)
-        rows = np.floor(y / cell_size + 0.5).astype(np.int64)
-        return rows, cols
 
 
 @dataclass(frozen=True)

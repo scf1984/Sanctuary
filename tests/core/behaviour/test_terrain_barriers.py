@@ -52,6 +52,7 @@ GENE_REGISTRY = gene_registry(
 )
 
 METABOLISM_CONFIG = MetabolismConfig(
+    dehydration_penalty=0.0,
     basal_rate=0.2,
     thermoregulation_rate=0.1,
     neutral_temperature=20.0,

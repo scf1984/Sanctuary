@@ -103,15 +103,22 @@ class TestOnlyASteeringDriveCanChangeTheChoice:
         world.behaviour.choose(population, np.random.default_rng(seed))
         return world.store.choice_heading[population.to_mask()].copy()
 
-    @pytest.mark.parametrize("flat", ["fear_weight", "thirst_weight"])
-    def test_a_flat_drives_weight_cannot_change_the_decision(self, flat):
-        """Ten times the weight, identical headings. Fear and thirst are still flat — flight has
-        never existed and nothing drinks — so scaling them moves nothing."""
-        np.testing.assert_array_equal(self.chosen(0), self.chosen(0, 10.0, flat))
+    def test_a_flat_drives_weight_cannot_change_the_decision(self):
+        """Ten times the weight, identical headings. Fear is still flat, because flight has never
+        existed (#24), so scaling it moves nothing.
 
-    def test_a_steering_drives_weight_does_change_it(self):
-        """The control: hunger reads the forage field, so its weight reaches the choice."""
-        assert not np.array_equal(self.chosen(0), self.chosen(0, 10.0, "hunger_weight"))
+        **Thirst used to be in this list and is not any more** — #156 gave it a hydration deficit
+        to score and a diffused water field to steer by, so it crossed from neutral to selected.
+        That crossing is the whole of that issue expressed as a test, which is why this parametrize
+        was split rather than shortened: a drive graduating from one class to the other is the
+        thing worth recording, and a deleted parameter would have recorded nothing."""
+        np.testing.assert_array_equal(self.chosen(0), self.chosen(0, 10.0, "fear_weight"))
+
+    @pytest.mark.parametrize("steering", ["hunger_weight", "thirst_weight"])
+    def test_a_steering_drives_weight_does_change_it(self, steering):
+        """The control: hunger reads the forage field and thirst reads the water field, so both
+        weights reach the choice and both are under real selection."""
+        assert not np.array_equal(self.chosen(0), self.chosen(0, 10.0, steering))
 
 
 class TestTheDegenerateAttractor:

@@ -47,6 +47,7 @@ GENE_REGISTRY = gene_registry(GENE_NAMES, {"insulation": 1.0, "agility": 1.0})
 # a positive cost because MetabolismConfig requires it to (a free insulation gene is a free lunch),
 # and no cohort below expresses a non-zero value for it.
 FREE_METABOLISM = MetabolismConfig(
+    dehydration_penalty=0.0,
     basal_rate=0.0,
     thermoregulation_rate=0.0,
     neutral_temperature=20.0,
