@@ -24,7 +24,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # package fixture inside a local .venv.
 UNDECODABLE_IN_CP1252 = '"""A curly quote: ”"""\nimport os\n'
 
-CHECKS = ("tools.check_legacy_imports", "tools.check_wall_clock_imports")
+CHECKS = ("tools.check_wall_clock_imports",)
 
 
 def test_parses_a_file_the_locale_encoding_cannot_decode(tmp_path):
@@ -70,7 +70,7 @@ def test_skips_virtualenvs_whatever_they_are_named(tmp_path):
         environment = tmp_path / name / "Lib" / "site-packages"
         environment.mkdir(parents=True)
         (tmp_path / name / "pyvenv.cfg").write_text("home = /usr\n", encoding="utf-8")
-        (environment / "vendored.py").write_text("import legacy\n", encoding="utf-8")
+        (environment / "vendored.py").write_text("import time\n", encoding="utf-8")
 
     (tmp_path / "mine.py").write_text("import os\n", encoding="utf-8")
 
@@ -83,22 +83,11 @@ def test_skips_dot_directories(tmp_path):
     # check run from the main tree reports offences that live on somebody else's branch.
     for directory in (".git", ".mypy_cache", ".claude/worktrees/fix-1/core"):
         (tmp_path / directory).mkdir(parents=True)
-        (tmp_path / directory / "elsewhere.py").write_text("import legacy\n", encoding="utf-8")
+        (tmp_path / directory / "elsewhere.py").write_text("import time\n", encoding="utf-8")
 
     (tmp_path / "mine.py").write_text("import os\n", encoding="utf-8")
 
     assert list(iter_source_files(tmp_path)) == [tmp_path / "mine.py"]
-
-
-def test_skips_names_the_caller_excludes_by_rule(tmp_path):
-    (tmp_path / "legacy" / "world").mkdir(parents=True)
-    (tmp_path / "legacy" / "world" / "entity.py").write_text("import legacy.x\n", encoding="utf-8")
-    (tmp_path / "mine.py").write_text("import os\n", encoding="utf-8")
-
-    assert list(iter_source_files(tmp_path, frozenset({"legacy"}))) == [tmp_path / "mine.py"]
-    # Without the exclusion the same tree is fully visible: the rule is the caller's, not the
-    # walk's, which is why the legacy check passes it and the wall-clock check does not.
-    assert len(list(iter_source_files(tmp_path))) == 2
 
 
 def test_yields_in_sorted_path_order(tmp_path):

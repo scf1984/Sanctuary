@@ -11,35 +11,50 @@ of energy, terrain, and selection.
 
 ---
 
-## 1. Status
+## 1. What the prototype taught
 
-The repository currently holds a 2017–2023 prototype that **does not run**. It is kept for
-reference and for the ideas worth carrying forward, not as a foundation.
+A 2017–2023 prototype preceded this core. **It is gone** — deleted in #220 once every idea worth
+taking from it had been taken, because a quarantined tree nobody may import is not reference
+material, it is five tool exclusions and a CI guard defending against a mistake that can no longer
+be made (§8.2). `git show 19a5718` has it if a reading is ever wanted.
 
-Carry forward:
+What it gave, and where each went:
 
-- **Trait genetics** (`traits.py`) — a draw around the parental mean, clamped to a bounded drift
-  range. The *shape* is the thing worth carrying, and it is the core of the game; the arithmetic
-  was not sound and has since been re-derived (§2.5, #104). Its spread coefficient made a closed
-  pool's variance grow by half every generation, and its clamp was tight enough to crush that
-  back — two errors cancelling into something that looked like convergence.
+- **Trait genetics** — a draw around the parental mean, clamped to a bounded drift range. The
+  *shape* was the thing worth carrying and it is the core of the game; the arithmetic was not sound
+  and was re-derived in #104 (§2.5). Its spread coefficient made a closed pool's variance grow by
+  half every generation, and its clamp was tight enough to crush that back — two errors cancelling
+  into something that looked like convergence, which is why §1 once calling it "conceptually sound"
+  was too generous.
 - **Entity indirection by id** — entities referenced by id and resolved through a central store,
-  never by direct object pointer, so stale references to dead entities are detectable.
-- **Spatial hashing** (`InteractionGrid`) — cell size derived from the maximum sensing range.
+  never by direct object pointer, so stale references to dead entities are detectable
+  (`core.entities.store`).
+- **Spatial hashing** — cell size derived from the interaction range. What survives is the idea,
+  in `core.ecology.contact`; the pairwise structure it came in did not, because #96 measured a
+  per-observer query at **6.3 s/tick at 100,000 entities** against a 1 s tick.
 
-Do not carry forward:
+**What it taught by counterexample is the part that still governs new code**, which is why this
+list stays here rather than going with the source:
 
-- Singleton metaclass on `World` / `Blackboard` / `EventHeap`. It silently ignores constructor
-  arguments after the first call and makes test isolation impossible.
-- `Event` as a dataclass with a `Callable` field that subclasses override with a method — the two
-  mechanisms fight and positional construction misassigns fields.
-- Base classes living in package `__init__.py` with subclasses in a sibling module.
-- The `stats` package: unreachable, imports symbols that do not exist, and `Stat.update` fuses four
-  responsibilities.
-- Decorative abstractions: `StateTransitions` and `FoodChain` are declared and then never consulted.
-
-Known bugs in the prototype are catalogued in the revival issues; they are useful as a list of
-things the new core must not reproduce.
+- Singleton metaclasses on `World` / `Blackboard` / `EventHeap`. They silently ignore constructor
+  arguments after the first call, so a wrong world size went unnoticed for years — §8.7's founding
+  example, and why §4 forbids singletons outright.
+- `Event` as a dataclass with a `Callable` field that subclasses override with a method. The two
+  mechanisms fight, and positional construction misassigns fields.
+- Base classes living in a package `__init__.py` with subclasses in a sibling module.
+- A `stats` package that was unreachable, imported symbols that did not exist, and fused four
+  responsibilities into one `update`.
+- **Decorative abstractions.** `StateTransitions` and `FoodChain` were declared, wired into
+  nothing, and consulted by no one. This is the repository's most expensive habit and it is why §4
+  requires a rule declared as data to be *consulted* by the code it governs.
+- **A degree-valued sight angle compared against a radian difference.** Both are floats, so the
+  check silently passed always and nothing could catch it — §8.4's rule that units are stated
+  everywhere, and the same shape as #112's elevation-in-metres against positions in world units.
+- **Live-view iteration**: `World.update` iterated a live `dict` view and would have raised the
+  first time anything was born. §4's "iterate snapshots, never live views".
+- **A reversed `atan2` argument order**, so every heading computed from it was wrong.
+- **A renderer drawing zero-size ovals** (`bbox(0.00)`) — §3.3's note that it was not a starting
+  point.
 
 ---
 
