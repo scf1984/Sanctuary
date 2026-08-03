@@ -13,6 +13,7 @@ golden output wearing a statistician's coat.
 import numpy as np
 import pytest
 
+from core.ecology.carrion import Carrion, CarrionConfig
 from core.ecology.diet import Diet, DietConfig
 from core.ecology.feeding import Feeding, FeedingConfig
 from core.ecology.metabolism import Metabolism, MetabolismConfig
@@ -87,9 +88,11 @@ def grazing_world(allocations, intake_rate=9.0, assimilation_max=0.5, frontier_e
         Metabolism(GENE_REGISTRY, METABOLISM_CONFIG),
         plants,
     )
+    carrion = Carrion(terrain, plants, CarrionConfig(decay_rate=0.1))
     feeding = Feeding(
         store,
         plants,
+        carrion,
         genetics,
         ecology,
         Diet(

@@ -31,12 +31,29 @@ gut processes what a gut of that size can process, and what it *gets* is what it
 animal eating something it cannot use passes the whole mouthful through, wasting the tick and
 fertilising the ground; it is self-punishing without a gate deciding what a creature is allowed to
 try to eat.
+
+**The mouthful is split between two grounds, and that is not the same thing** (#179). One gut,
+one intake rate, one tick — but two substrates on the ground it stands on, so the *allocation* decides
+how much of the mouthful goes to each and the frontier still decides what each yields:
+
+    plant mouthful  = intake_rate × size × (1 − animal_share)   → `Plants.graze`
+    flesh mouthful  = intake_rate × size × animal_share         → `Carrion.graze`
+
+That is a division of one quantity rather than a second coefficient scaling it, so the realised
+conversion stays `share × share ** p` and not `share ** 2p` — the compounding the rule above
+forbids. Without it a lineage allocated toward meat would eat a *full* grazing mouthful as well,
+which is a free lunch on exactly the axis #102's frontier exists to price.
+
+**Carrion is grazed with the identical verb**, which is why scavenging needed no mechanic: whatever
+is lying on the ground is eaten by whatever is standing on it and allocated toward flesh, whether
+or not it did the killing.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+from core.ecology.carrion import Carrion
 from core.ecology.diet import Diet
 from core.ecology.plants import Plants
 from core.ecology.service import Ecology
@@ -91,6 +108,7 @@ class Feeding:
         self,
         store: EntityStore,
         plants: Plants,
+        carrion: Carrion,
         genetics: Genetics,
         ecology: Ecology,
         diet: Diet,
@@ -99,6 +117,7 @@ class Feeding:
     ) -> None:
         self.store = store
         self.plants = plants
+        self.carrion = carrion
         self.genetics = genetics
         self.ecology = ecology
         self.diet = diet
@@ -120,11 +139,20 @@ class Feeding:
         y = self.store.y[mask]
 
         phenotype = self.genetics.expressed(selection)
-        demand = self.config.intake_rate * phenotype[:, self._size_index]
-        # Contention lives in `graze`: grazers sharing a cell take the same fraction of what each
-        # asked for, so the cell empties exactly instead of each animal seeing the whole crop.
-        harvested = self.plants.graze(x, y, demand)
+        mouthful = self.config.intake_rate * phenotype[:, self._size_index]
+        animal_share = self.diet.animal_share(phenotype)
 
-        conversion = self.config.assimilation_max * self.diet.plant_efficiency(phenotype)
-        self.ecology.gain(selection, harvested * conversion)
-        self.plants.return_nutrients(x, y, harvested * (1.0 - conversion))
+        # Contention lives in `graze`, on both fields: eaters sharing a cell take the same fraction
+        # of what each asked for, so the crop — or the carcass — empties exactly instead of every
+        # animal seeing the whole of it.
+        harvested = self.plants.graze(x, y, mouthful * (1.0 - animal_share))
+        scavenged = self.carrion.graze(x, y, mouthful * animal_share)
+
+        assimilated = self.config.assimilation_max * (
+            harvested * self.diet.plant_efficiency(phenotype)
+            + scavenged * self.diet.animal_efficiency(phenotype)
+        )
+        self.ecology.gain(selection, assimilated)
+        # What no gut could use is faeces, into the ground it was eaten on — the one door the export
+        # ledger is debited through (§2.5), and what keeps conservation exact across both substrates.
+        self.plants.return_nutrients(x, y, harvested + scavenged - assimilated)

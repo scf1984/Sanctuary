@@ -49,6 +49,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from core.ecology.contact import pair_by_contact
 from core.ecology.service import Ecology
 from core.entities.store import EntityStore
 from core.genetics.registry import GeneRegistry, Unit
@@ -214,55 +215,10 @@ class Conception:
     ) -> tuple[np.ndarray, np.ndarray]:
         """Row-index arrays of the willing animals that are touching, paired elementwise.
 
-        Willing rows are bucketed into contact-sized cells, paired with whoever else is in the
-        bucket, and kept if the pair is genuinely within `contact_range` — the bucket is a cheap
-        way to find candidates, the distance is what decides. Two animals therefore breed because
-        they are in the same place, which is the whole of the spatial rule: density is what makes
-        mates findable, so crowding and dispersal both matter without either being written down.
-
-        **The pairing is returned as index arrays, not selections, and that is load-bearing.** A
-        `Selection` is a mask, so it carries no order, and two masks can only express a pairing
-        whose couples do not cross in row space — which a pairing built from *position* does
-        constantly. Everything downstream here takes explicit rows for that reason (#20): the
-        alternative silently rewires `(1, 8)` and `(3, 5)` into `(1, 5)` and `(3, 8)`.
-
-        Shuffled before bucketing, so that pairing within a cell is not biased by row order. Rows
-        come from a free list that hands out neighbouring indices to young allocated together, so
-        without this a lineage's own offspring would preferentially pair with each other.
-
-        Vectorized throughout — there is no per-animal search, because a pairwise nearest-mate query
-        over the whole population is the cost that ruled out pairwise sensing in #96. What brought
-        these two together is the lust drive walking them here (#188), not anything in this method.
+        The spatial half is `core.ecology.contact.pair_by_contact`, shared with predation (#179)
+        because "who is close enough to interact" is one question with two consequences. What
+        brought these two together is the lust drive walking them here (#188), not anything here.
         """
-        rows = rows[rng.permutation(rows.shape[0])]
-        cell_x = np.floor(self.store.x[rows] / self.config.contact_range).astype(np.int64)
-        cell_y = np.floor(self.store.y[rows] / self.config.contact_range).astype(np.int64)
-        # Two cell coordinates into one sortable key; sorting by it groups a cell's occupants
-        # together, which is all the pairing needs. The key's arithmetic value means nothing.
-        key = cell_x * np.int64(1 << 32) + cell_y
-
-        order = np.argsort(key, kind="stable")
-        sorted_key = key[order]
-        n = rows.shape[0]
-
-        # Rank within each cell, so pairing consecutive entries never straddles two cells.
-        starts_cell = np.empty(n, dtype=bool)
-        starts_cell[0] = True
-        starts_cell[1:] = sorted_key[1:] != sorted_key[:-1]
-        cell_start = np.maximum.accumulate(np.where(starts_cell, np.arange(n), 0))
-        rank = np.arange(n) - cell_start
-
-        has_partner = np.zeros(n, dtype=bool)
-        has_partner[:-1] = sorted_key[1:] == sorted_key[:-1]
-        leads = np.nonzero((rank % 2 == 0) & has_partner)[0]
-
-        first = rows[order[leads]]
-        second = rows[order[leads + 1]]
-        # A shared cell puts two animals within `contact_range * sqrt(2)`, not within
-        # `contact_range`, so the distance is checked rather than assumed.
-        gap = np.hypot(
-            self.store.x[first] - self.store.x[second],
-            self.store.y[first] - self.store.y[second],
+        return pair_by_contact(
+            self.store.x, self.store.y, rows, self.config.contact_range, rng
         )
-        touching = gap <= self.config.contact_range
-        return first[touching], second[touching]
