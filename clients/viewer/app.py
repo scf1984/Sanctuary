@@ -24,16 +24,18 @@ from core.world.cull import Cull
 from persistence import SnapshotError, load, save
 from clients.viewer.playback import Playback
 from clients.viewer.render import (
-    PLANT_LAYERS,
+    CONDITION_MODES,
+    FIELD_LAYERS,
     apply_water_overlay,
     describe_entity,
     elevation_shading,
     live_positions,
     pick_entity,
-    plant_overlay,
-    plant_overlay_references,
+    casing_color,
+    condition_colors,
+    field_overlay,
+    layer_references,
     screen_to_world,
-    species_colors,
     world_to_screen,
 )
 
@@ -64,7 +66,7 @@ _CULL_SURVIVORS = 20
 
 # What the overlay key cycles through. `None` is terrain alone, and it leads so that the view
 # opens on the same picture it always has.
-_LAYER_CYCLE: tuple[str | None, ...] = (None, *PLANT_LAYERS)
+_LAYER_CYCLE: tuple[str | None, ...] = (None, *FIELD_LAYERS)
 
 
 def _scaled_surface(rgb, screen_size: tuple[int, int]) -> pygame.Surface:
@@ -186,10 +188,11 @@ def run(seed: int = 0, n_entities: int = 200) -> None:
     # a copy of it rather than recomputing the hillshade.
     terrain_rgb = apply_water_overlay(elevation_shading(world.terrain), world.water)
     # Fixed for the run, deliberately: a ramp that rescales itself hides the slow decline this
-    # view exists to show. See `render.plant_overlay_references`.
-    references = plant_overlay_references(world.plants)
+    # view exists to show. See `render.layer_references`.
+    references = layer_references(world)
 
     layer_index = 0
+    condition_index = 0
     selected: int | None = None
     charts_shown = True
     gene_names = world.genes.vocabulary.names
@@ -219,6 +222,11 @@ def run(seed: int = 0, n_entities: int = 200) -> None:
                 elif event.key in (pygame.K_TAB, pygame.K_f):
                     layer_index = (layer_index + 1) % len(_LAYER_CYCLE)
                     redraw_background = True
+                elif event.key == pygame.K_v:
+                    # What an animal's colour means. With one species, colouring by species is a
+                    # field of identical dots — every mechanic this view exists to show is a
+                    # *condition*, and none of it was visible until this key existed (#39).
+                    condition_index = (condition_index + 1) % len(CONDITION_MODES)
                 elif event.key == pygame.K_c:
                     charts_shown = not charts_shown
                 elif event.key == pygame.K_g:
@@ -275,7 +283,7 @@ def run(seed: int = 0, n_entities: int = 200) -> None:
             rgb = (
                 terrain_rgb
                 if layer is None
-                else plant_overlay(terrain_rgb, world.plants, layer, references)
+                else field_overlay(terrain_rgb, world, layer, references)
             )
             background = _scaled_surface(rgb, _SCREEN_SIZE)
             redraw_background = False
@@ -292,9 +300,14 @@ def run(seed: int = 0, n_entities: int = 200) -> None:
         px, py = world_to_screen(
             x, y, world.terrain.world_width, world.terrain.world_height, *_SCREEN_SIZE
         )
-        colors = species_colors(world.store.species_id[drawn])
+        colors = condition_colors(world, drawn, CONDITION_MODES[condition_index])
+        casing = casing_color()
         for screen_x, screen_y, color in zip(px.tolist(), py.tolist(), colors.tolist()):
-            pygame.draw.circle(screen, color, (screen_x, screen_y), _ENTITY_RADIUS)
+            # Cased, so the mark reads against terrain that ranges from near-black valley to pale
+            # peak: no single fill clears 3:1 across that, and two tones always leave one of them
+            # separating. See `render.casing_color`.
+            pygame.draw.circle(screen, casing, (screen_x, screen_y), _ENTITY_RADIUS)
+            pygame.draw.circle(screen, color, (screen_x, screen_y), _ENTITY_RADIUS - 1)
 
         if charts_shown:
             _draw_charts(
@@ -309,12 +322,21 @@ def run(seed: int = 0, n_entities: int = 200) -> None:
         status = (
             f"{'PAUSED' if playback.paused else 'playing'} | "
             f"speed x{playback.speed:g} | tick {world.loop.tick_count} | "
-            f"[tab] {layer or 'terrain'} | [c] charts [g] trait [e] export"
+            f"[tab] {layer or 'terrain'} | [v] {CONDITION_MODES[condition_index]}"
+            f" | [c] charts [g] trait [e] export"
             f" [s] save [l] load [x] cull | click an animal to inspect"
             + (f" | {exported}" if exported else "")
             + (f" | {_last_outcome(world)}" if _last_outcome(world) else "")
         )
-        screen.blit(font.render(status, True, (255, 255, 255)), (8, 8))
+        # On a dark strip rather than straight onto terrain. White text over a pale peak is
+        # unreadable, and the status line is the only place this view can tell the player anything
+        # -- including that a cull was refused. Text carries meaning, so it gets a surface.
+        text = font.render(status, True, (255, 255, 255))
+        backing = pygame.Surface((text.get_width() + 12, text.get_height() + 6))
+        backing.set_alpha(180)
+        backing.fill((20, 20, 15))
+        screen.blit(backing, (2, 5))
+        screen.blit(text, (8, 8))
 
         pygame.display.flip()
 

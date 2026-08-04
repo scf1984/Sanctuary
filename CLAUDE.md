@@ -1397,6 +1397,36 @@ Three things about it are rules rather than preferences:
   meaning into a constant that does not carry any. The label carries the value; the line carries
   the shape.
 
+**Colour encodes condition, not identity — and the ramp is validated, not chosen** (#39). Every
+mechanic this view exists to show is something happening *to* an animal, and until the colour key
+existed a herd was a field of identical dots: species colouring says nothing while there is one
+species, and there is one species until #16. So an animal's fill is a **deficit** — hunger, thirst,
+or age — and every mode darkens toward death. Read the other way up, by the reserve, the animal in
+trouble would be the faintest mark on screen, which is backwards for an instrument whose whole job
+is spotting trouble.
+
+Three things about how it is drawn are rules:
+
+- **One hue, light to dark, quantised to five steps.** Magnitude takes a sequential ramp and never a
+  rainbow. Quantising means every colour that reaches the screen is a step the checks actually saw,
+  and that a thousand dots read as bands rather than as mush at four pixels across. Orange rather
+  than the conventional blue because the *surface* has already spent blue on standing water.
+- **Every dot is cased**, and that is forced rather than decorative. Measured against this viewer's
+  own terrain, **no single fill clears 3:1 across it** — the dark ramp steps vanish on dark ground
+  (1.02:1) and the light steps on bright ground (1.80:1). A light ring around a darker fill gives
+  every mark two tones, so one of them always separates from whatever is behind it. This is why a
+  map mark is cased and a chart mark is not: a chart has one surface, a map has every surface.
+- **A reference is a fact about the world, never a maximum off the field.** `apply_field_overlay`
+  already said so; the carrion layer is what proved it costs something to get wrong. Scaled to a
+  whole body — the obvious "1.0 means a corpse" — the brightest cell in a settled world rendered at
+  **13% alpha**, so predation ran and the layer looked empty. Scaled to `strike_power`, the most one
+  strike can take, the same cell reads 39%. **Rendering the view and looking at it is what caught
+  that**, and no test would have: every assertion about that layer passed at either scale.
+
+`FIELD_LAYERS` is a table of `(service, attribute)` rather than a naming convention, because the
+fields genuinely live on different services — `getattr(plants, layer)` stopped being true the moment
+a layer came from the carrion field.
+
 **Export is a client's job and only a client's.** `core/` may perform no I/O at all (§4) and
 `metrics/` deliberately performs none either — it produces serialisable values and stops, because
 on the shared machine §3.1 is heading for, the process that records a series is not the process
