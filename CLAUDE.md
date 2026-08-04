@@ -11,35 +11,50 @@ of energy, terrain, and selection.
 
 ---
 
-## 1. Status
+## 1. What the prototype taught
 
-The repository currently holds a 2017–2023 prototype that **does not run**. It is kept for
-reference and for the ideas worth carrying forward, not as a foundation.
+A 2017–2023 prototype preceded this core. **It is gone** — deleted in #220 once every idea worth
+taking from it had been taken, because a quarantined tree nobody may import is not reference
+material, it is five tool exclusions and a CI guard defending against a mistake that can no longer
+be made (§8.2). `git show 19a5718` has it if a reading is ever wanted.
 
-Carry forward:
+What it gave, and where each went:
 
-- **Trait genetics** (`traits.py`) — a draw around the parental mean, clamped to a bounded drift
-  range. The *shape* is the thing worth carrying, and it is the core of the game; the arithmetic
-  was not sound and has since been re-derived (§2.5, #104). Its spread coefficient made a closed
-  pool's variance grow by half every generation, and its clamp was tight enough to crush that
-  back — two errors cancelling into something that looked like convergence.
+- **Trait genetics** — a draw around the parental mean, clamped to a bounded drift range. The
+  *shape* was the thing worth carrying and it is the core of the game; the arithmetic was not sound
+  and was re-derived in #104 (§2.5). Its spread coefficient made a closed pool's variance grow by
+  half every generation, and its clamp was tight enough to crush that back — two errors cancelling
+  into something that looked like convergence, which is why §1 once calling it "conceptually sound"
+  was too generous.
 - **Entity indirection by id** — entities referenced by id and resolved through a central store,
-  never by direct object pointer, so stale references to dead entities are detectable.
-- **Spatial hashing** (`InteractionGrid`) — cell size derived from the maximum sensing range.
+  never by direct object pointer, so stale references to dead entities are detectable
+  (`core.entities.store`).
+- **Spatial hashing** — cell size derived from the interaction range. What survives is the idea,
+  in `core.ecology.contact`; the pairwise structure it came in did not, because #96 measured a
+  per-observer query at **6.3 s/tick at 100,000 entities** against a 1 s tick.
 
-Do not carry forward:
+**What it taught by counterexample is the part that still governs new code**, which is why this
+list stays here rather than going with the source:
 
-- Singleton metaclass on `World` / `Blackboard` / `EventHeap`. It silently ignores constructor
-  arguments after the first call and makes test isolation impossible.
-- `Event` as a dataclass with a `Callable` field that subclasses override with a method — the two
-  mechanisms fight and positional construction misassigns fields.
-- Base classes living in package `__init__.py` with subclasses in a sibling module.
-- The `stats` package: unreachable, imports symbols that do not exist, and `Stat.update` fuses four
-  responsibilities.
-- Decorative abstractions: `StateTransitions` and `FoodChain` are declared and then never consulted.
-
-Known bugs in the prototype are catalogued in the revival issues; they are useful as a list of
-things the new core must not reproduce.
+- Singleton metaclasses on `World` / `Blackboard` / `EventHeap`. They silently ignore constructor
+  arguments after the first call, so a wrong world size went unnoticed for years — §8.7's founding
+  example, and why §4 forbids singletons outright.
+- `Event` as a dataclass with a `Callable` field that subclasses override with a method. The two
+  mechanisms fight, and positional construction misassigns fields.
+- Base classes living in a package `__init__.py` with subclasses in a sibling module.
+- A `stats` package that was unreachable, imported symbols that did not exist, and fused four
+  responsibilities into one `update`.
+- **Decorative abstractions.** `StateTransitions` and `FoodChain` were declared, wired into
+  nothing, and consulted by no one. This is the repository's most expensive habit and it is why §4
+  requires a rule declared as data to be *consulted* by the code it governs.
+- **A degree-valued sight angle compared against a radian difference.** Both are floats, so the
+  check silently passed always and nothing could catch it — §8.4's rule that units are stated
+  everywhere, and the same shape as #112's elevation-in-metres against positions in world units.
+- **Live-view iteration**: `World.update` iterated a live `dict` view and would have raised the
+  first time anything was born. §4's "iterate snapshots, never live views".
+- **A reversed `atan2` argument order**, so every heading computed from it was wrong.
+- **A renderer drawing zero-size ovals** (`bbox(0.00)`) — §3.3's note that it was not a starting
+  point.
 
 ---
 
@@ -171,51 +186,36 @@ by" hunger and no animal stands still merely because the drive that won has no m
      an array being resized. This is the real bug risk, more than the stall.
   3. Preemptive growth during offline catch-up, sized from the high-water mark plus headroom.
   4. Chunked paging held in reserve, only if measurement shows real hitches.
-- **Population is emergent.** Carrying capacity = area × primary productivity ÷ per-animal upkeep.
-  Never set population directly.
+- **Population is emergent, and the only way to know what a world holds is to run it.** Carrying
+  capacity is area × primary productivity ÷ per-animal upkeep in the same sense that a thrown
+  stone's landing point is a function of its launch angle: true, and not a substitute for throwing
+  it. Never set population directly, and **never predict it either** — settled in #216, which built
+  a forward model and had it removed.
 
-  **That relation is now computed rather than recited** — `core.world.forecast`, settled in #216,
-  which owns it. Given a built world it reports what the tunings imply, without running a tick:
+  The model divided field production by what one founding animal costs to keep alive. It measured
+  within 4–5% on the world it was built against, and then #179 added predation — a second exit for
+  energy, into carrion that rots having fed nobody — and the same model over-predicted by **10×**
+  (5,361 against 521 living). Nothing about it was wrong; it was answering a question about a world
+  that had stopped existing.
 
-  ```
-  carrying capacity = field growth per tick × capture fraction × assimilation share
-                      ────────────────────────────────────────────────────────────
-                                    upkeep per animal per tick
-  ```
+  That is the general failure and the reason this is a rule rather than a preference. **A predictor
+  encodes the mechanics it was written against, so every mechanic added afterwards silently
+  invalidates it** — and it invalidates it *quietly*, by continuing to return a plausible number.
+  A simulation cannot drift from the world in that way, because it *is* the world. The repository
+  would have to maintain two models of one ecology and keep them in step, which §2.1's warning about
+  constants that drift apart says about a *pair of coefficients*; two whole models is that failure
+  at the largest scale it can occur at.
 
-  **Measured, not asserted** (§8.5). Changing *only* `solar_constant` over 4, 8 and 16 on two seeds
-  and running 700 ticks: populations of 2,278 / 5,082 / 10,644 against forecasts of 2,681 / 5,361 /
-  10,722 — **+18% at a quarter sun, +4–5% at the shipped one, +1% to −3% at double**. The error is
-  systematic rather than noisy: in a sparse world animals travel further to eat, so both the capture
-  fraction and the real upkeep exceed what a founding population implies.
-  [`docs/spikes/forecast_accuracy.py`](docs/spikes/forecast_accuracy.py) is the tool.
+  So: to learn what a set of tunings implies, **build the world and advance it.** That is slower and
+  it is the only answer that stays true. It is also what #101's evolved starting states already do —
+  generate headless, run long, keep what stabilises — so the honest version of "what does this
+  config give me" is a search over simulated worlds, never a formula evaluated against one.
 
-  Three things about it are rules rather than conveniences:
+  **This does not weaken "author the physics, not the outcomes"**, and neither did the forecast:
+  writing `population = 5000` authors an outcome, while choosing how bright the sun is does not.
+  What was wrong was not the wish to size a world, but the belief that the size could be *computed*
+  instead of observed.
 
-  - **It reads the world rather than restating it.** The forecast builds the world it forecasts and
-    reads the real `potential_growth` field, the real `Ecology.upkeep` and the real diet frontier. A
-    second copy of the growth curve or the cost table is a copy that drifts, which is §4's rule
-    about a declared rule having to be consulted.
-  - **The estimated term is reported, not folded away.** Two terms are exact and one — how much of
-    the field's growth animals actually capture — is measured, because it depends on foraging and on
-    evolved guts rather than on any coefficient. Keeping it as its own field is what makes this a
-    forecast rather than a formula pretending to be one.
-  - **It is a ceiling a world climbs toward, not where a world is.** Sixty founders at five hundred
-    ticks reach about 970 against a forecast of 5,557; that gap is arrival time, not error. Anything
-    comparing the two needs a world that has had the ticks to get there.
-
-  **This does not weaken "author the physics, not the outcomes".** Writing `population = 5000` would
-  author an outcome; choosing how bright the sun is so the physics settles near 5,000 does not — the
-  herd still crashes when it overgrazes, still responds to a cull, still collapses if the loop is
-  broken. Picking the size of an aquarium is not deciding how many fish live in it. What is chosen
-  is the *scale* of a world, never its behaviour.
-
-  **The inverse is deliberately absent.** Searching for tunings that produce a world someone asked
-  for is #216's remaining half and is not built: it needs this forward model to evaluate candidates,
-  and it costs minutes per world, so it belongs offline rather than behind a dial. The same shape
-  covers speciation — generations to a split is the distance threshold over the drift per
-  generation — but that dial cannot be built yet, because genetic distance is currently dominated by
-  whichever gene has the widest founding range (#193) and so is not measuring divergence.
 - **The engine ceiling is invisible.** As capacity is approached, density-dependent mortality
   intensifies — crowding, disease, starvation — so the plateau reads as ecology. The hard ceiling
   exists behind that only to keep arrays safe.
@@ -585,11 +585,6 @@ by" hunger and no animal stands still merely because the drive that won has no m
   is **reproductive isolation**, which is #16. That is the design's own claim arriving as a
   measurement rather than an argument: a trophic pyramid needs speciation, and speciation is
   deferred until a world can be watched. Recorded on #179 rather than tuned around.
-
-  **A consequence for #216**: the forecast now over-predicts by roughly **10×** (5,361 against 521
-  living at 700 ticks), because it divides field production by per-animal upkeep and predation opens
-  a second exit — energy into carrion that rots having fed nobody. The model needs a predation drain
-  term; filed rather than fixed here (§7.2).
 
 - **Thirst is a deficit that raises the cost of living** — settled in #156, which owned it, and it
   is the last of #126's paralysed drives to get a mechanic. `Thirst` had scored since #22 with

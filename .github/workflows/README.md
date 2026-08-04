@@ -30,8 +30,8 @@ needed to check a module.
 
 It scans the whole tree rather than a list of directories, so the packages `CLAUDE.md` §4 still
 plans (`api/`, `service/`, `persistence/`) are covered the day they appear rather than silently
-escaping the check. `legacy/` is excluded: it is the 2017–2023 prototype, does not run, and must
-not be extended (§1).
+escaping the check. Nothing is excluded: the one exclusion this ever carried was `legacy/`, and
+that prototype was deleted in #220.
 
 Note the division of labour. The floor job catches *syntax* above the floor. A construct that is
 valid syntax but has changed meaning — `@classmethod` on `@property` is exactly this, returning a
@@ -48,11 +48,6 @@ installs pygame is a standing check that it really is.
 `ruff` and `mypy` each pin their own target version in `pyproject.toml` (`target-version`,
 `python_version`), so running them once on the floor is the configured behaviour rather than an
 arbitrary choice of leg.
-
-This job also runs `tools/check_legacy_imports.py`. Its sibling `check_wall_clock_imports.py`
-already runs under pytest via `tests/test_no_wall_clock_imports.py`, but the legacy guard had **no
-caller at all** — `legacy/README.md` claimed it was "wired into linting" and it was not, making it
-precisely the decorative abstraction §8.2 forbids. This is that caller.
 
 ---
 

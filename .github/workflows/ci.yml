@@ -69,16 +69,12 @@ jobs:
       # needs pygame and so is never loaded in a headless test run. compileall does not execute or
       # import the modules, so no dependency is required to check them.
       #
-      # legacy/ is excluded deliberately -- it is the 2017-2023 prototype, does not run, and must
-      # not be extended (CLAUDE.md §1).
-      #
       # The whole tree is scanned rather than a list of directories, so a top-level package added
-      # later (service/, api/, persistence/ -- all planned in CLAUDE.md §4) is covered the day it
-      # appears instead of silently escaping the check. `-x legacy` is a substring search over the
-      # full path, so a future path with "legacy" elsewhere in it would also be skipped; that is
-      # acceptable for this layout and is the trade for having no coverage gap.
+      # later (service/, api/ -- both planned in CLAUDE.md §4) is covered the day it appears
+      # instead of silently escaping the check. Nothing is excluded: the one exclusion this ever
+      # carried was legacy/, deleted in #220.
       - name: Reject syntax newer than the declared floor
-        run: python -m compileall -q -x legacy .
+        run: python -m compileall -q .
 
   coverage:
     name: coverage (per-module floor)
@@ -128,12 +124,3 @@ jobs:
       - run: ruff check .
       - run: mypy core
 
-      # tools/check_wall_clock_imports.py already runs under pytest via
-      # tests/test_no_wall_clock_imports.py. Its sibling had no caller at all -- legacy/README.md
-      # claims it is "wired into linting" and it was not, making it exactly the decorative
-      # abstraction CLAUDE.md §8.2 forbids. This is that caller.
-      # Run as a module rather than a path so that `tools.sources`, shared with the wall-clock
-      # check, resolves (#88). Executing the file directly puts tools/ on sys.path in place of the
-      # repository root and the import fails.
-      - name: Reject imports from legacy/
-        run: python -m tools.check_legacy_imports

@@ -5,8 +5,9 @@ ticks are owed, and that computation belongs outside core/ (in scheduler/). A wa
 inside simulation logic would make offline catch-up a second code path instead of the same
 simulation with rendering off. Run as `python -m tools.check_wall_clock_imports` from the
 repository root; exits non-zero and prints every offending import if new code under core/ starts
-reading wall-clock time. See its sibling `check_legacy_imports` on why it is a module and not a
-path.
+reading wall-clock time. Run as a module rather than a path so that `tools.sources` resolves
+(#88): executing the file directly puts tools/ on sys.path in place of the repository root and the
+import fails.
 """
 import ast
 import sys
