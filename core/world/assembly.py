@@ -93,6 +93,7 @@ from core.genetics.registry import GeneRegistry, GeneSpec
 from core.invariants import default_registry
 from core.selection import Selection
 from core.services import ColumnRegistry
+from core.world.barriers import Barriers
 from core.world.climate import Climate, ClimateConfig
 from core.world.terrain import Terrain, TerrainConfig
 from core.world.tick import TickLoop
@@ -219,6 +220,7 @@ class World:
     predation: Predation
     carrion: Carrion
     hydration: Hydration
+    barriers: Barriers
     death: Death
     conception: Conception
     exertion: Exertion
@@ -251,7 +253,10 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
     terrain = Terrain.generate(config.terrain)
     water = Water.generate(terrain)
     climate = Climate(terrain, config.climate)
-    plants = Plants(terrain, climate, water, config.plants)
+    # Built before anything that diffuses over the grid or walks across it: a fence is state the
+    # forage field, the water field and every step all consult (#27).
+    barriers = Barriers(terrain)
+    plants = Plants(terrain, climate, water, config.plants, barriers)
 
     genes = GeneRegistry(config.genes)
     # The store's two column blocks are sized from what is actually registered below, so a drive
@@ -283,7 +288,9 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
     # animal side, and two instances would be two readings of one gene that could disagree.
     diet = Diet(genes, config.diet)
     carrion = Carrion(terrain, plants, config.carrion)
-    hydration = Hydration(store, columns, terrain, climate, water, config.hydration)
+    hydration = Hydration(
+        store, columns, terrain, climate, water, config.hydration, barriers
+    )
     feeding = Feeding(store, plants, carrion, genetics, ecology, diet, genes, config.feeding)
     predation = Predation(
         store, ecology, genetics, carrion, diet, genes, config.feeding, config.predation
@@ -292,7 +299,7 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
     conception = Conception(store, ecology, genetics, genes, config.conception)
     exertion = Exertion(store, columns, config.exertion)
     movement = Movement(
-        store, columns, ecology, exertion, genetics, terrain, genes, config.movement
+        store, columns, ecology, exertion, genetics, terrain, genes, config.movement, barriers
     )
     behaviour = Behaviour(
         store, columns, genetics, genes, terrain, config.behaviour
@@ -382,6 +389,7 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
         predation=predation,
         carrion=carrion,
         hydration=hydration,
+        barriers=barriers,
         death=death,
         conception=conception,
         exertion=exertion,

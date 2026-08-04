@@ -27,6 +27,7 @@ from core.invariants import default_registry
 from core.selection import Selection
 from core.services import ColumnRegistry
 from core.world.climate import Climate, ClimateConfig
+from core.world.barriers import Barriers
 from core.world.terrain import Terrain
 from core.world.tick import TickLoop
 
@@ -133,6 +134,7 @@ class World:
             self.terrain,
             self.genes,
             MOVEMENT_CONFIG,
+            Barriers(self.terrain),
         )
         self.species_id = self.species.register(GENE_NAMES)
 

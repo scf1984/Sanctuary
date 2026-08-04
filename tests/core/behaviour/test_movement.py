@@ -22,6 +22,7 @@ from core.genetics.species import SpeciesRegistry
 from core.selection import Selection
 from core.services import ColumnRegistry, ColumnOwnershipError
 from core.world.climate import Climate, ClimateConfig
+from core.world.barriers import Barriers
 from core.world.terrain import Terrain
 
 from tests.support.genes import gene_registry
@@ -135,6 +136,7 @@ class World:
             self.terrain,
             self.genes,
             movement_config,
+            Barriers(self.terrain),
         )
         self.species_id = self.species.register(GENE_NAMES)
 
@@ -922,4 +924,5 @@ class TestAgilityMustBePaidFor:
                 world.terrain,
                 gene_registry(GENE_NAMES, {"insulation": 1.0}),
                 MOVEMENT_CONFIG,
+                Barriers(world.terrain),
             )

@@ -33,6 +33,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from core.world.climate import Climate
+from core.world.barriers import Barriers
 from core.world.diffusion import CostAwareDiffusion, DiffusionConfig
 from core.world.terrain import Terrain
 from core.world.water import Water
@@ -173,7 +174,12 @@ class Plants:
     exported_nutrients: float
 
     def __init__(
-        self, terrain: Terrain, climate: Climate, water: Water, config: PlantsConfig
+        self,
+        terrain: Terrain,
+        climate: Climate,
+        water: Water,
+        config: PlantsConfig,
+        barriers: Barriers | None = None,
     ) -> None:
         if water.depth.shape != terrain.heights.shape:
             raise ValueError("water and terrain must share a grid shape")
@@ -190,7 +196,7 @@ class Plants:
             * _temperature_response(climate, config)
             * self.moisture
         )
-        self.forage_diffusion = CostAwareDiffusion(terrain, config.forage_diffusion)
+        self.forage_diffusion = CostAwareDiffusion(terrain, config.forage_diffusion, barriers)
         self.biomass = np.zeros(terrain.heights.shape, dtype=np.float64)
         self.soil_nutrients = np.full(
             terrain.heights.shape, config.initial_soil_nutrients, dtype=np.float64

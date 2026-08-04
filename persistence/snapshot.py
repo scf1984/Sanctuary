@@ -14,7 +14,7 @@ import numpy as np
 # from a schema that never shipped would be untestable by construction. What *is* here is the
 # refusal — an unknown version raises rather than being read hopefully, which is what makes the
 # first real migration a change to this module rather than an archaeology exercise.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # Every array the world cannot recompute. Terrain, water, the cue field and the forage field are
 # all pure functions of the config or of the state below, so storing them would be storing a
@@ -101,6 +101,11 @@ def save(world, path: Path) -> Path:
     # that already happened and nothing can recompute where it fell (§3.2). Its `scent` is
     # derived from it every tick and is therefore deliberately absent.
     arrays["carrion.mass"] = world.carrion.mass
+    # Fences are state and emphatically not a derivation: a barrier exists because the player
+    # built it, and nothing in the config or the terrain implies it (§3.2). Losing them on
+    # reload would silently undo the one intervention the world was shaped by.
+    arrays["barriers.north"] = world.barriers.blocked_north
+    arrays["barriers.west"] = world.barriers.blocked_west
     np.savez(path, meta=np.array(json.dumps(meta)), **arrays)
     return path
 
@@ -131,6 +136,11 @@ def load(world, path: Path) -> None:
         world.plants.biomass[...] = archive["plants.biomass"]
         world.plants.soil_nutrients[...] = archive["plants.soil_nutrients"]
         world.carrion.mass[...] = archive["carrion.mass"]
+        world.barriers.blocked_north[...] = archive["barriers.north"]
+        world.barriers.blocked_west[...] = archive["barriers.west"]
+        # Bumped so every cached derivation rebuilds against the restored fences rather than
+        # against the empty ones the world was assembled with.
+        world.barriers.revision += 1
 
     world.plants.exported_nutrients = meta["exported_nutrients"]
     world.plants.rebuild_forage()
