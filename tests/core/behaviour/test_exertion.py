@@ -20,6 +20,7 @@ from core.genetics.species import SpeciesRegistry
 from core.selection import Selection
 from core.services import ColumnOwnershipError, ColumnRegistry
 from core.world.climate import Climate, ClimateConfig
+from core.world.barriers import Barriers
 from core.world.terrain import Terrain
 
 from tests.support.genes import gene_registry
@@ -116,6 +117,7 @@ class World:
             self.terrain,
             self.genes,
             MOVEMENT_CONFIG,
+            Barriers(self.terrain),
         )
         self.fatigue = Fatigue(
             self.store,

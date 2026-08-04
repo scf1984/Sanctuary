@@ -89,6 +89,7 @@ import numpy as np
 from core.entities.store import EntityStore
 from core.selection import Selection
 from core.services import ColumnRegistry, DomainService
+from core.world.barriers import Barriers
 from core.world.climate import Climate
 from core.world.diffusion import CostAwareDiffusion, DiffusionConfig
 from core.world.terrain import Terrain
@@ -166,6 +167,7 @@ class Hydration(DomainService):
         climate: Climate,
         water: Water,
         config: HydrationConfig,
+        barriers: Barriers | None = None,
     ) -> None:
         super().__init__(store, registry)
         self.terrain = terrain
@@ -177,7 +179,7 @@ class Hydration(DomainService):
         # advanced. When water becomes dynamic (#165) this becomes a registered system beside
         # `Plants.rebuild_forage`, and its range is the knob that decides how far a herd will walk
         # for a drink.
-        self.reachable = CostAwareDiffusion(terrain, config.reachability).spread(
+        self.reachable = CostAwareDiffusion(terrain, config.reachability, barriers).spread(
             water.depth.astype(np.float32)
         )
 

@@ -1108,6 +1108,51 @@ by" hunger and no animal stands still merely because the drive that won has no m
   over the terrain grid, mirroring the plant field above. Predators locating prey (#19) and animals
   locating mates (#20) are the *same* query with a different vector — attraction toward a signature
   instead of away from one — so fear is its first reader, not its owner.
+- **A fence is a refusal, where terrain is a price** — settled in #27, which owned it, and it is
+  the second verb the player has. §2.5 calls isolation the most rewarding intervention in the game,
+  and everything it needed was built for it by other issues: the forage and water fields spread over
+  a **neighbour graph** (#93), so what arrives behind a barrier is only what came round the end of
+  it; `Movement` already visits every cell edge a step crosses (#113); and #26 already records,
+  prices and applies an intervention at a tick boundary.
+
+  **A barrier is an edge, not a cell.** A fence stands *between* two cells and does not occupy one.
+  As blocked cells it would take ground out of the world — ground that grows nothing, that nothing
+  stands on, and that would have to be excluded from the nutrient ledger and from every field's
+  normalisation. Two boolean grids hold every edge exactly once (`blocked_north`, `blocked_west`),
+  so a cell's south edge *is* its neighbour's north and the two can never disagree.
+
+  **Terrain is expressed entirely through what it costs; a fence is the one thing that is not**, and
+  that distinction is deliberate rather than an exception to forget. A ridge is expensive, so an
+  animal desperate enough can pay and cross — which is exactly the pressure terrain exists to apply.
+  Priced instead of refused, a fence would be a *very steep hill*: a desperate enough animal crosses
+  it, enough animals cross eventually, and the isolation the player paid for leaks. Worse, the
+  animal that tried would empty its pool against the wire and die there, so a fence would read as a
+  killing field rather than a boundary.
+
+  **Two lattices, offset by half a cell, and missing that is what made it leak.** Elevation is
+  bilinear between nodes on the integer lattice, so a step's profile bends there and that is where
+  the cell walk samples (#113). A *cell* — which is what holds biomass, carrion and a fence — is the
+  square centred on a node, so its edges lie on the **half-integer** lattice. Walking only the node
+  crossings, a segment steps clean over a fence in its middle. And a step that lands exactly *on* a
+  cell boundary indexes to the cell beyond it, so stopping on the line reads as already through.
+  Measured before both were fixed: a 39×39 pen lost 3 of 20 penned animals per 100 ticks and gained
+  strangers at the same rate, while every direct test of the barrier passed. The walk now visits
+  both lattices and stops a thousandth of a cell short of the wire.
+
+  **Measured** (§8.5): over 400 ticks with the population growing from 133 to about 1,200 outside,
+  **not one animal crossed in either direction**.
+
+  **What a fence does not stop is scent.** `core.ecology.cues` blurs with a separable box kernel
+  rather than the neighbour-graph walk, because `sample_excluding_self` subtracts the exact diagonal
+  of that blur and the factorisation only holds for a separable kernel. So a fenced world's animals
+  smell each other through the wire, and converting the cue field is #139's. Worth knowing before
+  reading a fenced world's fear scores.
+
+  **A fence does not evict.** Whoever is inside when it goes up is inside. That is what makes it an
+  isolation rather than a round-up, and it is why *did I fence enough of them, with enough food and
+  water?* is the player's question to get wrong.
+
+  **MAJOR** under §2.8: it moves what animals do.
 - **Emergent speciation.** Genetic distance accumulates between isolated populations; past a
   threshold they can no longer interbreed and are tracked as a new species the player may name.
   This makes isolation — by fence or by terrain — the most rewarding intervention in the game.

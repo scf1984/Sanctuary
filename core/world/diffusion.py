@@ -60,6 +60,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from core.world.barriers import Barriers
 from core.world.terrain import Terrain, bilinear_sample
 
 def _passes_for(diffusion_range: float, cell_size: float) -> int:
@@ -129,11 +130,26 @@ class CostAwareDiffusion:
         ecological choice.
     """
 
-    def __init__(self, terrain: Terrain, config: DiffusionConfig) -> None:
+    def __init__(
+        self, terrain: Terrain, config: DiffusionConfig, barriers: Barriers | None = None
+    ) -> None:
         self.terrain = terrain
         self.config = config
+        self.barriers = barriers
         self.passes = _passes_for(config.range, terrain.cell_size)
-        self.conductance = _conductance(terrain, config.climb_penalty)
+        self._built_for_revision = -1
+        self._rebuild()
+
+    def _rebuild(self) -> None:
+        """Resolve the per-edge conductance for the terrain and whatever is fenced right now.
+
+        Terrain never changes, but a fence is an intervention (#27) and therefore does. Rebuilt on
+        a **revision comparison** rather than on an invalidation call, because a stamp somebody must
+        remember to set is one that is eventually not set — and the failure would be silent (§8.7):
+        the field would keep routing food straight through a fence that is standing.
+        """
+        self.conductance = _conductance(self.terrain, self.config.climb_penalty, self.barriers)
+        self._built_for_revision = -1 if self.barriers is None else self.barriers.revision
 
     def spread(self, source: np.ndarray) -> np.ndarray:
         """``(height, width)`` float32: `source` diffused over the grid it is defined on.
@@ -158,6 +174,9 @@ class CostAwareDiffusion:
                 f"source must cover the terrain grid {self.terrain.heights.shape}, "
                 f"got {source.shape}"
             )
+        if self.barriers is not None and self.barriers.revision != self._built_for_revision:
+            self._rebuild()
+
         field = np.asarray(source, dtype=np.float32)
         for _ in range(self.passes):
             field = (self.conductance * _neighbours(field)).sum(axis=0)
@@ -235,7 +254,9 @@ def _neighbours(field: np.ndarray) -> np.ndarray:
     )
 
 
-def _conductance(terrain: Terrain, climb_penalty: float) -> np.ndarray:
+def _conductance(
+    terrain: Terrain, climb_penalty: float, barriers: "Barriers | None" = None
+) -> np.ndarray:
     """``(4, height, width)`` float32: normalised passability from each cell to each neighbour.
 
     Passability falls exponentially in the *rise* from a cell to its neighbour, which is the
@@ -271,6 +292,29 @@ def _conductance(terrain: Terrain, climb_penalty: float) -> np.ndarray:
     for plane, rim in ((1, np.s_[-1, :]), (2, np.s_[0, :]), (3, np.s_[:, 0]), (4, np.s_[:, -1])):
         passable[0][rim] += passable[plane][rim]
         passable[plane][rim] = 0.0
+
+    if barriers is not None:
+        # A fenced edge conducts nothing, and its weight returns to the cell itself — the identical
+        # treatment the world's rim gets above, for the identical reason: spreading it sideways
+        # instead would break the walk's symmetry and pile signal up against the fence, so a forager
+        # standing at the wire would read a gradient pointing *into* it (#27).
+        #
+        # This is the whole of why a fence is an intervention rather than a multiplier (§2.5): the
+        # operator is a walk over the neighbour graph, so what arrives behind a barrier is only what
+        # came round the end of it. Nothing here attenuates; an edge is simply not there.
+        #
+        # Plane order is self, north, south, west, east, matching `_neighbours`. `blocked_north[r]`
+        # is the edge above row r, which is that row's *north* neighbour and row r-1's *south* one,
+        # so each grid writes two planes and the pair can never disagree.
+        north, west = barriers.blocked_north, barriers.blocked_west
+        for plane, blocked in (
+            (1, north),
+            (2, np.roll(north, -1, axis=0)),
+            (3, west),
+            (4, np.roll(west, -1, axis=1)),
+        ):
+            passable[0] += np.where(blocked, passable[plane], 0.0)
+            passable[plane] = np.where(blocked, 0.0, passable[plane])
 
     # Every cell conducts to itself, so the total is never zero and no guard is needed here.
     return passable / passable.sum(axis=0)
