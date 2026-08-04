@@ -23,6 +23,7 @@ _COLUMN_NAMES = (
     "energy",
     "age",
     "health",
+    "dehydration",
     "exertion",
     "species_id",
     "drive_scores",
@@ -43,6 +44,7 @@ _COLUMN_NAMES = (
 # so an ordinary allocation is unaffected and a recycled row never keeps its predecessor's years.
 _SEEDABLE_COLUMN_NAMES = frozenset(_COLUMN_NAMES) - {
     "alive",
+    "dehydration",
     "exertion",
     "choice_heading",
     "choice_moving",
@@ -57,6 +59,7 @@ _SEEDABLE_COLUMN_NAMES = frozenset(_COLUMN_NAMES) - {
 # pass and this one is the loop that enforces it — `alive` belongs to the first and not the second.
 _CLEARED_ON_ALLOCATE = (
     "exertion",
+    "dehydration",
     "choice_heading",
     "choice_moving",
     "choice_urge",
@@ -97,6 +100,10 @@ class EntityStore:
       energy: float32, energy units.
       age: int64, ticks lived — the tick is the only clock (CLAUDE.md §2.1).
       health: float32, unit-free fraction, 0 (dead) to 1 (full health).
+      dehydration: float32, dimensionless in [0, 1] — how much of its water reserve an entity has
+          lost, 0 fully watered and 1 completely dry. Owned by `core.ecology.hydration.Hydration`.
+          A *deficit* rather than a level so that clearing a reused row to zero means "a newborn is
+          not thirsty"; stored the other way up, zero would mean born dry (#156).
       exertion: float32, work per unit of expressed body size — recent effort, accumulated by
           movement and shed each tick by `core.behaviour.exertion.Exertion`, which owns it. Not
           energy units: the size-independent half of the movement bill, so one saturation constant
@@ -160,6 +167,7 @@ class EntityStore:
         self.energy = np.zeros(capacity, dtype=np.float32)
         self.age = np.zeros(capacity, dtype=np.int64)
         self.health = np.zeros(capacity, dtype=np.float32)
+        self.dehydration = np.zeros(capacity, dtype=np.float32)
         self.exertion = np.zeros(capacity, dtype=np.float32)
         self.species_id = np.full(capacity, -1, dtype=np.int32)
         self.drive_scores = np.zeros((capacity, self._n_drives), dtype=np.float32)

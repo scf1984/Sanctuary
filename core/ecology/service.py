@@ -72,7 +72,14 @@ class Ecology(DomainService):
         """
         mask = selection.to_mask()
         temperature = self.climate.temperature_at(self.store.x[mask], self.store.y[mask])
-        return self.metabolism.upkeep(self.genetics.expressed(selection), temperature)
+        base = self.metabolism.upkeep(self.genetics.expressed(selection), temperature)
+        # A dry animal costs more to run, and that is the whole of how dehydration kills (#156):
+        # it empties the pool faster, `starving` reads the empty pool and `Death` frees the row,
+        # both unchanged. A `dehydration >= 1 -> dead` branch would be a second mortality path no
+        # invariant covers, and every future depletion mechanic would copy it.
+        return base * (
+            1.0 + self.metabolism.config.dehydration_penalty * self.store.dehydration[mask]
+        )
 
     def drain(self, selection: Selection) -> None:
         """Charge one tick of upkeep to `selection`, flooring the pool at zero.

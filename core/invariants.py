@@ -174,6 +174,30 @@ def no_entity_leaves_world_bounds(
     return check
 
 
+def no_alive_entity_is_more_than_dry(store: EntityStore) -> Optional[Violation]:
+    """Flag alive rows whose `dehydration` has left [0, 1] (#156).
+
+    The column is a *fraction* of a reserve, so both ends are physical rather than conventional: an
+    animal cannot lose more water than it has, and it cannot hold more than full. It is asserted
+    rather than clamped in `Hydration` because the bound is what makes the upkeep penalty bounded —
+    past 1 a dry animal would be charged arbitrarily rather than merely fatally, and below 0 a
+    *drink* would make an animal cheaper to run than a watered one, which is a free lunch reached
+    by standing in a lake.
+
+    Needs no closure: unlike the world bounds or the nutrient ledger, the range is a property of
+    what the column *is* and not of any world's configuration, so there is nothing to bind.
+    """
+    living = Selection.from_mask(store.alive)
+    if not len(living):
+        return None
+    mask = living.to_mask()
+    deficit = store.dehydration[mask]
+    outside = (deficit < 0.0) | (deficit > 1.0)
+    return _rows_violation(
+        np.flatnonzero(mask)[outside], "alive entities whose dehydration left [0, 1]"
+    )
+
+
 def no_entity_exceeds_its_top_speed(movement: Movement) -> Predicate:
     """Build a predicate flagging alive rows travelling faster than their expressed `speed` gene.
 
@@ -265,6 +289,9 @@ def default_registry(
     registry = InvariantRegistry()
     registry.register("no_alive_entity_occupies_a_free_row", no_alive_entity_occupies_a_free_row)
     registry.register("no_alive_entity_has_negative_energy", no_alive_entity_has_negative_energy)
+    registry.register(
+        "no_alive_entity_is_more_than_dry", no_alive_entity_is_more_than_dry
+    )
     registry.register(
         "no_entity_leaves_world_bounds", no_entity_leaves_world_bounds(min_x, max_x, min_y, max_y)
     )

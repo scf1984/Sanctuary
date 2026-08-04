@@ -44,6 +44,7 @@ PLANTS_CONFIG = PlantsConfig(
 )
 
 METABOLISM_CONFIG = MetabolismConfig(
+    dehydration_penalty=0.0,
     basal_rate=1.0,
     thermoregulation_rate=0.5,
     neutral_temperature=20.0,

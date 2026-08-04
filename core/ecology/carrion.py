@@ -121,7 +121,7 @@ class Carrion:
         mass = np.asarray(mass, dtype=np.float64)
         if np.any(mass < 0.0):
             raise ValueError("carrion deposit must be non-negative; nothing un-dies")
-        rows, cols = self.plants._cell_indices(x, y)
+        rows, cols = self.terrain.cell_indices(x, y)
         np.add.at(self.mass, (rows, cols), mass)
 
     def graze(self, x: np.ndarray, y: np.ndarray, demand: np.ndarray) -> np.ndarray:
@@ -140,7 +140,7 @@ class Carrion:
         if np.any(demand < 0.0):
             raise ValueError("carrion demand must be non-negative")
 
-        rows, cols = self.plants._cell_indices(x, y)
+        rows, cols = self.terrain.cell_indices(x, y)
         flat_cell = rows * self.mass.shape[1] + cols
         n_cells = self.mass.size
 

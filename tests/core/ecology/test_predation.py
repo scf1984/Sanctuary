@@ -50,6 +50,7 @@ GENETICS_CONFIG = GeneticsConfig(mutability_gene="mutability", drift_margin=2.0)
 # Nothing here charges upkeep: these tests are about what a strike moves, and a basal drain would
 # put a second withdrawal in every assertion for no gain.
 METABOLISM_CONFIG = MetabolismConfig(
+    dehydration_penalty=0.0,
     basal_rate=0.0,
     thermoregulation_rate=0.0,
     neutral_temperature=25.0,

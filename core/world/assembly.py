@@ -79,6 +79,7 @@ from core.ecology.cues import CueField, CueFieldConfig, Scent, ScentGenes
 from core.ecology.death import Death
 from core.ecology.diet import Diet, DietConfig
 from core.ecology.feeding import Feeding, FeedingConfig
+from core.ecology.hydration import Hydration, HydrationConfig
 from core.ecology.metabolism import Metabolism, MetabolismConfig
 from core.ecology.plants import Plants, PlantsConfig
 from core.ecology.predation import Predation, PredationConfig
@@ -106,7 +107,9 @@ TICK_ORDER: tuple[str, ...] = (
     "movement",
     "exertion_recovery",
     "feeding",
+    "drinking",
     "predation",
+    "dehydration",
     "metabolic_upkeep",
     "death",
     "decomposition",
@@ -156,6 +159,7 @@ class WorldConfig:
     feeding: FeedingConfig
     predation: PredationConfig
     carrion: CarrionConfig
+    hydration: HydrationConfig
     cue_field: CueFieldConfig
     metabolism: MetabolismConfig
     genetics: GeneticsConfig
@@ -214,6 +218,7 @@ class World:
     feeding: Feeding
     predation: Predation
     carrion: Carrion
+    hydration: Hydration
     death: Death
     conception: Conception
     exertion: Exertion
@@ -278,6 +283,7 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
     # animal side, and two instances would be two readings of one gene that could disagree.
     diet = Diet(genes, config.diet)
     carrion = Carrion(terrain, plants, config.carrion)
+    hydration = Hydration(store, columns, terrain, climate, water, config.hydration)
     feeding = Feeding(store, plants, carrion, genetics, ecology, diet, genes, config.feeding)
     predation = Predation(
         store, ecology, genetics, carrion, diet, genes, config.feeding, config.predation
@@ -305,7 +311,7 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
     )
     drives = (
         hunger,
-        Thirst(store, climate, genetics, genes, config.thirst),
+        Thirst(store, hydration, genetics, genes, config.thirst),
         Fear(store, genetics, scent, genes, config.fear),
         Lust(store, ecology, genetics, scent, genes, config.lust),
         Fatigue(store, exertion, genetics, terrain, genes, config.fatigue),
@@ -340,6 +346,7 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
         feeding,
         predation,
         carrion,
+        hydration,
         death,
         aging,
         conception,
@@ -374,6 +381,7 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
         feeding=feeding,
         predation=predation,
         carrion=carrion,
+        hydration=hydration,
         death=death,
         conception=conception,
         exertion=exertion,
@@ -421,6 +429,7 @@ def _build_systems(
     feeding: Feeding,
     predation: Predation,
     carrion: Carrion,
+    hydration: Hydration,
     death: Death,
     aging: Aging,
     conception: Conception,
@@ -477,7 +486,9 @@ def _build_systems(
         "movement": move_chosen,
         "exertion_recovery": lambda: exertion.recover(living()),
         "feeding": lambda: feeding.feed(living()),
+        "drinking": lambda: hydration.drink(living()),
         "predation": lambda: predation.strike(living(), rng),
+        "dehydration": lambda: hydration.lose(living()),
         "metabolic_upkeep": lambda: ecology.drain(living()),
         "death": lambda: death.reap(living()),
         "carrion_scent_rebuild": lambda: carrion.rebuild_scent(),

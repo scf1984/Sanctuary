@@ -20,6 +20,10 @@ def make_metabolism(registry=GENE_REGISTRY, **overrides):
     defaults = dict(
         basal_rate=1.0,
         thermoregulation_rate=0.5,
+        # Zero here on purpose: `Metabolism` prices a phenotype, and the dehydration multiplier is
+        # applied by `Ecology.upkeep` against the column (#156). A non-zero value would put a term
+        # in these assertions that this module does not read.
+        dehydration_penalty=0.0,
         neutral_temperature=20.0,
         insulation_gene="insulation",
     )

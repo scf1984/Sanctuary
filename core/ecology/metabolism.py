@@ -58,6 +58,12 @@ class MetabolismConfig:
         starve, which is a free lunch reached by expressing less rather than by evolving more.
     thermoregulation_rate: energy units per tick per degree C of deviation from
         `neutral_temperature`, for an entity with no insulation.
+    dehydration_penalty: how much more a completely dry animal costs to run, as a multiple of its
+        ordinary upkeep — 0 means dehydration is free and the mechanic does not exist, 10 means a
+        dry animal pays eleven times over. **This is the whole of how thirst kills** (#156): there
+        is no dehydration death check anywhere, only a pool that empties faster. Must be tuned
+        against `HydrationConfig.loss_rate` as one pair (§2.1) — the two together decide how many
+        ticks from a full reserve to death, and either alone says nothing.
     neutral_temperature: degrees C at which thermoregulation costs nothing. Deviation is
         unsigned — holding a body above a cold world or below a hot one are both work.
     insulation_gene: the gene whose expressed value damps thermoregulation cost. It must itself
@@ -68,6 +74,7 @@ class MetabolismConfig:
 
     basal_rate: float
     thermoregulation_rate: float
+    dehydration_penalty: float
     neutral_temperature: float
     insulation_gene: str
 

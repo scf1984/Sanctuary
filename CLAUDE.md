@@ -102,8 +102,8 @@ import order or from whatever sequence a test happened to use. Settled order, ow
 | 3 | drive scoring / option sampling | |
 | 4 | movement | acts on this tick's decision, not a stale one |
 | 5 | exertion recovery | immediately **after** movement, the only thing that adds to the column: the tick's effort is spent and then the tick's rest is taken. Whatever reads `exertion` therefore always reads a recovered value, never a raw one (#107) |
-| 6 | feeding | you eat where you arrived, not where you left |
-| 7 | metabolic upkeep | **after feeding**: an animal standing on a full meadow must not be killed by upkeep it could have paid. "Died on top of food" reads as a bug even when the arithmetic is right |
+| 6 | feeding, then drinking | you eat and drink where you arrived, not where you left |
+| 7 | dehydration, then metabolic upkeep | **after feeding**: an animal standing on a full meadow must not be killed by upkeep it could have paid. "Died on top of food" reads as a bug even when the arithmetic is right, and "died of thirst in a lake" reads the same way. Water loss precedes upkeep so the tick's bill reflects the tick's dryness (#156) |
 | 8 | death and decomposition | starvation is only meaningful once the tick's upkeep is charged |
 | 9 | age increment | closes a whole tick of living, and runs **before** births — see below |
 | 10 | reproduction | **after death**, so rows freed this tick are immediately reusable and a world at capacity can still breed |
@@ -585,6 +585,67 @@ by" hunger and no animal stands still merely because the drive that won has no m
   is **reproductive isolation**, which is #16. That is the design's own claim arriving as a
   measurement rather than an argument: a trophic pyramid needs speciation, and speciation is
   deferred until a world can be watched. Recorded on #179 rather than tuned around.
+
+- **Thirst is a deficit that raises the cost of living** — settled in #156, which owned it, and it
+  is the last of #126's paralysed drives to get a mechanic. `Thirst` had scored since #22 with
+  nothing to act on: no hydration column, no way to drink, no consequence for never drinking. Both
+  world configs held its weight an order of magnitude below every other drive, and said in a comment
+  that this was a workaround rather than an ecology.
+
+  ```
+  dehydration ← min(dehydration + loss_rate × (1 + heat_scaling × heat above neutral), 1)
+  dehydration ← max(dehydration − drink_rate, 0)          standing at water
+  upkeep      ← upkeep × (1 + dehydration_penalty × dehydration)
+  ```
+
+  **The column is a deficit, not a level, and that is what makes a newborn safe.** `dehydration` is
+  0 for a watered animal, so clearing a reused row to zero means "not thirsty" — the same reset
+  every other behavioural column already gets. Stored as a *reserve*, zero would mean born
+  completely dry, and every young would die in its first tick unless something remembered to seed
+  it: a rule nobody would notice was missing until births existed. It is `exertion`'s shape (#107)
+  for `exertion`'s reason, and the two are deliberately identical in kind.
+
+  **It is a fraction, so body size cancels.** A large animal holds more water and loses more, both
+  scaling together, so one loss rate means the same thing to a mouse and to an elephant — #107's
+  argument again. A capacity in water units would need a second constant relating size to reserve
+  and would buy nothing the fraction does not already say.
+
+  **Death by dehydration falls out; there is no dehydration check anywhere.** A dry animal costs
+  more to run, so it empties its pool and dies through `Ecology.starving` and `Death`, both
+  unchanged. That is the shape §2.5 already settles for senescence, and the reason the repository
+  has one answer to "how does a failing body kill its owner" — a `dehydration >= 1 → dead` branch
+  would be a second mortality path no invariant covers and every future depletion mechanic would
+  copy. It also gets the ecology right: a parched animal is not on a timer, it is **expensive**, so
+  it must eat more while it should be drinking, and thirst and hunger compete for the same animal's
+  next heading rather than taking turns.
+
+  **Heat moved from wanting to losing.** The old thirst score read ambient temperature directly;
+  that term is not deleted but relocated, because heat does not make an animal want water, it makes
+  an animal lose water, and wanting follows from having lost. Once it is a rate rather than a score,
+  one number — the deficit — is both the urgency and the thing drinking removes.
+
+  **Drinking is a rate, and that is what makes a waterhole dangerous.** A drink spans ticks like a
+  meal. With water static (#165 — a lake cannot shrink) there is no depletion to contend over, so
+  **time at the water's edge is the only cost a waterhole can charge**, and it is the real one: an
+  animal standing still by a lake is an animal a predator can reach (#179). It costs no energy, for
+  the reason resting does not: the cost was paid walking there.
+
+  **Finding water is a diffused field, exactly as finding food is**, spread by the same cost-aware
+  operator (#93) and gated by the same acuity threshold. Sampling `Water.is_drinkable_at` at the
+  candidate headings was rejected in design: candidates sit one `look_ahead` away and lakes are
+  sparse, so a binary reading lets thirst steer only when a candidate lands *on* water — #126 again
+  in a new place. The field is **built once and never rebuilt**, because water is derived from
+  terrain and never advanced; when #165 makes it dynamic this becomes a per-tick system beside
+  `rebuild_forage`.
+
+  **The measured consequence is that the workaround is gone.** With the thirst weight founded like
+  every other drive — `(0.6, 1.4)` where it sat at `(0.1, 0.3)` — the demo world runs 900 ticks and
+  *grows*, 200 founders to 999 and 322 on two seeds, with mean dehydration settling at 0.12–0.22
+  and the driest animals reaching 1.0 and dying. `test_a_flat_drives_weight_cannot_change_the_
+  decision` records the crossing: thirst was in that test's list of drives whose weight provably
+  cannot move a decision, and it is now in the control group beside hunger.
+
+  **MAJOR** under §2.8: it moves what animals do.
 
 - **Foraging perception is a diffused field; foraging *choice* is the gradient of it** — decided in
   #93, which owned it. `core.world.diffusion.CostAwareDiffusion` spreads standing crop over the

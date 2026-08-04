@@ -42,13 +42,13 @@ from core.behaviour.exertion import Exertion
 from core.ecology.carrion import Carrion
 from core.ecology.cues import Scent
 from core.ecology.diet import Diet
+from core.ecology.hydration import Hydration
 from core.ecology.plants import Plants
 from core.ecology.service import Ecology
 from core.entities.store import EntityStore
 from core.genetics.service import Genetics
 from core.genetics.registry import GeneRegistry, Unit
 from core.selection import Selection
-from core.world.climate import Climate
 from core.world.terrain import Terrain
 
 
@@ -226,34 +226,43 @@ class Hunger:
 class ThirstConfig:
     """Per-world tuning for the thirst drive.
 
-    weight_gene: the gene whose expressed value multiplies this drive's 0-1 shape. A gene
-        rather than a constant, so temperament evolves rather than being designed (§2.5,
-        #23). Read as a magnitude: a negative weight would invert the drive.
-    onset_temperature: degrees C below which an animal wants no water at all.
-    saturation_temperature: degrees C at and above which thirst is maximal. Must exceed
-        `onset_temperature`; the two being equal would make thirst a step function of the climate
-        field and every animal on one side of a contour maximally thirsty at once.
+    weight_gene: the gene whose expressed value multiplies this drive's 0-1 shape. A gene rather
+        than a constant, so temperament evolves rather than being designed (§2.5, #23). Read as a
+        magnitude: a negative weight would invert the drive.
+    detection_threshold: the reachable-water reading below which an animal notices no water at all.
+        The identical rule hunger applies to forage and fear applies to scent (§2.5, #93):
+        sensitivity and range are the same parameter for a diffused field, so a threshold is what
+        stops every animal in the world detecting every lake faintly. Must be positive; at zero the
+        faintest trace anywhere counts as water found.
+
+    The temperature terms that used to live here are gone. Heat does not make an animal *want*
+    water, it makes an animal *lose* water, so `onset_temperature` and `saturation_temperature`
+    moved to `HydrationConfig` as the scaling on the loss rate (#156). Wanting then follows from
+    having lost, which is what lets one number — the deficit — be both the urgency and the thing
+    drinking removes.
     """
 
     weight_gene: str
-    onset_temperature: float
-    saturation_temperature: float
+    detection_threshold: float
 
     def __post_init__(self) -> None:
-        if self.saturation_temperature <= self.onset_temperature:
+        if self.detection_threshold <= 0:
             raise ValueError(
-                "saturation_temperature must exceed onset_temperature, got "
-                f"{self.saturation_temperature} <= {self.onset_temperature}"
+                f"detection_threshold must be positive, got {self.detection_threshold}; at zero "
+                "the faintest trace anywhere counts as water found and the gate buys nothing"
             )
 
 
 class Thirst:
-    """Wanting water, read from ambient heat at the animal's own position.
+    """Wanting water, and knowing which way it lies.
 
-    See the module docstring: there is no hydration pool to deplete, because nothing drinks yet.
-    Heat load is what the world can currently answer, and it produces the behaviour that matters
-    ecologically — hot ground pushes animals toward water and therefore toward each other, which
-    is where the competition for it will happen once drinking exists.
+    Urgency is the hydration deficit `Hydration` owns — a property of the animal, not of the ground
+    it stands on — and appeal is the reachable-water field read at each candidate heading. Keeping
+    the two apart is what lets a parched animal in dry country still read as parched rather than as
+    content, exactly as hunger separates an empty pool from a bare meadow.
+
+    Both halves were missing until #156: the drive scored ambient temperature and returned a flat
+    appeal, so it wanted water it could not find and could not have drunk if it had.
     """
 
     name = "thirst"
@@ -261,34 +270,43 @@ class Thirst:
     def __init__(
         self,
         store: EntityStore,
-        climate: Climate,
+        hydration: Hydration,
         genetics: Genetics,
         genes: GeneRegistry,
         config: ThirstConfig,
     ) -> None:
         self.store = store
-        self.climate = climate
+        self.hydration = hydration
+        self.genetics = genetics
         self.config = config
         self._weight = DriveWeight(genetics, genes, config.weight_gene)
 
-    def appeal(self, selection: Selection, x: np.ndarray, y: np.ndarray) -> np.ndarray:
-        """(n, n_options) float32: flat — thirst pulls at no direction yet.
-
-        There is no hydration column, no drinking and no dehydration (#156), so nothing here can
-        say which way water lies in a sense the animal could act on. Returning a constant makes
-        thirst **indifferent about direction while still visible in the breakdown**, which is the
-        whole point of #114: a drive without a mechanic no longer freezes the animal, it simply
-        stops steering. #156 replaces this with a reading of `Water.depth` at each candidate.
-        """
-        return np.ones_like(x, dtype=np.float32)
-
     def urgency(self, selection: Selection) -> np.ndarray:
-        """(len(selection),) float32: weighted heat load, zero below the onset temperature."""
-        mask = selection.to_mask()
-        temperature = self.climate.temperature_at(self.store.x[mask], self.store.y[mask])
-        span = self.config.saturation_temperature - self.config.onset_temperature
-        load = (temperature - self.config.onset_temperature) / span
-        return (self._weight.of(selection) * np.clip(load, 0.0, 1.0)).astype(np.float32)
+        """(len(selection),) float32: how much of its water the animal has lost, weighted.
+
+        Already in [0, 1] because the column is a fraction, so unlike hunger's pool this needs no
+        satiation constant to normalise against — how dry you are *is* how much you want to drink.
+        """
+        return (self._weight.of(selection) * self.hydration.deficit(selection)).astype(np.float32)
+
+    def appeal(self, selection: Selection, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+        """(n, n_options) float32 in [0, 1]: how much water each option leads toward.
+
+        The diffused reachable-water field sampled at each candidate and gated by
+        `detection_threshold`, then normalised by the animal's own best option — the identical
+        shape `Hunger.appeal` uses, and identical deliberately: two drives reading two fields the
+        same way is what keeps their contributions comparable once the utilities are summed.
+
+        Normalising by the best option is what makes an animal that detects nothing return **all
+        zeros** rather than a flat non-zero preference, so thirst drops out of the sum entirely and
+        cannot push an animal whichever way the numerical noise leaned.
+        """
+        reading = self.hydration.reachable_at(x, y).astype(np.float64)
+        found = np.where(reading >= self.config.detection_threshold, reading, 0.0)
+        best = found.max(axis=1, keepdims=True)
+        return np.divide(
+            found, best, out=np.zeros_like(found), where=best > 0.0
+        ).astype(np.float32)
 
 
 @dataclass(frozen=True)

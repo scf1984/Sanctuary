@@ -28,6 +28,7 @@ from core.ecology.cues import CueFieldConfig, ScentGenes
 from core.ecology.diet import DietConfig
 from core.ecology.carrion import CarrionConfig
 from core.ecology.feeding import FeedingConfig
+from core.ecology.hydration import HydrationConfig
 from core.ecology.predation import PredationConfig
 from core.ecology.metabolism import MetabolismConfig
 from core.ecology.plants import PlantsConfig
@@ -147,6 +148,7 @@ def world_config(**overrides):
         carrion=CarrionConfig(decay_rate=0.1),
         cue_field=CueFieldConfig(diffusion_range=3.0),
         metabolism=MetabolismConfig(
+            dehydration_penalty=0.0,
             basal_rate=0.05,
             thermoregulation_rate=0.01,
             neutral_temperature=20.0,
@@ -175,7 +177,14 @@ def world_config(**overrides):
         # still, and hunger is the only drive that can act today (see the assembly's docstring).
         # At equal weights thirst outscored hunger 0.30 to 0.10 in this world's climate and nothing
         # in it ever moved. Filed as #126; until then a world has to be tuned around it.
-        thirst=ThirstConfig(weight_gene="thirst_weight", onset_temperature=25.0, saturation_temperature=40.0),
+        thirst=ThirstConfig(weight_gene="thirst_weight", detection_threshold=1e-6),
+        hydration=HydrationConfig(
+            loss_rate=0.01,
+            heat_scaling=0.0,
+            neutral_temperature=20.0,
+            drink_rate=0.5,
+            reachability=DiffusionConfig(range=4.0, climb_penalty=0.5),
+        ),
         fear=FearConfig(
             weight_gene="fear_weight",
             scent_acuity_gene="scent_acuity",

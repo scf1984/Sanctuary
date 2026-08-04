@@ -47,6 +47,7 @@ CLIMB_TOLERANCE = 4.0
 # steps under test. Insulation carries a cost because MetabolismConfig requires one, and no cohort
 # below expresses it.
 FREE_METABOLISM = MetabolismConfig(
+    dehydration_penalty=0.0,
     basal_rate=0.0,
     thermoregulation_rate=0.0,
     neutral_temperature=20.0,

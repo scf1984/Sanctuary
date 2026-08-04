@@ -114,6 +114,32 @@ class Terrain:
         """Extent along y in world units."""
         return (self.heights.shape[0] - 1) * self.cell_size
 
+    def cell_indices(self, x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Grid (row, col) of the cell containing each world position.
+
+        Every field laid over this grid asks the same question — standing crop (#18), carrion
+        (#185), reachable water (#156) — so it is answered once here, where the grid is defined,
+        rather than re-derived per field. Promoted on the third repetition rather than the first
+        (§8.3); before it, one field owned a private helper and the others reached into it.
+
+        Raises ValueError outside the world, matching `bilinear_sample` — a position off the map is
+        a bug in whatever moved the entity, and defaulting it to an edge cell would let animals
+        graze, rot and drink at a border strip forever (§8.7).
+        """
+        x = np.asarray(x, dtype=np.float64)
+        y = np.asarray(y, dtype=np.float64)
+        if not (
+            np.all((x >= 0) & (x <= self.world_width))
+            and np.all((y >= 0) & (y <= self.world_height))
+        ):
+            raise ValueError("position outside terrain bounds")
+
+        # floor(v + 0.5) rather than np.round: round() is banker's rounding, so a position exactly
+        # on a cell boundary would land in different cells depending on the boundary's parity.
+        cols = np.floor(x / self.cell_size + 0.5).astype(np.int64)
+        rows = np.floor(y / self.cell_size + 0.5).astype(np.int64)
+        return rows, cols
+
     def elevation_at(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """Bilinearly interpolated elevation (world units) at continuous world positions."""
         return self._sample(self.heights, x, y)
