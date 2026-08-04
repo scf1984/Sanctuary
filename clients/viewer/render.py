@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 
-from core.ecology.plants import Plants
 from core.selection import Selection
 from core.world.terrain import Terrain
 from core.world.water import Water
@@ -48,17 +47,82 @@ _WATER_REFERENCE_DEPTH = 3.0
 # drawn in any of those would be read as terrain rather than as data laid over it.
 _LAYER_COLORS = {
     "biomass": np.array([120.0, 225.0, 40.0]),  # lime, against the ramp's dark green
+    "carrion": np.array([227.0, 73.0, 72.0]),  # red, the documented status/alarm hue
     "soil_nutrients": np.array([190.0, 70.0, 200.0]),  # violet, used by nothing else
     "moisture": np.array([40.0, 210.0, 210.0]),  # cyan, against water's deep blue
     "potential_growth": np.array([245.0, 180.0, 40.0]),  # amber
 }
 
-PLANT_LAYERS: tuple[str, ...] = tuple(_LAYER_COLORS)
-"""The plant fields that can be drawn, in the order a viewer should cycle them.
+FIELD_LAYERS: tuple[str, ...] = tuple(_LAYER_COLORS)
+"""The world fields that can be drawn, in the order a viewer should cycle them.
 
 Derived from the colour table rather than written out beside it, so a layer can never be offered
 without a tint or tinted without being offered (CLAUDE.md §4: a rule declared as data must be the
-thing that is consulted). Each name is also the attribute on `Plants` that holds the field.
+thing that is consulted).
+
+**Only one is drawn at a time**, which is why these five tints need no mutual CVD separation: they
+are never on screen together, and the readout names the active one. What each *does* need is to
+read against the terrain underneath it, which is what keeps them far apart in hue from the
+hypsometric greens and browns and from the water's blue.
+
+`carrion` is red deliberately, and it is the one layer that is not a resource: it marks where
+something was killed (#179). Red is the documented alarm hue and nothing else in this view uses
+it, so a spreading red patch is unambiguous — which is the whole point of being able to see
+predation happen at all.
+"""
+
+_LAYER_SOURCE = {
+    "biomass": ("plants", "biomass"),
+    "carrion": ("carrion", "mass"),
+    "soil_nutrients": ("plants", "soil_nutrients"),
+    "moisture": ("plants", "moisture"),
+    "potential_growth": ("plants", "potential_growth"),
+}
+"""Where each layer's array lives on a built world: `(service attribute, field attribute)`.
+
+One table rather than a naming convention, because the fields genuinely live on different services
+and `getattr(plants, layer)` stopped being true the moment a layer came from anywhere but `Plants`.
+Declared beside the colours and consulted by `field_layer`, so a layer offered without a source
+raises at the first frame rather than drawing the wrong field (§8.7).
+"""
+
+# Validated as an ordinal ramp against this viewer's own terrain (mean #6a6a64) with the dataviz
+# skill's checker: monotone lightness, every adjacent gap >= 0.06 L, light end 3.96:1 on that
+# surface, hue spread 6 degrees. One hue, light to dark, which is the rule for a magnitude.
+#
+# Orange rather than the default blue because the *surface* has already spent blue on standing
+# water: a blue animal over a blue lake is the one place this view most needs to stay readable.
+#
+# Quantised to these five steps rather than interpolated between them, for two reasons. Every
+# colour that reaches the screen is then a validated step rather than a blend nothing checked; and
+# a thousand dots read as bands, where a continuous ramp reads as mush at four pixels across.
+CONDITION_RAMP = np.array(
+    [
+        [250, 212, 196],
+        [244, 165, 130],
+        [235, 104, 52],
+        [184, 69, 29],
+        [125, 44, 15],
+    ],
+    dtype=np.uint8,
+)
+
+# A light casing around every dot. No single fill colour clears 3:1 against all of this terrain --
+# measured, the dark ramp steps vanish on dark ground (1.02:1) and the light steps on bright ground
+# (1.80:1) -- which is exactly why map marks are cased. A light ring plus a ramp that runs dark
+# gives every dot two tones, and at least one of the two separates from whatever is behind it.
+_CASING_COLOR = np.array([252, 252, 251], dtype=np.uint8)
+
+CONDITION_MODES: tuple[str, ...] = ("species", "hunger", "thirst", "age")
+"""What an entity's colour can encode, in the order a viewer should cycle them.
+
+**Every mode but the first is a deficit, and they all darken toward death.** Hunger is the energy
+an animal is short of, thirst is the water it has lost, age is how far through a life it is. Read
+the other way up -- colouring the *reserve* -- the animal in trouble would be the faintest mark on
+screen, which is precisely backwards for an instrument whose job is spotting trouble (§3.3).
+
+`species` stays first because it is what the view meant before this, and it is still the right
+answer once there is more than one species to tell apart (#16).
 """
 
 # Peak blend strength, matching the water overlay so the two read as the same kind of mark. Short
@@ -156,13 +220,13 @@ def apply_field_overlay(
     return np.clip(blended, 0.0, 255.0).astype(np.uint8)
 
 
-def plant_overlay_references(plants: Plants) -> dict[str, float]:
+def layer_references(world) -> dict[str, float]:
     """The value at which each layer's tint saturates, in that layer's own unit.
 
     Computed once from the world's static physics and then held for the run, because a scale that
     moves is a scale that hides change (see `apply_field_overlay`). Every one of these is a
-    constant for the lifetime of the world: `potential_growth` is static by construction, and
-    `initial_soil_nutrients` is a config value.
+    constant for the lifetime of the world: `potential_growth` is static by construction, and the
+    rest are config values.
 
     The numbers are chosen so that **1.0 means something ecological**, not merely "the largest
     value seen so far":
@@ -172,11 +236,21 @@ def plant_overlay_references(plants: Plants) -> dict[str, float]:
       `biomass × senescence_rate`, so with nutrients to spare those balance exactly there. A cell
       therefore reads full when it is as green as its own light, warmth and water allow, and reads
       dark when something else — nutrients, or grazing — is holding it below that.
+    - `carrion` — `strike_power`, the most one strike can take out of an equally-sized victim.
+      A cell reads full when a specialist predator has made a kill in it.
+
+      **This was `founder_energy` — a whole body — and rendering the view proved it wrong.** No
+      single strike deposits a whole body: damage is `strike_power × size ratio × animal_share ** p`
+      and the shipped world settles near a 0.3 flesh allocation, so a typical strike leaves 5.8
+      energy units and the busiest cell measured 23.3. Against 180 that is 13% alpha at the
+      *brightest* cell — a layer that is always empty, for a mechanic that is running. Scaled to
+      the force limit instead, the same cell reads 39% and a kill is something the eye can find.
     - `soil_nutrients` — the per-cell pool every cell started with. Above 1.0 is ground that has
       accumulated more than its original share, below is ground that has given it up.
     - `moisture` — 1.0, since it is already a fraction.
     - `potential_growth` — its own maximum, which is fixed because the field is.
     """
+    plants = world.plants
     light_ceiling = float(plants.potential_growth.max())
     if light_ceiling <= 0.0:
         raise ValueError(
@@ -190,22 +264,82 @@ def plant_overlay_references(plants: Plants) -> dict[str, float]:
 
     return {
         "biomass": light_ceiling / plants.config.senescence_rate,
+        "carrion": world.config.predation.strike_power,
         "soil_nutrients": plants.config.initial_soil_nutrients,
         "moisture": 1.0,
         "potential_growth": light_ceiling,
     }
 
 
-def plant_overlay(
-    base_rgb: np.ndarray, plants: Plants, layer: str, references: dict[str, float]
-) -> np.ndarray:
-    """`base_rgb` with one named plant field blended in. `layer` must be one of `PLANT_LAYERS`.
+def field_layer(world, layer: str) -> np.ndarray:
+    """The `(height, width)` array a named layer draws, fetched from wherever it lives.
 
-    `references` comes from `plant_overlay_references` and is passed in rather than recomputed, so
-    that the scale is fixed for the run even though the field under it changes every tick.
+    Fetched per frame rather than held, because these fields change every tick — biomass is grazed
+    and regrows, carrion is deposited and rots.
     """
-    color = _LAYER_COLORS[layer]
-    return apply_field_overlay(base_rgb, getattr(plants, layer), references[layer], color)
+    service, field = _LAYER_SOURCE[layer]
+    return getattr(getattr(world, service), field)
+
+
+def field_overlay(
+    base_rgb: np.ndarray, world, layer: str, references: dict[str, float]
+) -> np.ndarray:
+    """`base_rgb` with one named world field blended in. `layer` must be one of `FIELD_LAYERS`.
+
+    `references` comes from `layer_references` and is passed in rather than recomputed, so that the
+    scale is fixed for the run even though the field under it changes every tick.
+    """
+    return apply_field_overlay(
+        base_rgb, field_layer(world, layer), references[layer], _LAYER_COLORS[layer]
+    )
+
+
+def condition_colors(world, drawn: np.ndarray, mode: str) -> np.ndarray:
+    """(n_drawn, 3) uint8: one colour per drawn entity, encoding `mode`.
+
+    `drawn` is the occupancy mask `live_positions` returned, so this selects exactly the rows being
+    painted — never capacity, which would colour corpses (#119).
+
+    Every mode but `species` is a **deficit quantised to `CONDITION_RAMP`**, so darker always
+    means closer to death and every colour on screen is a validated ramp step. See
+    `CONDITION_MODES` for why it is the deficit rather than the reserve.
+
+    Hunger is measured against `HungerConfig.satiation_energy` — the pool level the drive itself
+    treats as "wants nothing" — rather than against the population's current maximum, for the
+    reason `apply_field_overlay` gives about references: a scale read off the population rescales
+    every frame, so a starving herd and a fed one would render identically.
+    """
+    if mode == "species":
+        return species_colors(world.store.species_id[drawn])
+
+    if mode == "hunger":
+        deficit = 1.0 - world.store.energy[drawn] / world.config.hunger.satiation_energy
+    elif mode == "thirst":
+        deficit = world.store.dehydration[drawn]
+    elif mode == "age":
+        # Against the oldest an animal in this world has ever been, which is the only scale the
+        # world offers: there is no lifespan gene and no death clock (§2.5), so "old" is a fact
+        # about the population rather than a constant anybody chose.
+        oldest = max(int(world.store.age.max()), 1)
+        deficit = world.store.age[drawn] / oldest
+    else:
+        raise ValueError(f"unknown condition mode {mode!r}; expected one of {CONDITION_MODES}")
+
+    step = np.clip(
+        (np.clip(deficit, 0.0, 1.0) * len(CONDITION_RAMP)).astype(np.int64),
+        0,
+        len(CONDITION_RAMP) - 1,
+    )
+    return CONDITION_RAMP[step]
+
+
+def casing_color() -> tuple[int, int, int]:
+    """The ring drawn around every entity dot, so a mark reads against any terrain.
+
+    See `_CASING_COLOR`: no single fill clears 3:1 against this view's whole terrain range, which
+    is why the mark is two-toned rather than one.
+    """
+    return tuple(int(channel) for channel in _CASING_COLOR)
 
 
 def species_colors(species_id: np.ndarray) -> np.ndarray:

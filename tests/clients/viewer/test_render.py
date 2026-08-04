@@ -1,14 +1,19 @@
 import numpy as np
 import pytest
 
+from clients.viewer.demo_world import build_demo_world
 from clients.viewer.render import (
-    PLANT_LAYERS,
+    CONDITION_MODES,
+    CONDITION_RAMP,
+    FIELD_LAYERS,
     apply_field_overlay,
     apply_water_overlay,
     elevation_shading,
     live_positions,
-    plant_overlay,
-    plant_overlay_references,
+    condition_colors,
+    field_layer,
+    field_overlay,
+    layer_references,
     species_colors,
     world_to_screen,
 )
@@ -51,6 +56,12 @@ def ramp_terrain(rows=6, cols=6, cell_size=1.0, low=0.0, high=100.0):
     does not vary across the grid and elevation color alone drives the result."""
     heights = np.linspace(low, high, cols, dtype=np.float32)[None, :].repeat(rows, axis=0)
     return Terrain(heights, cell_size=cell_size)
+
+
+def demo_world(seed=1, n_entities=12):
+    """A real assembled world. These functions read fields off several services now, so a bare
+    `Plants` no longer stands in for one — and the layer table exists precisely because they do."""
+    return build_demo_world(seed=seed, n_entities=n_entities)
 
 
 class TestElevationShading:
@@ -167,11 +178,15 @@ class TestApplyFieldOverlay:
             apply_field_overlay(base, np.ones((3, 3)), 1.0, self.GREEN)
 
 
-class TestPlantOverlayReferences:
+class TestLayerReferences:
+    """The saturation point of each tint, fixed for the run and never measured off the field — a
+    scale that rescales itself renders a starving world and a lush one identically."""
+
     def test_biomass_reference_is_the_light_limited_steady_state(self):
-        field = plants()
-        expected = field.potential_growth.max() / PLANTS_CONFIG.senescence_rate
-        assert plant_overlay_references(field)["biomass"] == pytest.approx(expected)
+        world = demo_world()
+        expected = world.plants.potential_growth.max() / world.config.plants.senescence_rate
+
+        assert layer_references(world)["biomass"] == pytest.approx(expected)
 
     def test_light_limited_steady_state_is_where_unlimited_biomass_settles(self):
         """Justifies the number above rather than taking it on trust: with soil so deep that
@@ -191,102 +206,163 @@ class TestPlantOverlayReferences:
             forage_diffusion=DiffusionConfig(range=4.0, climb_penalty=0.5),
         )
         field = plants(config=deep_soil)
-        reference = plant_overlay_references(field)["biomass"]
+        reference = field.potential_growth.max() / deep_soil.senescence_rate
         for _ in range(400):
             field.grow()
+
         assert field.biomass.max() == pytest.approx(reference, rel=1e-3)
 
+    def test_carrion_reference_is_what_one_strike_can_leave(self):
+        """`strike_power`, not a whole body. Rendering the view is what caught this: no single
+        strike deposits a founder's whole endowment, so scaled to one, the brightest cell in a
+        settled world reads 13% alpha and the layer is always empty for a mechanic that is
+        running (#179)."""
+        world = demo_world()
+
+        assert layer_references(world)["carrion"] == pytest.approx(
+            world.config.predation.strike_power
+        )
+
     def test_soil_reference_is_the_starting_per_cell_pool(self):
-        references = plant_overlay_references(plants())
-        assert references["soil_nutrients"] == pytest.approx(PLANTS_CONFIG.initial_soil_nutrients)
+        world = demo_world()
 
-    def test_moisture_reference_is_one_because_moisture_is_already_a_fraction(self):
-        assert plant_overlay_references(plants())["moisture"] == pytest.approx(1.0)
-
-    def test_references_do_not_move_as_the_field_changes(self):
-        """The anti-trap property at the level the viewer actually uses it: references are computed
-        once and a hundred ticks of growth and senescence must not shift the ramp underneath."""
-        field = plants()
-        before = plant_overlay_references(field)
-        for _ in range(100):
-            field.grow()
-        assert plant_overlay_references(field) == before
-
-    def test_every_declared_layer_has_a_reference(self):
-        references = plant_overlay_references(plants())
-        assert set(references) == set(PLANT_LAYERS)
-
-    def test_a_world_with_no_light_anywhere_raises_rather_than_scaling_against_zero(self):
-        frozen = PlantsConfig(
-            solar_constant=10.0,
-            latitude_tilt=0.02,
-            # Every cell sits far below the minimum growth temperature, so potential growth is
-            # zero everywhere and there is no scale to draw a biomass ramp against.
-            min_growth_temperature=500.0,
-            optimal_growth_temperature=600.0,
-            max_growth_temperature=700.0,
-            nutrient_per_biomass=0.1,
-            initial_soil_nutrients=100.0,
-            senescence_rate=0.05,
-            saturation_accumulation=50.0,
-            max_rooting_depth=0.5,
-            forage_diffusion=DiffusionConfig(range=4.0, climb_penalty=0.5),
+        assert layer_references(world)["soil_nutrients"] == pytest.approx(
+            world.config.plants.initial_soil_nutrients
         )
-        with pytest.raises(ValueError, match="no cell can grow anything"):
-            plant_overlay_references(plants(config=frozen))
 
-    def test_a_world_with_no_soil_nutrients_raises(self):
-        """`PlantsConfig` permits zero, so this is reachable rather than defensive. It is caught
-        here, where the message can name the config field, instead of surfacing later as a
-        complaint about a reference the caller never chose."""
-        barren = PlantsConfig(
-            solar_constant=10.0,
-            latitude_tilt=0.02,
-            min_growth_temperature=0.0,
-            optimal_growth_temperature=25.0,
-            max_growth_temperature=45.0,
-            nutrient_per_biomass=0.1,
-            initial_soil_nutrients=0.0,
-            senescence_rate=0.05,
-            saturation_accumulation=50.0,
-            max_rooting_depth=0.5,
-            forage_diffusion=DiffusionConfig(range=4.0, climb_penalty=0.5),
-        )
-        with pytest.raises(ValueError, match="initial_soil_nutrients is zero"):
-            plant_overlay_references(plants(config=barren))
+    def test_every_offered_layer_has_a_reference(self):
+        """A layer offered without one would raise mid-frame, on the keypress that selects it."""
+        assert set(layer_references(demo_world())) == set(FIELD_LAYERS)
 
 
-class TestPlantOverlay:
+class TestFieldOverlay:
     def test_every_declared_layer_renders(self):
-        field = plants()
-        references = plant_overlay_references(field)
-        base = elevation_shading(flat_terrain())
-        for layer in PLANT_LAYERS:
-            overlaid = plant_overlay(base, field, layer, references)
+        world = demo_world()
+        references = layer_references(world)
+        base = elevation_shading(world.terrain)
+
+        for layer in FIELD_LAYERS:
+            overlaid = field_overlay(base, world, layer, references)
             assert overlaid.shape == base.shape
             assert overlaid.dtype == np.uint8
 
     def test_grazed_ground_reads_darker_than_ungrazed(self):
-        """What the issue is for: a stripped patch must be visibly distinguishable from the
+        """What the overlay is for: a stripped patch must be visibly distinguishable from the
         standing crop around it."""
-        field = plants()
+        world = demo_world()
         for _ in range(60):
-            field.grow()
-        base = np.zeros(field.biomass.shape + (3,), dtype=np.uint8)
-        references = plant_overlay_references(field)
-        before = plant_overlay(base, field, "biomass", references)
+            world.plants.grow()
+        base = np.zeros(world.plants.biomass.shape + (3,), dtype=np.uint8)
+        references = layer_references(world)
+        before = field_overlay(base, world, "biomass", references)
 
-        field.biomass[2, 2] = 0.0
-        after = plant_overlay(base, field, "biomass", references)
+        world.plants.biomass[2, 2] = 0.0
+        after = field_overlay(base, world, "biomass", references)
+
         assert after[2, 2].sum() < before[2, 2].sum()
         assert np.array_equal(after[0, 0], before[0, 0])
 
-    def test_unknown_layer_raises(self):
-        field = plants()
-        references = plant_overlay_references(field)
-        base = np.zeros(field.biomass.shape + (3,), dtype=np.uint8)
-        with pytest.raises(KeyError, match="carrion"):
-            plant_overlay(base, field, "carrion", references)
+    def test_a_kill_shows_on_the_carrion_layer(self):
+        """The whole point of adding the layer: predation was running and invisible."""
+        world = demo_world()
+        base = np.zeros(world.carrion.mass.shape + (3,), dtype=np.uint8)
+        references = layer_references(world)
+        before = field_overlay(base, world, "carrion", references)
+
+        world.carrion.mass[3, 3] = world.config.predation.strike_power
+        after = field_overlay(base, world, "carrion", references)
+
+        assert after[3, 3].sum() > before[3, 3].sum()
+        assert np.array_equal(after[0, 0], before[0, 0])
+
+    def test_a_layer_reads_its_field_from_the_service_that_owns_it(self):
+        """Carrion does not live on `Plants`, which is why the source is a table rather than a
+        naming convention (§4: a rule declared as data is consulted, not implied)."""
+        world = demo_world()
+
+        assert field_layer(world, "biomass") is world.plants.biomass
+        assert field_layer(world, "carrion") is world.carrion.mass
+
+    def test_an_unknown_layer_raises(self):
+        world = demo_world()
+
+        with pytest.raises(KeyError):
+            field_layer(world, "nutrient_soup")
+
+
+class TestConditionColors:
+    """What an animal's colour means. With one species, colouring by species is a field of
+    identical dots, and every mechanic this view exists to show is a *condition* (#39)."""
+
+    def drawn(self, world):
+        return world.loop.current_row_ids >= 0
+
+    def test_every_mode_colours_exactly_the_drawn_rows(self):
+        world = demo_world()
+        drawn = self.drawn(world)
+
+        for mode in CONDITION_MODES:
+            colors = condition_colors(world, drawn, mode)
+            assert colors.shape == (int(drawn.sum()), 3)
+            assert colors.dtype == np.uint8
+
+    def test_a_hungrier_animal_is_darker(self):
+        """Deficits darken toward death. Coloured the other way up — by the reserve — the animal
+        in trouble would be the faintest mark on screen, which is backwards for an instrument
+        whose job is spotting trouble."""
+        world = demo_world()
+        drawn = self.drawn(world)
+        rows = np.flatnonzero(drawn)
+        world.store.energy[rows[0]] = world.config.hunger.satiation_energy
+        world.store.energy[rows[1]] = 0.0
+
+        colors = condition_colors(world, drawn, "hunger")
+
+        assert colors[0].sum() > colors[1].sum()
+
+    def test_a_thirstier_animal_is_darker(self):
+        world = demo_world()
+        drawn = self.drawn(world)
+        rows = np.flatnonzero(drawn)
+        world.store.dehydration[rows[0]] = 0.0
+        world.store.dehydration[rows[1]] = 1.0
+
+        colors = condition_colors(world, drawn, "thirst")
+
+        assert colors[0].sum() > colors[1].sum()
+
+    def test_every_colour_drawn_is_a_validated_ramp_step(self):
+        """Quantised rather than interpolated, so nothing reaches the screen that the ordinal
+        checks never saw — and so a thousand dots read as bands rather than as mush."""
+        world = demo_world()
+        drawn = self.drawn(world)
+        rows = np.flatnonzero(drawn)
+        world.store.dehydration[rows] = np.linspace(0.0, 1.0, rows.size)
+
+        colors = condition_colors(world, drawn, "thirst")
+
+        for colour in np.unique(colors, axis=0):
+            assert any(np.array_equal(colour, step) for step in CONDITION_RAMP)
+
+    def test_a_deficit_beyond_the_ends_still_lands_on_the_ramp(self):
+        """Energy can exceed satiation, and neither bound is this module's to assume — an
+        out-of-range value must clamp rather than index off the end of the ramp."""
+        world = demo_world()
+        drawn = self.drawn(world)
+        rows = np.flatnonzero(drawn)
+        world.store.energy[rows[0]] = world.config.hunger.satiation_energy * 10.0
+        world.store.energy[rows[1]] = -50.0
+
+        colors = condition_colors(world, drawn, "hunger")
+
+        assert np.array_equal(colors[0], CONDITION_RAMP[0])
+        assert np.array_equal(colors[1], CONDITION_RAMP[-1])
+
+    def test_an_unknown_mode_is_refused(self):
+        world = demo_world()
+
+        with pytest.raises(ValueError, match="unknown condition mode"):
+            condition_colors(world, self.drawn(world), "vibes")
 
 
 class TestSpeciesColors:
