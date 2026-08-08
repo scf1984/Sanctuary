@@ -415,6 +415,52 @@ def live_positions(
     )
 
 
+def drag_rectangle(
+    start: tuple[int, int], now: tuple[int, int]
+) -> tuple[int, int, int, int]:
+    """`(left, top, width, height)` in pixels for a drag from `start` to `now`.
+
+    Normalised, so a box dragged up-and-left is the same box as one dragged down-and-right — a
+    player should not have to know which corner the code considers first.
+
+    Here rather than in `app.py` for #110's reason: geometry belongs somewhere a test can collect
+    it. A rectangle drawn from the wrong corner is invisible on inspection and obvious in use.
+    """
+    left, right = sorted((start[0], now[0]))
+    top, bottom = sorted((start[1], now[1]))
+    return left, top, right - left, bottom - top
+
+
+def barrier_segments(
+    barriers, world_width: float, world_height: float, screen_width: int, screen_height: int
+) -> list[tuple[int, int, int, int]]:
+    """`(x0, y0, x1, y1)` pixel segments, one per blocked edge, for drawing a fence.
+
+    A barrier lives on a cell *edge* (#27), so it draws as a line between two cells rather than as
+    a filled cell — drawing the cell would put the fence half a cell off and make a pen look one
+    cell smaller than it is.
+
+    Returns segments rather than blitting, so the layout stays testable without a display, and so
+    the caller decides colour and width (§3.3).
+    """
+    cell = barriers.terrain.cell_size
+    scale_x = screen_width / world_width if world_width > 0 else 0.0
+    scale_y = screen_height / world_height if world_height > 0 else 0.0
+    segments = []
+
+    # A cell centred on a node owns the half-open span around it, so the edge *above* row r sits at
+    # world y = (r - 0.5) * cell. Same for the edge west of column c.
+    for row, col in zip(*np.nonzero(barriers.blocked_north)):
+        y = (row - 0.5) * cell * scale_y
+        x = (col - 0.5) * cell * scale_x
+        segments.append((int(x), int(y), int(x + cell * scale_x), int(y)))
+    for row, col in zip(*np.nonzero(barriers.blocked_west)):
+        x = (col - 0.5) * cell * scale_x
+        y = (row - 0.5) * cell * scale_y
+        segments.append((int(x), int(y), int(x), int(y + cell * scale_y)))
+    return segments
+
+
 def world_to_screen(
     x: np.ndarray,
     y: np.ndarray,
