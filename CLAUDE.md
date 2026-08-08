@@ -1215,7 +1215,22 @@ by" hunger and no animal stands still merely because the drive that won has no m
 ### 2.7 Player and stakes
 
 - **Steward with constraints.** Interventions cost a limited resource. Extinctions are permanent.
-  Total collapse ends the run.
+  Total collapse ends the run — and **extinction is terminal by physics rather than by a flag**.
+  Reproduction needs two living parents, so a world that empties can never refill; `TickLoop.collapsed`
+  therefore *reads* the store rather than latching a state, and the loop stops advancing when it is
+  true. That stop is a statement about the **run**, not a rule about the simulation: the same ticks
+  would be perfectly legal, they are simply grass growing for nobody, and burning them would leave a
+  player watching an empty map advance forever with nothing saying why (§8.7).
+
+  Two distinctions the check has to make, because getting either wrong ends a run early:
+
+  - **A world that was never founded has not collapsed.** An empty fixture running systems against
+    no entities is an ordinary thing to do, so the check asks whether any id was ever *issued* as
+    well as whether one is alive — a mechanism that conflated them would make a game rule out of a
+    test harness.
+  - **A gestating young counts as alive.** A row with a negative age has not been born yet (#20)
+    and will be born whether or not its parents survive, so a world whose last two adults died
+    leaving one pregnancy is not over.
 - Interventions include fencing to isolate populations, culling (never total eradication of a
   species by a single action), terraforming, introducing species, and standing policies.
 - Metrics — biodiversity, population trends, inter-species interaction — are a secondary surface,

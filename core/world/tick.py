@@ -152,6 +152,15 @@ class TickLoop:
             self.current_row_ids,
         )
         for _ in range(n_ticks):
+            # A collapsed world is not advanced. §2.7 makes total collapse the end of a run, and
+            # extinction here is terminal by physics rather than by a flag: nothing is born without
+            # a parent, so an empty world can never refill and every further tick is grass growing
+            # for nobody. Stopping is therefore a statement about the *run*, not a rule about the
+            # simulation — the same ticks would be legal, they are simply pointless, and burning
+            # them would leave a player watching an empty map advance forever with nothing saying
+            # why (§8.7).
+            if self.collapsed:
+                break
             if self.interventions is not None:
                 self.interventions.apply_pending(self._store, self.tick_count)
             for system in self.systems:
@@ -169,6 +178,28 @@ class TickLoop:
             if self._growth is not None and grow_if_crowded(self._store, self._growth):
                 self._extend_previous_snapshot()
         self.current_positions, self.current_row_ids = self._snapshot()
+
+    @property
+    def collapsed(self) -> bool:
+        """Whether every animal is dead — the end of a run (§2.7).
+
+        Read rather than latched, because extinction cannot be undone: reproduction needs two
+        living parents, so a world that empties stays empty and a stored flag would be a second
+        copy of a fact the store already holds. That is the same argument §3.2 makes for not
+        snapshotting anything derivable.
+
+        **A world that was never founded has not collapsed**, which is why this asks whether any id
+        was ever issued rather than only whether one is alive now. The two are different states and
+        the store already distinguishes them: an empty fixture running systems against no entities
+        is an ordinary thing to do, and a mechanism that called it the end of a run would make a
+        game rule out of a harness.
+
+        **Gestating young count as alive.** A row with a negative age is an animal that has not
+        been born yet (#20), and it will be born whether or not its parents survive — so a world
+        whose last two adults died leaving one pregnancy is not over, and calling it over would end
+        a run one generation early.
+        """
+        return self._store.ids_issued > 0 and not bool(self._store.alive.any())
 
     def _extend_previous_snapshot(self) -> None:
         """Widen the opening snapshot to the store's new capacity after a growth.

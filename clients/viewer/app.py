@@ -320,7 +320,11 @@ def run(seed: int = 0, n_entities: int = 200) -> None:
             _draw_panel(screen, font, describe_entity(world, selected))
 
         status = (
-            f"{'PAUSED' if playback.paused else 'playing'} | "
+            # Collapse first and unmissable: a run that has ended must not read as one that is
+            # merely paused (§2.7). Everything after it is still true and still worth showing —
+            # the charts are how you find out *why* it ended.
+            ("*** COLLAPSED -- every animal is dead *** | " if world.loop.collapsed else "")
+            + f"{'PAUSED' if playback.paused else 'playing'} | "
             f"speed x{playback.speed:g} | tick {world.loop.tick_count} | "
             f"[tab] {layer or 'terrain'} | [v] {CONDITION_MODES[condition_index]}"
             f" | [c] charts [g] trait [e] export"
