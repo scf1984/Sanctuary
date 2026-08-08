@@ -2,7 +2,10 @@ import numpy as np
 import pytest
 
 from clients.viewer.demo_world import build_demo_world
+from core.world.barriers import Barriers
 from clients.viewer.render import (
+    barrier_segments,
+    drag_rectangle,
     CONDITION_MODES,
     CONDITION_RAMP,
     FIELD_LAYERS,
@@ -533,3 +536,58 @@ class TestWorldToScreen:
         )
         assert px[0] == 400
         assert py[0] == 200
+
+
+class TestDragRectangle:
+    """A drag is normalised, so the player never has to know which corner the code sees first."""
+
+    def test_a_downward_right_drag_is_the_box_it_looks_like(self):
+        assert drag_rectangle((10, 20), (110, 220)) == (10, 20, 100, 200)
+
+    def test_dragging_the_other_way_gives_the_same_box(self):
+        assert drag_rectangle((110, 220), (10, 20)) == drag_rectangle((10, 20), (110, 220))
+
+    def test_a_click_without_a_drag_has_no_area(self):
+        assert drag_rectangle((40, 40), (40, 40)) == (40, 40, 0, 0)
+
+
+class TestBarrierSegments:
+    """A barrier lives on a cell *edge* (#27), so it draws as a line between two cells. Drawn as a
+    filled cell instead it would sit half a cell off and a pen would look one cell smaller than the
+    one the animals are actually held by."""
+
+    def barriers(self):
+        return Barriers(flat_terrain())
+
+    # The shared fixture grid is 6x6 cells over a 5x5 world unit extent, drawn at 100 px.
+
+    def test_an_unfenced_world_draws_nothing(self):
+        assert barrier_segments(self.barriers(), 10.0, 10.0, 100, 100) == []
+
+    def test_every_blocked_edge_becomes_one_segment(self):
+        barriers = self.barriers()
+        blocked = barriers.enclose(1.0, 1.0, 4.0, 4.0)
+
+        segments = barrier_segments(barriers, 10.0, 10.0, 100, 100)
+
+        assert len(segments) == blocked
+
+    def test_a_north_edge_draws_horizontally_and_a_west_edge_vertically(self):
+        barriers = self.barriers()
+        barriers.blocked_north[3, 4] = True
+        barriers.blocked_west[4, 2] = True
+
+        horizontal, vertical = barrier_segments(barriers, 10.0, 10.0, 100, 100)
+
+        assert horizontal[1] == horizontal[3] and horizontal[0] != horizontal[2]
+        assert vertical[0] == vertical[2] and vertical[1] != vertical[3]
+
+    def test_an_edge_draws_on_the_cell_boundary_not_through_its_middle(self):
+        """The edge above row 3 is at world y = 2.5, which is 25 pixels into a 10-unit world drawn
+        at 100 pixels — not 30, which is where the cell's centre is."""
+        barriers = self.barriers()
+        barriers.blocked_north[3, 4] = True
+
+        (segment,) = barrier_segments(barriers, 10.0, 10.0, 100, 100)
+
+        assert segment[1] == 25

@@ -1472,6 +1472,21 @@ Three things about how it is drawn are rules:
 fields genuinely live on different services — `getattr(plants, layer)` stopped being true the moment
 a layer came from the carrion field.
 
+**An intervention is dragged, and the client only ever *requests* it** (#27). A fence is a
+right-drag; the box is drawn while the button is held, because a fence is priced by its perimeter
+and cannot be taken back once built. What the release does is `interventions.request(...)` and
+nothing else — the client never touches a column, so a drag and a standing policy that fires during
+an absence travel the identical path (§2.7). The refusal comes back through the status line like
+every other outcome, which is why a box thinner than a cell reads as a message rather than as
+nothing happening.
+
+**A barrier draws as a line between cells, never as a filled cell.** A fence lives on a cell *edge*,
+so filling the cell would put it half a cell off and a pen would render one cell smaller than the
+one the animals are actually held by — the same half-cell offset that made the mechanic itself leak
+(§2.5). Violet, because it is the one hue nothing else in this view uses: terrain is green and
+brown, water blue, condition orange, carrion red. **A fence has to read as the player's own mark
+rather than as something the ecology did.**
+
 **Export is a client's job and only a client's.** `core/` may perform no I/O at all (§4) and
 `metrics/` deliberately performs none either — it produces serialisable values and stops, because
 on the shared machine §3.1 is heading for, the process that records a series is not the process

@@ -21,6 +21,7 @@ from clients.viewer.charts import stack_charts, world_charts
 from clients.viewer.demo_world import build_demo_world
 from clients.viewer.export import export_history
 from core.world.cull import Cull
+from core.world.fence import Fence
 from persistence import SnapshotError, load, save
 from clients.viewer.playback import Playback
 from clients.viewer.render import (
@@ -31,7 +32,9 @@ from clients.viewer.render import (
     elevation_shading,
     live_positions,
     pick_entity,
+    barrier_segments,
     casing_color,
+    drag_rectangle,
     condition_colors,
     field_overlay,
     layer_references,
@@ -46,6 +49,10 @@ _ENTITY_RADIUS = 4
 # because the target is a few pixels across and a diagnostic tool that demands precision is a
 # diagnostic tool nobody uses.
 _PICK_RADIUS = 3.0
+# The one hue nothing else in this view uses: terrain is green and brown, water blue, the condition
+# ramp orange, carrion red. A fence is the player's own mark on the world and has to be unmistakably
+# theirs rather than something the ecology did.
+_FENCE_COLOR = (74, 58, 167)
 _PANEL_BACKGROUND = (12, 12, 14)
 _PANEL_TEXT = (232, 232, 226)
 
@@ -134,6 +141,25 @@ def _last_outcome(world) -> str:
     return f"{last.name}: {last.refusal or f'done, {world.loop.interventions.balance:g} left'}"
 
 
+def _drag_to_world(world, start, end) -> tuple[float, float, float, float]:
+    """The two screen corners of a drag, as world-unit corners for `Fence`.
+
+    Clamped into the world, because a drag that leaves the window is an ordinary thing a player
+    does and `Fence` normalises the corners itself — so the clamp is about staying inside the map,
+    not about which corner came first.
+    """
+    xs, ys = screen_to_world(
+        np.array([start[0], end[0]], dtype=np.float64),
+        np.array([start[1], end[1]], dtype=np.float64),
+        world.terrain.world_width,
+        world.terrain.world_height,
+        *_SCREEN_SIZE,
+    )
+    xs = np.clip(xs, 0.0, world.terrain.world_width)
+    ys = np.clip(ys, 0.0, world.terrain.world_height)
+    return float(xs[0]), float(ys[0]), float(xs[1]), float(ys[1])
+
+
 def _export(world, seed: int) -> str:
     """Write the recorded history beside the working directory, and say where it went.
 
@@ -193,6 +219,7 @@ def run(seed: int = 0, n_entities: int = 200) -> None:
 
     layer_index = 0
     condition_index = 0
+    fencing_from: tuple[int, int] | None = None
     selected: int | None = None
     charts_shown = True
     gene_names = world.genes.vocabulary.names
@@ -250,6 +277,16 @@ def run(seed: int = 0, n_entities: int = 200) -> None:
                     # renderer blends two snapshots (§3.3, #119). Redrawing the background is the
                     # cheapest way to be sure the overlay matches the field that just arrived.
                     redraw_background = True
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
+                fencing_from = event.pos
+            elif event.type == pygame.MOUSEBUTTONUP and event.button == 3 and fencing_from:
+                # Requested, never applied here: an intervention is recorded data drained at a tick
+                # boundary, and a client reaching into the world would be the second mutation path
+                # §2.7 exists to forbid. The refusal — a box thinner than a cell, or an empty
+                # balance — comes back through the status line like every other outcome.
+                corners = _drag_to_world(world, fencing_from, event.pos)
+                world.loop.interventions.request(Fence(world.barriers, *corners))
+                fencing_from = None
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 # Pick against the *living*, so a gestating row and a freed one are both
                 # unselectable — the first has not been born and the second is not there (#119).
@@ -309,6 +346,21 @@ def run(seed: int = 0, n_entities: int = 200) -> None:
             pygame.draw.circle(screen, casing, (screen_x, screen_y), _ENTITY_RADIUS)
             pygame.draw.circle(screen, color, (screen_x, screen_y), _ENTITY_RADIUS - 1)
 
+        for x0, y0, x1, y1 in barrier_segments(
+            world.barriers,
+            world.terrain.world_width,
+            world.terrain.world_height,
+            *_SCREEN_SIZE,
+        ):
+            pygame.draw.line(screen, _FENCE_COLOR, (x0, y0), (x1, y1), 3)
+
+        if fencing_from:
+            # Drawn while the button is held so the player can see what they are about to buy —
+            # a fence is priced by its perimeter and cannot be undone by taking it back.
+            pygame.draw.rect(
+                screen, _FENCE_COLOR, drag_rectangle(fencing_from, pygame.mouse.get_pos()), 2
+            )
+
         if charts_shown:
             _draw_charts(
                 screen,
@@ -324,6 +376,7 @@ def run(seed: int = 0, n_entities: int = 200) -> None:
             f"speed x{playback.speed:g} | tick {world.loop.tick_count} | "
             f"[tab] {layer or 'terrain'} | [v] {CONDITION_MODES[condition_index]}"
             f" | [c] charts [g] trait [e] export"
+            f" | right-drag to fence"
             f" [s] save [l] load [x] cull | click an animal to inspect"
             + (f" | {exported}" if exported else "")
             + (f" | {_last_outcome(world)}" if _last_outcome(world) else "")
