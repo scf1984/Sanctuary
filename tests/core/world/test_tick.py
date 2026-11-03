@@ -280,3 +280,73 @@ class TestDebugChecks:
         on_elapsed = time.perf_counter() - start
 
         assert off_elapsed < on_elapsed
+
+
+class TestCollapseEndsTheRun:
+    """§2.7: total collapse ends the run. Extinction is terminal by physics rather than by a flag —
+    nothing is born without a parent — so what this asserts is that the loop stops rather than that
+    a state machine latched."""
+
+    def test_a_populated_world_has_not_collapsed(self):
+        store = EntityStore(initial_capacity=4, n_drives=2, n_genes=1)
+        store.allocate(2)
+        loop = TickLoop(store, systems=())
+
+        assert not loop.collapsed
+
+    def test_an_empty_world_has(self):
+        store = EntityStore(initial_capacity=4, n_drives=2, n_genes=1)
+        ids = store.allocate(2)
+        store.release(ids)
+        loop = TickLoop(store, systems=())
+
+        assert loop.collapsed
+
+    def test_a_world_that_was_never_founded_has_not_collapsed(self):
+        """An empty fixture running systems against no entities is an ordinary thing to do. A
+        mechanism that called that the end of a run would make a game rule out of a harness."""
+        store = EntityStore(initial_capacity=4, n_drives=2, n_genes=1)
+        loop = TickLoop(store, systems=())
+
+        assert not loop.collapsed
+
+    def test_a_collapsed_world_does_not_advance(self):
+        """Not a rule about the simulation — the same ticks would be legal, they are simply grass
+        growing for nobody, and burning them leaves a player watching an empty map advance forever
+        with nothing saying why (§8.7)."""
+        store = EntityStore(initial_capacity=4, n_drives=2, n_genes=1)
+        store.release(store.allocate(2))
+        ran = []
+        loop = TickLoop(store, systems=(lambda: ran.append(1),))
+
+        loop.advance(10)
+
+        assert loop.tick_count == 0
+        assert ran == []
+
+    def test_a_world_that_empties_mid_run_stops_there(self):
+        store = EntityStore(initial_capacity=4, n_drives=2, n_genes=1)
+        ids = store.allocate(2)
+        ticks = []
+
+        def die_on_the_third_tick():
+            ticks.append(1)
+            if len(ticks) == 3:
+                store.release(ids)
+
+        loop = TickLoop(store, systems=(die_on_the_third_tick,))
+        loop.advance(50)
+
+        assert loop.tick_count == 3
+
+    def test_a_gestating_young_is_not_extinction(self):
+        """A row with a negative age has not been born yet (#20) and will be born whether or not
+        its parents survive, so a world whose last adults died leaving one pregnancy is not over.
+        Calling it over would end a run a generation early."""
+        store = EntityStore(initial_capacity=4, n_drives=2, n_genes=1)
+        adults = store.allocate(2)
+        store.allocate(1, age=np.array([-20], dtype=np.int64))
+        store.release(adults)
+        loop = TickLoop(store, systems=())
+
+        assert not loop.collapsed
