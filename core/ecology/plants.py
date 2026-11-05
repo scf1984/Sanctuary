@@ -269,7 +269,11 @@ class Plants:
         np.add.at(demand_per_cell, flat_cell, demand)
         contested = demand_per_cell[flat_cell]
         standing = self.biomass.reshape(-1)[flat_cell]
-        share = np.where(contested > 0.0, np.minimum(1.0, standing / contested), 0.0)
+        # A cell nobody asked anything of has no share to hand out. `np.where` evaluates both
+        # branches, so the denominator is masked too: dividing by the raw zero would warn on every
+        # zero-demand grazer, an ordinary path, and bury the warning that marks a real NaN (#227).
+        asked = contested > 0.0
+        share = np.where(asked, np.minimum(1.0, standing / np.where(asked, contested, 1.0)), 0.0)
         harvested = demand * share
 
         removed = np.zeros(n_cells, dtype=np.float64)

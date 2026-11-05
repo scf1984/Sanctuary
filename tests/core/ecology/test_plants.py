@@ -404,6 +404,16 @@ class TestGrazing:
         harvested = plants.graze(np.array([5.0]), np.array([5.0]), np.array([available / 4.0]))
         assert harvested[0] == pytest.approx(available / 4.0, rel=1e-9)
 
+    @pytest.mark.filterwarnings("error")
+    def test_a_grazer_that_wants_nothing_takes_nothing_and_raises_no_warning(self):
+        """A pure carnivore still passes through `graze`, with zero demand. That cell's share must
+        come out zero without a divide-by-zero RuntimeWarning: a warning that fires on an ordinary
+        path is noise that hides the one marking a real NaN (§8.7, #227)."""
+        plants = make_plants()
+        settle(plants, ticks=50)
+        harvested = plants.graze(np.array([5.0]), np.array([5.0]), np.array([0.0]))
+        assert harvested[0] == 0.0
+
     def test_negative_demand_is_rejected(self):
         plants = make_plants()
         with pytest.raises(ValueError, match="demand"):

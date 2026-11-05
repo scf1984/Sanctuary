@@ -150,7 +150,9 @@ class Carrion:
         np.add.at(demand_per_cell, flat_cell, demand)
         contested = demand_per_cell[flat_cell]
         standing = self.mass.reshape(-1)[flat_cell]
-        share = np.where(contested > 0.0, np.minimum(1.0, standing / contested), 0.0)
+        # Masked denominator for the same reason as `Plants.graze` (#227).
+        asked = contested > 0.0
+        share = np.where(asked, np.minimum(1.0, standing / np.where(asked, contested, 1.0)), 0.0)
         harvested = demand * share
 
         removed = np.zeros(n_cells, dtype=np.float64)
