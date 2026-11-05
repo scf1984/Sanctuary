@@ -122,6 +122,14 @@ class TestTheShippedTuningIsNotDegenerate:
 
         assert float(chance[0]) == 0.0
 
+    def test_scent_emission_charges_no_upkeep(self):
+        """§2.5: low emission is already a survival benefit, so any upkeep makes silence both
+        cheaper and safer and drives emission to zero in every lineage. That would spend the
+        variation #20's mate-finding counterweight needs to act on before it ever arrives (#149)."""
+        world = build_demo_world(seed=2, n_entities=10)
+
+        assert world.genes.spec("scent_emission").cost == 0.0
+
 
 class TestFramePath:
     def test_one_frames_worth_of_rendering_runs_headlessly(self):

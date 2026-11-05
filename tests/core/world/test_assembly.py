@@ -82,7 +82,16 @@ GENE_NAMES = (
 # everything else here is a quantity that cannot go negative (#104).
 CUE_GENES = (*SIGNATURE_GENES, *AVERSION_GENES[0], *AVERSION_GENES[1])
 # The genes §2.5 costs at zero: their counterweight is a selective consequence rather than upkeep.
-FREE_GENES = (*CUE_GENES, "mutability", "choice_temperature", "commitment", "haste")
+# Scent emission among them, because low emission is already a survival benefit and a cost on top
+# would drive it to zero (#149).
+FREE_GENES = (
+    *CUE_GENES,
+    "scent_emission",
+    "mutability",
+    "choice_temperature",
+    "commitment",
+    "haste",
+)
 
 GENE_REGISTRY = gene_registry(
     GENE_NAMES,
