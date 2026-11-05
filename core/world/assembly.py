@@ -38,11 +38,11 @@ no mass for a carrion field to hold (#21). What actually closes §2.5's loop is 
 returning the nutrients an animal burns to the cell it is standing in — respiration, every tick,
 for every spender — and that is a property of the pool rather than a step in the order.
 
-**Movement acts for one drive.** `Behaviour` scores all five and partitions the population by
-winner, but only hunger has somewhere to walk to today: fleeing is #24's, mate-seeking is #20's,
-thirst has no drinking mechanic, and fatigue's answer is to stay put. So the movement step moves
-foragers and leaves everyone else standing, which is the honest reading of what exists rather than
-a fabricated destination for a drive whose mechanic is not built.
+**Movement acts for every animal** (#114). `Behaviour` does not pick a winning drive. Each drive
+scores the same set of candidate positions, the utilities are summed, and every living animal
+takes one option. Staying where it is counts as an option too, so an animal that chose to rest
+still goes through the movement step, with its own position as the target. That is why the step
+below moves the whole living population rather than the subset some drive won.
 
 **Founders are naive, never authored** (§2.5, #101). Genes are uniform draws inside a per-gene
 range the caller supplies. That distinction is load-bearing rather than stylistic: hand-picking a
@@ -326,9 +326,9 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
     for drive in drives:
         behaviour.register(drive)
     if behaviour.drive_names != _DRIVE_NAMES:
-        # The store's `drive_scores` width came from _DRIVE_NAMES, and `driven_by` addresses drives
-        # by name, so the two disagreeing means a column block sized for one set of drives holding
-        # another (§8.7).
+        # The store's `drive_scores` width came from _DRIVE_NAMES, and registration order is its
+        # column order. If the two disagree, a column block sized and labelled for one set of
+        # drives is holding another (§8.7).
         raise SystemOrderError(
             f"registered drives {behaviour.drive_names} do not match {_DRIVE_NAMES}"
         )
@@ -403,8 +403,10 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
     )
 
 
-# Registration order is the column order in `drive_scores` and also the tie-break between equal
-# scores (`Behaviour`), so it is as much a rule as TICK_ORDER is and is declared the same way.
+# Registration order is the column order in `drive_scores`, so anything that reads a drive's score
+# by column depends on it. It is declared here and checked against what was registered, rather than
+# left to whatever order the drives happened to be built in. It is no longer a tie-break (#114):
+# utilities are summed, and a sum does not depend on the order it was accumulated in.
 _DRIVE_NAMES: tuple[str, ...] = ("hunger", "thirst", "fear", "lust", "fatigue")
 
 
