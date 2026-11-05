@@ -142,14 +142,13 @@ _GENES = (
     ),
     GeneSpec(
         name="scent_emission",
-        cost=0.01,
+        cost=0.0,
         expression_mode=ExpressionMode.MAGNITUDE,
         unit=Unit.DIMENSIONLESS,
         description=(
-            "Broadcast strength on the scent modality. This world charges it, which §2.5 argues is "
-            "a trap — low emission is already a survival benefit, so a cost makes silence both "
-            "cheaper and safer and drives emission to zero. Kept as-is here because changing a "
-            "cost moves outcomes (§2.8); filed separately rather than fixed in a refactor."
+            "Broadcast strength on the scent modality. Free, as §2.5 requires: low emission is "
+            "already a survival benefit, so any upkeep would make silence both cheaper and safer "
+            "and drive emission to zero. Its counterweight is being findable by mates (#20)."
         ),
     ),
     GeneSpec(
