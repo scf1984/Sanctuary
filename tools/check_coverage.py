@@ -1,4 +1,6 @@
-"""Fail if any module under core/ falls below the per-module coverage floor (#47).
+"""Fail if any measured module falls below the per-module coverage floor (#47).
+
+Which modules are measured is `[tool.coverage.run] source` in pyproject.toml, not this script.
 
 Run as `python -m tools.check_coverage` from the repository root, after a run that wrote
 `coverage.json` (see the `coverage` job in .github/workflows/ci.yml). Prints every module's figure
