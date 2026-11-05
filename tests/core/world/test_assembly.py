@@ -524,6 +524,7 @@ class TestFoundersAreNaive:
         assert np.array_equal(
             first.genetics.genes(first.founders), second.genetics.genes(second.founders)
         )
+        assert np.array_equal(first.store.choice_heading, second.store.choice_heading)
 
     def test_different_seeds_found_different_worlds(self):
         first = build_world(world_config(), seed=1)
@@ -549,6 +550,34 @@ class TestFoundersAreNaive:
         assert world.store.z[mask] == pytest.approx(
             world.terrain.elevation_at(world.store.x[mask], world.store.y[mask]), abs=1e-4
         )
+
+    def test_founders_face_no_shared_direction(self):
+        """A founder has never chosen, so a heading every founder shares would be an authored
+        bearing, and the commitment bonus would reward it on every founder's first choice (#175).
+        Each founder gets its own heading instead. The mean resultant length of n uniform bearings
+        is about 1/sqrt(n) (0.05 here), and a shared heading gives exactly 1."""
+        world = build_world(world_config(n_founders=400), seed=31)
+        heading = world.store.choice_heading[world.store.alive].astype(np.float64)
+
+        assert np.abs(np.exp(1j * heading).mean()) < 0.15
+
+
+class TestNoDirectionIsAuthored:
+    def test_the_first_choice_leans_no_way(self):
+        """The measurement #175 was filed on: across many founders, the mean cos(heading) of first
+        moves. Zero means no preferred direction, +1 means everyone went due east. With every
+        incumbent at 0 rad it read about +0.09, roughly six standard errors east. Direction should
+        come from terrain and appetite, never from a column's default value."""
+        cosines = []
+        for seed in range(24):
+            world = build_world(world_config(n_founders=200), seed=seed)
+            world.loop.advance(1)
+            moved = world.store.alive & world.store.choice_moving
+            cosines.append(np.cos(world.store.choice_heading[moved].astype(np.float64)))
+        cosine = np.concatenate(cosines)
+        standard_error = cosine.std() / np.sqrt(cosine.size)
+
+        assert abs(cosine.mean()) < 3.5 * standard_error
 
 
 class TestOneWorldIsNotAnother:

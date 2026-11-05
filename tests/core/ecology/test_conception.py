@@ -227,6 +227,22 @@ class TestTheGestatingYoung:
 
         assert ecology.energy(young) == pytest.approx([40.0])
 
+    def test_each_young_faces_a_bearing_of_its_own(self):
+        """A young has chosen nothing, but the commitment bonus rewards continuing whatever heading
+        its row holds. If every birth held the same default, a fast-breeding world would push a
+        steady eastward drift that no terrain or appetite caused (#175). So each young is given its
+        own bearing, drawn from the world's stream."""
+        store, species, _, _, conception = make_world(capacity=16)
+        couples = [(4.0 * i + 1.0, 1.0) for i in range(5)] + [(4.0 * i + 1.5, 1.0) for i in range(5)]
+        populate(store, species, couples)
+
+        conception.conceive(living(store), np.random.default_rng(3))
+
+        heading = store.choice_heading[gestating(store).to_mask()]
+        assert heading.shape[0] == 5
+        assert np.unique(heading).shape[0] == 5
+        assert np.all((heading >= 0.0) & (heading <= 2.0 * np.pi))
+
 
 class TestBirth:
     def test_a_young_is_born_when_its_age_reaches_zero(self):

@@ -117,8 +117,18 @@ class TestOnlyASteeringDriveCanChangeTheChoice:
     @pytest.mark.parametrize("steering", ["hunger_weight", "thirst_weight"])
     def test_a_steering_drives_weight_does_change_it(self, steering):
         """The control: hunger reads the forage field and thirst reads the water field, so both
-        weights reach the choice and both are under real selection."""
-        assert not np.array_equal(self.chosen(0), self.chosen(0, 10.0, steering))
+        weights reach the choice and both are under real selection.
+
+        Any seed may show it, rather than seed 0 alone. A drive that steers changes *some*
+        choices, and in one world of ~120 animals that can be very few. Seed 0 used to show thirst
+        moving 1 heading in 117 while seeds 1-3 moved 9-12, so the control rested on a single
+        marginal animal. It fell to 0 when #175 changed the founder draw, with thirst no less a
+        steering drive than before. `any` stops at the first world that shows it, so this
+        costs one or two worlds, not five."""
+        assert any(
+            not np.array_equal(self.chosen(seed), self.chosen(seed, 10.0, steering))
+            for seed in SEEDS
+        )
 
 
 class TestTheDegenerateAttractor:

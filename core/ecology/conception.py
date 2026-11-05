@@ -199,6 +199,9 @@ class Conception:
             energy=np.zeros(n, dtype=np.float32),
             species_id=self.store.species_id[first],
             genes=offspring_genes,
+            # A bearing of its own, for the same reason a founder gets one (#175). Left at zero,
+            # every birth would add another eastward incumbent, at a rate set by the birth rate.
+            choice_heading=rng.uniform(0.0, 2.0 * np.pi, (n,)).astype(np.float32),
         )
         rows = np.array([self.store._id_to_row[i] for i in ids.tolist()], dtype=np.int64)
         young = Selection.from_indices(rows, capacity=self.store.capacity)
