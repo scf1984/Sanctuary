@@ -148,6 +148,15 @@ class TestEatingItIsGrazing:
 
         assert carrion.graze(*at((3.0, 4.0)), np.array([5.0]))[0] == pytest.approx(0.0)
 
+    @pytest.mark.filterwarnings("error")
+    def test_no_appetite_on_bare_ground_takes_nothing_and_raises_no_warning(self):
+        """Zero demand on an empty cell is 0/0, numpy's invalid-value case. A pure herbivore asks
+        for no flesh at all. The share must come out zero without a RuntimeWarning, because a warning
+        that fires on an ordinary path hides the one marking a real NaN (§8.7, #227)."""
+        _, carrion = field()
+
+        assert carrion.graze(*at((3.0, 4.0)), np.array([0.0]))[0] == 0.0
+
 
 class TestRotIsAFractionRatherThanAnAmount:
     def test_every_carcass_has_the_same_half_life_whatever_its_size(self):
