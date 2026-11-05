@@ -716,8 +716,9 @@ class Fatigue:
         and the animal recovers (#107). That is what makes rest reachable without a mode, a flag or
         a state column (#114). It is identified by **zero displacement rather than by its column
         index**: `Behaviour` does put the null option last, but an option that proposes going
-        nowhere is restful because it goes nowhere, and a travelling candidate clipped onto the
-        animal's own position at a world corner is the same thing and should read the same way.
+        nowhere is restful because it goes nowhere. Since #209 `Behaviour` never offers a travelling
+        candidate that clips onto the animal's own position, so the two definitions agree on every
+        option it scores. Displacement is kept as the test because it is the reason, not the label.
 
         **Travelling is graded, not vetoed, and that is #207.** This used to return exactly 0 on
         every travelling option, so the drive's spread across options equalled its entire urgency
