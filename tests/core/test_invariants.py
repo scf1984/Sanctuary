@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+from core.ecology.carrion import Carrion, CarrionConfig
 from core.ecology.plants import Plants, PlantsConfig
 from core.world.diffusion import DiffusionConfig
 from core.entities.store import EntityStore
@@ -10,6 +11,7 @@ from core.invariants import (
     InvariantViolation,
     Violation,
     default_registry,
+    exported_nutrients_are_held,
     no_alive_entity_has_negative_energy,
     no_alive_entity_occupies_a_free_row,
     no_entity_exceeds_its_top_speed,
@@ -254,6 +256,115 @@ class TestNutrientsAreConserved:
         assert check(store) is None
 
 
+class TestExportedNutrientsAreHeld:
+    """#214: the export ledger means "grazed out and *not yet returned*", and the second half is
+    only true if every outstanding unit is somewhere — in a living body or in carrion on the ground.
+    `nutrients_are_conserved` cannot see a body that vanished holding energy, because the ledger
+    still sums to the same total; this is the check that can.
+    """
+
+    def make_world(self, energies=(10.0, 20.0)):
+        plants = make_plants()
+        carrion = Carrion(plants.terrain, plants, CarrionConfig(decay_rate=0.1))
+        store = make_store()
+        n = len(energies)
+        ids = store.allocate(
+            n,
+            x=np.full(n, 5.0, dtype=np.float32),
+            y=np.full(n, 5.0, dtype=np.float32),
+            energy=np.array(energies, dtype=np.float32),
+        )
+        # Founding is the one way bodies come to be on the ledger without having grazed, exactly
+        # as `build_world` records its founders.
+        plants.record_founding_stock(float(sum(energies)))
+        return plants, carrion, store, ids
+
+    def test_holds_when_every_outstanding_unit_is_in_a_body(self):
+        plants, carrion, store, _ = self.make_world()
+        assert exported_nutrients_are_held(plants, carrion)(store) is None
+
+    def test_a_body_released_without_returning_its_energy_trips(self):
+        """The issue's reproduction: the animal is gone, its energy is still owed, and nothing
+        holds it. `nutrients_are_conserved` passes on exactly this state."""
+        plants, carrion, store, ids = self.make_world()
+        check = exported_nutrients_are_held(plants, carrion)
+        assert nutrients_are_conserved(plants)(store) is None
+
+        store.release(ids[1:])
+
+        violation = check(store)
+        assert violation is not None
+        assert violation.rows.size == 0
+        assert "shortfall" in violation.detail
+        assert nutrients_are_conserved(plants)(store) is None  # still blind to it
+
+    def test_a_body_whose_energy_is_returned_before_release_does_not_trip(self):
+        """What `Cull.apply` does, and the correct way to remove an animal."""
+        plants, carrion, store, ids = self.make_world()
+        check = exported_nutrients_are_held(plants, carrion)
+
+        row = store.alive.nonzero()[0][1]
+        plants.return_nutrients(np.array([5.0]), np.array([5.0]), store.energy[[row]])
+        store.release(ids[1:])
+
+        assert check(store) is None
+
+    def test_energy_burned_and_excreted_does_not_trip(self):
+        """`Ecology.spend`: the energy is destroyed and its nutrients go back to the soil."""
+        plants, carrion, store, _ = self.make_world()
+        check = exported_nutrients_are_held(plants, carrion)
+
+        store.energy[0] -= 4.0
+        plants.return_nutrients(np.array([5.0]), np.array([5.0]), np.array([4.0]))
+
+        assert check(store) is None
+
+    def test_a_wound_lying_as_carrion_is_still_held(self):
+        """`Ecology.kill` then `Carrion.deposit`: flesh off a body and onto the ground is the one
+        in-flight term, and it is still owed until it rots."""
+        plants, carrion, store, _ = self.make_world()
+        check = exported_nutrients_are_held(plants, carrion)
+
+        store.energy[1] -= 15.0
+        carrion.deposit(np.array([5.0]), np.array([5.0]), np.array([15.0]))
+        assert check(store) is None
+
+        carrion.decompose()  # rots back through the ledger, so still nothing unaccounted
+        assert check(store) is None
+
+    def test_a_gestating_young_holds_what_its_parents_gave_it(self):
+        """A row with a negative age is alive and unborn (#20); its endowment was moved, not
+        burned, so it counts as held exactly like any other body."""
+        plants, carrion, store, _ = self.make_world()
+        check = exported_nutrients_are_held(plants, carrion)
+
+        store.allocate(1, age=np.array([-5], dtype=np.int64), energy=np.array([6.0], dtype=np.float32))
+        store.energy[0] -= 6.0
+
+        assert check(store) is None
+
+    def test_energy_from_nowhere_trips(self):
+        plants, carrion, store, _ = self.make_world()
+        check = exported_nutrients_are_held(plants, carrion)
+
+        store.energy[0] += 1.0
+
+        assert check(store) is not None
+
+    def test_a_dead_row_holding_stale_energy_is_not_counted(self):
+        """A released row keeps whatever its `energy` cell last held; only the living hold
+        anything."""
+        plants, carrion, store, ids = self.make_world()
+        check = exported_nutrients_are_held(plants, carrion)
+
+        row = store.alive.nonzero()[0][0]
+        plants.return_nutrients(np.array([5.0]), np.array([5.0]), store.energy[[row]])
+        store.release(ids[:1])
+
+        assert store.energy[row] > 0.0
+        assert check(store) is None
+
+
 class TestDefaultRegistry:
     def test_combines_the_entity_checks(self):
         store = make_store()
@@ -304,6 +415,28 @@ class TestDefaultRegistry:
         with pytest.raises(InvariantViolation) as excinfo:
             registry.check_all(store, tick=2)
         assert excinfo.value.invariant_name == "nutrients_are_conserved"
+
+    def test_omits_the_export_ledger_check_when_the_world_has_no_carrion(self):
+        """The check needs every place an outstanding unit can lie. A world without a carrion
+        field cannot say where meat is, so it is not asked."""
+        registry = default_registry(min_x=0, max_x=10, min_y=0, max_y=10, plants=make_plants())
+        assert "exported_nutrients_are_held" not in [i.name for i in registry._invariants]
+
+    def test_registers_the_export_ledger_check_when_given_carrion(self):
+        plants = make_plants()
+        carrion = Carrion(plants.terrain, plants, CarrionConfig(decay_rate=0.1))
+        store = make_store()
+        ids = store.allocate(1, energy=np.array([10.0], dtype=np.float32))
+        plants.record_founding_stock(10.0)
+        registry = default_registry(
+            min_x=0, max_x=10, min_y=0, max_y=10, plants=plants, carrion=carrion
+        )
+        registry.check_all(store, tick=1)  # must not raise
+
+        store.release(ids)
+        with pytest.raises(InvariantViolation) as excinfo:
+            registry.check_all(store, tick=2)
+        assert excinfo.value.invariant_name == "exported_nutrients_are_held"
 
 
 class TestFieldInvariantsUnderTheTickLoop:

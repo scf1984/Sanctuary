@@ -369,6 +369,7 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
             terrain.world_height,
             plants=plants,
             movement=movement,
+            carrion=carrion,
         ),
         debug_checks=debug_checks,
         growth=config.growth,
