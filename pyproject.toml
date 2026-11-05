@@ -58,12 +58,18 @@ select = ["E4", "E7", "E9", "F"]
 python_version = "3.12"
 ignore_missing_imports = true
 
-# Coverage measures core/, metrics/ and persistence/, the whole scope the per-module threshold applies
-# to (#47). `clients/` is still outside it — that gap is #182's, not this file's.
-# clients/viewer cannot be imported in CI at all (no pygame in a headless install, CLAUDE.md §3),
-# so including it would report a permanent false zero; tools/ is checked by running it.
+# Coverage measures every package with logic in it, the whole scope the per-module threshold applies
+# to (#47). `clients/` is included (#182) because the response to #110 was to move the viewer's
+# logic out of app.py into pygame-free modules *so that it could be tested*, and that only pays off
+# if the gate can see whether it is. tools/ is checked by running it.
 [tool.coverage.run]
-source = ["core", "metrics", "persistence"]
+source = ["core", "metrics", "persistence", "clients"]
+# app.py is the one exemption, and only because CI cannot import it: the viewer extra is never
+# installed headless (CLAUDE.md §3.2), so `import pygame` fails and it would report a permanent false
+# zero. It is far over the gate's too-small-to-judge cutoff, so the size rule in
+# tools/check_coverage.py cannot absorb it. Its own docstring says nothing worth testing may live
+# there. Any other module that grows a pygame import would need the same line, so it should not.
+omit = ["clients/viewer/app.py"]
 # Branch coverage is deliberately off. The gate exists to catch a module that arrived with no tests
 # (see tools/check_coverage.py); branch percentages would make it a measure of path exhaustiveness
 # instead, which CLAUDE.md §6 explicitly does not want carrying correctness weight here.
