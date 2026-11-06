@@ -18,6 +18,11 @@ Both casualties so far were real, and neither raised:
   invites being checked against reality rather than against this world — a metabolic rate "about
   right for a 3 kg mammal" imports Earth's calibration into a world whose tick is one sim-minute
   and whose animals get ~10² meals per lifetime (§2.1), deliberately unlike reality.
+- **Temperature (#238).** Celsius was the last grounded dimension, and the most tempting one to
+  calibrate by intuition: a reader who sees "20 °C" checks it against a spring day rather than
+  against this world's own neutral, growth band and equator. The numbers did not change when the
+  unit did — exactly as with energy — because the scale is arbitrary and what matters is that every
+  temperature is read against the others, never against Earth.
 
 A units mismatch cannot fail a test on its own — both sides are floats — so the only thing that
 keeps this fixed is a check on what the code *says*. Hence a check on prose.
@@ -53,6 +58,19 @@ GROUNDED_ENERGY_UNITS = re.compile(
 )
 
 
+# Temperature scales, the degree sign, and the abbreviations a temperature gets written with. Bare
+# "degree" is deliberately not matched — angles are legitimately in degrees (a heading, a hue) —
+# so the scale letter is what makes it a temperature: "degrees C", "deg C", "degC", "°C", and a
+# number followed by a capital scale letter ("35 C"). That last branch is case-sensitive, because
+# "2c" is a band width in `Behaviour` and a check that fires on it is a check somebody deletes.
+GROUNDED_TEMPERATURE_UNITS = re.compile(
+    r"°"
+    r"|\b(?i:celsius|centigrade|fahrenheit|kelvin)\b"
+    r"|\b(?i:deg(?:rees?)?) ?[CFK]\b"
+    r"|\b\d+(?:\.\d+)? [CFK]\b"
+)
+
+
 def _offenses(pattern: re.Pattern[str]) -> list[str]:
     """Every line under the scanned roots that names one of `pattern`'s units, as `path:line: text`."""
     return [
@@ -84,4 +102,16 @@ def test_no_energy_is_grounded_to_a_physical_unit():
     calibrate it against; `size` is an expressed gene value, not kilograms.
     """
     offenses = _offenses(GROUNDED_ENERGY_UNITS)
+    assert offenses == [], "\n".join(offenses)
+
+
+def test_no_temperature_is_grounded_to_a_physical_unit():
+    """No file under core/ or clients/ names a real-world temperature scale (#238).
+
+    Temperature is in *temperature units*, with no physical claim. What the numbers mean is fixed
+    only by each other: a cell's temperature against `neutral_temperature`, against the growth band,
+    against the equator. Reading one of them as Celsius imports Earth — "0 is where water freezes",
+    "20 is a mild day" — into a world where neither statement has any consequence.
+    """
+    offenses = _offenses(GROUNDED_TEMPERATURE_UNITS)
     assert offenses == [], "\n".join(offenses)

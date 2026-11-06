@@ -1242,18 +1242,28 @@ by" hunger and no animal stands still merely because the drive that won has no m
   never kilograms — and it is checked anyway, because grounding energy is only tempting when there
   is a body mass to calibrate it against.
 
+  **Temperature was the last (#238)**, and is now in *temperature units*. The numbers did not
+  change — 20 is still the demo world's neutral, 30 its equator — because the scale is arbitrary;
+  what changed is that "20" no longer invites being read as a mild spring day, and "0" no longer
+  as the point where water freezes, since nothing in this world freezes. A temperature means only
+  what it is against the others beside it: a cell against `neutral_temperature`, against the
+  growth band, against the equator.
+
   Two consequences worth stating, because they are what keep it fixed:
 
-  - **An absolute length gets no default; a ratio may.** `TerrainConfig.min_elevation` and
+  - **An absolute quantity gets no default; a ratio may.** `TerrainConfig.min_elevation` and
     `max_elevation` are required, because relief only means something against a world extent the
     caller chose — the range they replaced defaulted to a thousand cells' worth of climb and
     nothing noticed. A default that is a *normalisation* (`cell_size = 1.0`, one cell is one world
     unit) or a *reference point* (`sea_level_elevation = 0.0`) is fine; an arbitrary magnitude is
-    not.
+    not. The same holds for temperature: `ClimateConfig.equator_temperature` is required (#238),
+    because it is read against neutral temperatures and a growth band that already were, and a
+    default on one side of that relation is a place for the two to drift apart silently. The
+    gradients (`latitude_gradient`, `lapse_rate`) keep theirs: they are rates, and a pinned pair.
   - **A units mismatch cannot fail a test on its own**, since both sides are floats, so the check
     is on prose: `tests/test_physical_units.py` fails if anything under `core/` or `clients/` names
-    a physical length, energy or mass unit. The length check caught 17 declarations when it was
-    written and the energy check 32. It is **one module for the whole rule, not one per dimension**
+    a physical length, energy, mass or temperature unit. The length check caught 17 declarations
+    when it was written, the energy check 32 and the temperature check 13. It is **one module for the whole rule, not one per dimension**
     — the next dimension to be converted extends the table there rather than adding a third file.
 - **Animals may leave the surface.** Flight and swimming depth are real mechanics, so positions
   carry a z coordinate and the spatial index is volumetric.

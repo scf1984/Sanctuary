@@ -56,7 +56,7 @@ class MetabolismConfig:
     basal_rate: energy units per tick charged to every entity regardless of phenotype. Without it,
         a species expressing only zero-cost genes would pay nothing to stay alive and could never
         starve, which is a free lunch reached by expressing less rather than by evolving more.
-    thermoregulation_rate: energy units per tick per **squared** degree C of deviation from
+    thermoregulation_rate: energy units per tick per **squared** temperature unit of deviation from
         `neutral_temperature`, for an entity with no tolerance on that side. Quadratic rather than
         linear (#176): a linear V pushes as hard a hair off neutral as far from it, which pins a
         population's tolerances to a point and leaves selection no standing variation to act on,
@@ -71,14 +71,14 @@ class MetabolismConfig:
         is no dehydration death check anywhere, only a pool that empties faster. Must be tuned
         against `HydrationConfig.loss_rate` as one pair (§2.1) — the two together decide how many
         ticks from a full reserve to death, and either alone says nothing.
-    neutral_temperature: degrees C at which thermoregulation costs nothing. One per world, not a
+    neutral_temperature: temperature units at which thermoregulation costs nothing. One per world, not a
         gene: what a lineage evolves is how well it bears each side of it, not where it sits.
     heat_tolerance_gene: the gene whose expressed value damps the cost of being **hotter** than
         neutral, and only that side.
     cold_tolerance_gene: the same for being **colder** than neutral.
 
         Two genes rather than one symmetric `insulation` damper (#176). A symmetric damper prices
-        5 C and 35 C identically around a neutral of 20 C, so an arctic and a desert lineage evolve
+        5 and 35 identically around a neutral of 20, so an arctic and a desert lineage evolve
         toward the same animal and climate gives speciation nothing to diverge on. With one gene
         per side, a hot cell selects for heat tolerance and against cold tolerance, a cold cell the
         reverse, and a hybrid carries both at intermediate values: dead weight on one side and
@@ -152,7 +152,7 @@ class Metabolism:
 
         expressed_genes: (n, n_genes) float32 phenotype rows — unexpressed slots already zeroed
             by the caller, which is what makes an unexpressed gene cost nothing.
-        temperature: (n,) float32, degrees C, sampled at each entity's own position.
+        temperature: (n,) float32, temperature units, sampled at each entity's own position.
 
         Trait upkeep is the phenotype dotted with the cost table. Thermoregulation is the work of
         holding a body away from ambient: the square of how far the world is from

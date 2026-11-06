@@ -34,7 +34,7 @@ from core.world.climate import Climate
 from core.world.terrain import Terrain
 
 N_ENTITIES = 200
-# The demo world's typical thermal bill: its linear 0.01 per degree at the 8.0 degrees its mean
+# The demo world's typical thermal bill: its linear 0.01 per temperature unit at the 8.0 units its mean
 # cell sits from neutral, which the quadratic rate there was derived to preserve.
 TYPICAL_BILL = 0.08
 

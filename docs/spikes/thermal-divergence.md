@@ -16,15 +16,15 @@ These are unit-level facts, tested in `tests/core/ecology/test_metabolism.py` an
 `tests/core/ecology/test_selection_pressure.py`:
 
 - **The cheapest build differs by side.** Swept over a 61 × 61 grid of (heat, cold) tolerance at
-  5 C and 35 C around a neutral of 20 C, the cheapest build at 35 C carries heat tolerance and no
-  cold tolerance, and the cheapest at 5 C is its exact mirror. Under `insulation` the two curves
+  5 and 35 around a neutral of 20, the cheapest build at 35 carries heat tolerance and no
+  cold tolerance, and the cheapest at 5 is its exact mirror. Under `insulation` the two curves
   were identical to the last digit (#176's evidence).
-- **Survival crosses over.** A heat-tolerant cohort outlasts a cold-tolerant one 20 degrees above
-  neutral and loses to it 20 degrees below, in all four seeds. Neither build wins everywhere.
+- **Survival crosses over.** A heat-tolerant cohort outlasts a cold-tolerant one 20 temperature units above
+  neutral and loses to it 20 below, in all four seeds. Neither build wins everywhere.
 
 ## 2. The demo world stays viable
 
-The demo map sits entirely on the hot side of its neutral temperature (26.2-29.4 C against 20),
+The demo map sits entirely on the hot side of its neutral temperature (26.2-29.4 against 20, in temperature units),
 with a mean cell deviation of 8.0. The quadratic rate was re-derived from the linear one as
 `0.01 / 8.0 = 0.00125`, so the typical animal's bill is unchanged and only the curve's shape moved.
 
@@ -52,7 +52,7 @@ That is the expected sign, slowly.
 The demo map has no cold ground, so nothing can diverge on it. `thermal_divergence.py` builds the
 demo world with two numbers changed:
 
-- `neutral_temperature` moves to the map's **median** cell temperature (about 28.0 C), so about half
+- `neutral_temperature` moves to the map's **median** cell temperature (about 28.0), so about half
   the land is on each side;
 - `thermoregulation_rate` is set so the **mean bill over the land is the demo world's 0.08 per
   tick**. The pressure is the same; only its sign now varies in space.

@@ -130,7 +130,7 @@ def world_config(**overrides):
             cell_size=CELL_SIZE,
             seed=7,
         ),
-        climate=ClimateConfig(equator_y=(GRID - 1) * CELL_SIZE / 2),
+        climate=ClimateConfig(equator_y=(GRID - 1) * CELL_SIZE / 2, equator_temperature=30.0),
         plants=PlantsConfig(
             solar_constant=8.0,
             latitude_tilt=0.0,

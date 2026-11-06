@@ -48,7 +48,7 @@ GENE_REGISTRY = gene_registry(
 METABOLISM_CONFIG = MetabolismConfig(
     dehydration_penalty=0.0,
     basal_rate=1.0,
-    # Per squared degree (#176). The climate tests below put cohorts 20 degrees from neutral, and
+    # Per squared temperature unit (#176). The climate tests below put cohorts 20 units from neutral, and
     # 0.5 / 20 keeps that bill at the 10 per tick the linear 0.5 charged there, so the energies and
     # survival windows this file was tuned against still hold.
     thermoregulation_rate=0.025,
@@ -185,7 +185,7 @@ class TestClimateSelectsDifferentBuilds:
     @pytest.mark.parametrize("seed", range(4))
     def test_each_tolerance_wins_on_its_own_side_and_loses_on_the_other(self, seed):
         rng = np.random.default_rng(seed)
-        # 40 degC at y=0, falling 1 degC per world unit: y=0 is 20 above neutral, y=40 is 20 below.
+        # 40 at y=0, falling 1 temperature unit per world unit: y=0 is 20 above neutral, y=40 is 20 below.
         store, species, genetics, ecology = make_world(
             equator_temperature=40.0, latitude_gradient=1.0
         )

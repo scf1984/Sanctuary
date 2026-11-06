@@ -85,7 +85,7 @@ class PlantsConfig:
         things to drift apart.
     latitude_tilt: radians of solar incidence added per world unit of distance from the climate's
         equator line. Larger values pack more climate into less world.
-    min_growth_temperature, optimal_growth_temperature, max_growth_temperature: degrees C. Growth
+    min_growth_temperature, optimal_growth_temperature, max_growth_temperature: temperature units. Growth
         is zero at and beyond the two extremes and peaks at the optimum, rising and falling
         linearly between them.
     nutrient_per_biomass: nutrient units bound up in one energy unit of standing biomass. This is

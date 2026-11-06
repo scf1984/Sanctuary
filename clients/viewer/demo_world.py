@@ -344,7 +344,10 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
             cell_size=_CELL_SIZE,
             seed=seed,
         ),
-        climate=ClimateConfig(equator_y=_WORLD_EXTENT / 2.0),
+        # 30 at the equator against a neutral of 20 (below): every cell on this map sits on the hot
+        # side, which is what `thermoregulation_rate`'s re-derivation reads off. In temperature
+        # units, so 30 means only "ten above neutral" (#238).
+        climate=ClimateConfig(equator_y=_WORLD_EXTENT / 2.0, equator_temperature=30.0),
         plants=PlantsConfig(
             solar_constant=8.0,
             latitude_tilt=0.0,
@@ -413,7 +416,7 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
             # animal is dry in ~250 ticks of never drinking, against a ~1,000-tick lifespan — so
             # water is a regular errand rather than a background hum or an emergency.
             loss_rate=0.004,
-            # Per degree above neutral. At 20 degrees over, loss doubles: a hot valley is a place
+            # Per temperature unit above neutral. At 20 over, loss doubles: a hot valley is a place
             # you must leave to drink, which is what makes climate shape where a herd lives.
             heat_scaling=0.05,
             neutral_temperature=20.0,
@@ -448,8 +451,8 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
         cue_field=CueFieldConfig(diffusion_range=3.0),
         metabolism=MetabolismConfig(
             basal_rate=0.05,
-            # Per squared degree (#176), re-derived from the linear 0.01 per degree rather than
-            # carried over: divided by the 8.0 degrees this map's mean cell sits from neutral
+            # Per squared temperature unit (#176), re-derived from the linear 0.01 per unit rather
+            # than carried over: divided by the 8.0 units this map's mean cell sits from neutral
             # (26.2-29.4 against 20), so the typical animal's bill is what it was and only the
             # curve's shape moved. Re-derive it, not keep it, if the climate or neutral changes.
             thermoregulation_rate=0.00125,

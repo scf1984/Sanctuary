@@ -103,11 +103,11 @@ class HydrationConfig:
     loss_rate: the fraction of its reserve an animal loses per tick at `neutral_temperature`, in
         (0, 1]. This is the clock on the whole mechanic: it decides how many ticks of not drinking
         an animal survives, and therefore how often the herd must return to water.
-    heat_scaling: how much faster water is lost per degree above `neutral_temperature`. Where the
+    heat_scaling: how much faster water is lost per temperature unit above `neutral_temperature`. Where the
         old thirst score's temperature term went — heat does not make an animal *want* water, it
         makes an animal *lose* water. Zero is a world where climate does not dry anything out,
         which is legal and dull.
-    neutral_temperature: degrees C at which `loss_rate` applies unscaled. Below it, loss slows
+    neutral_temperature: temperature units at which `loss_rate` applies unscaled. Below it, loss slows
         rather than reversing: cold air does not hydrate anybody, so the scaling is floored at
         zero rather than allowed to make a cold animal gain water.
     drink_rate: the fraction of its reserve an animal restores per tick standing at water, in
