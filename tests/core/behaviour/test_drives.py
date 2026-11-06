@@ -14,6 +14,7 @@ from core.behaviour.drives import (
     LustConfig,
     Thirst,
     ThirstConfig,
+    detected,
 )
 from core.behaviour.exertion import Exertion, ExertionConfig
 from core.behaviour.service import Behaviour, BehaviourConfig
@@ -560,6 +561,44 @@ class TestHungerAppeal:
 
         assert appeal.shape == (6, 3)
         assert (appeal[:, EAST] > appeal[:, WEST]).all()
+
+
+class TestDetected:
+    """The one rule every field-reading drive perceives through (#253).
+
+    Hunger (grazing and prey), thirst and lust each gated a reading at a threshold and scaled it to
+    the animal's own best option, as four hand-written copies. These pin the shared rule, so a fifth
+    reader (#249's thermal drive) inherits the contract rather than re-deriving it.
+    """
+
+    def test_a_reading_below_the_threshold_is_not_perceived_at_all(self):
+        reading = np.array([[0.5, 2.0, 4.0]])
+
+        assert detected(reading, threshold=1.0) == pytest.approx(np.array([[0.0, 0.5, 1.0]]))
+
+    def test_a_reading_exactly_at_the_threshold_is_perceived(self):
+        assert detected(np.array([[1.0, 2.0]]), threshold=1.0) == pytest.approx(np.array([[0.5, 1.0]]))
+
+    def test_each_animal_is_scaled_to_its_own_best_option(self):
+        """A keen sense and a dull one see the same *direction*: appeal is relative within an
+        animal, which is what keeps drives comparable once the utilities are summed."""
+        reading = np.array([[2.0, 4.0], [20.0, 40.0]])
+
+        assert detected(reading, threshold=1.0) == pytest.approx(np.array([[0.5, 1.0], [0.5, 1.0]]))
+
+    @pytest.mark.filterwarnings("error")
+    def test_an_animal_that_perceives_nothing_ranks_every_option_at_zero(self):
+        """All zeros, not a flat non-zero and not a 0/0 warning: the drive then drops out of the
+        utility sum instead of voting for everywhere at once."""
+        reading = np.array([[0.1, 0.2, 0.0], [3.0, 1.5, 0.0]])
+
+        assert detected(reading, threshold=1.0) == pytest.approx(np.array([[0.0, 0.0, 0.0], [1.0, 0.5, 0.0]]))
+
+    def test_a_reading_worse_than_nothing_is_never_perceived(self):
+        """A signed reading below zero (a candidate that smells like the opposite of yourself,
+        or a colder spot for an animal already too cold) is discarded by the positive threshold
+        rather than ranked as a weak preference."""
+        assert detected(np.array([[-5.0, 2.0]]), threshold=1.0) == pytest.approx(np.array([[0.0, 1.0]]))
 
 
 class TestThirst:
