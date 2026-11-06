@@ -476,7 +476,16 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
             assimilation_max=0.5,
             size_gene="size",
         ),
-        cue_field=CueFieldConfig(diffusion_range=3.0),
+        # Wide enough that a lone mate's plume reaches the distances separated animals actually sit
+        # at (#251). The blur's support ends at three ranges, so at 3.0 nothing was smellable past
+        # 9 units and bottlenecked pairs 15-57 apart never met. Measured in
+        # docs/spikes/scent-range.md: two founders 30 apart breed 10/16 at 10.0, 4/16 at 6.0 and
+        # 0/16 at 3.0. 6.0 only works for animals that live long enough to drift into its 18-unit
+        # reach; 10.0 is the narrowest that perceives them where they are. Narrowest matters
+        # because the field is shared: fear reads it too, and its correlation with neighbours
+        # within 5 units falls from +0.24 to +0.09, so "something near me" becomes partly "something
+        # in this region". Cost is flat in the range (cumulative-sum boxes).
+        cue_field=CueFieldConfig(diffusion_range=10.0),
         metabolism=MetabolismConfig(
             basal_rate=0.05,
             # Per squared temperature unit (#176), re-derived from the linear 0.01 per unit rather
@@ -545,7 +554,16 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
             weight_gene="lust_weight",
             maturity_gene="maturity_age",
             scent_acuity_gene="scent_acuity",
-            detection_threshold=0.05,
+            # Set against a *single* mate's plume, not a crowd's (#251). The blur conserves mass,
+            # so one typical animal (emission ~1, signature dot ~2) reads ~0.003 even next to it at
+            # range 10, and 0.05 meant a lone mate was never detected at any distance: lust only
+            # ever followed crowds. At 5e-5 one mate is perceived out to 26-28 units across the
+            # founder acuity range, inside the field's 30-unit support. Acuity moves that reach
+            # little, because the blur's tail falls steeply near its edge, and `detected`
+            # normalises it out of the appeal once something is perceived. The same gene keeps its
+            # teeth in fear, which reads the nose against absolute thresholds. Fear and hunger keep
+            # their own thresholds; this is lust's alone (docs/spikes/scent-range.md).
+            detection_threshold=5e-5,
             breeding_energy=120.0,
             abundant_energy=250.0,
         ),

@@ -4,10 +4,65 @@ Measured for #29, under the decision recorded there on 2026-11-06: **a viable br
 calibrated offline by simulation**, and the measured number ships with the rule version. #28's cull
 guard reads the same number.
 
-> **Superseded in part on 2026-11-06.** The original measurement below was taken before senescence
-> existed, and it said so. The re-measurement under senescence (#239, #244) and float64 energy (#240)
-> is the next section, and it is the one #29 and #28 should read. The original is kept below it
-> unchanged, because the comparison is the evidence for what senescence changed.
+> **Superseded in part, twice, on 2026-11-06.** The newest section, directly below, re-measures after
+> #251 let a lone animal smell a mate. It is the one #29 and #28 should read. The senescence-era
+> re-measurement and the original follow it unchanged, because each comparison is the evidence for
+> what one change did.
+
+## Re-measured 2026-11-06, after #251: a lone mate can be smelled
+
+#251 widened the demo world's cue field from 3 to 10 and dropped lust's detection threshold from
+0.05 to 5e-5, so one mate is perceived out to 26–28 units instead of not at all
+(`docs/spikes/scent-range.md`). The section below predicted that "the small-n end of this curve
+measures that sensing range more than it measures demography". This tests that prediction.
+
+Same bench and definitions. Source worlds re-grown under the new config (snapshots refuse a foreign
+config): 3,865, 1,448 and 2,530 born animals in 1,500 ticks, generation time 96–113 ticks.
+**Compute was cut to fit the budget**: 20 replicates per n rather than 40, n ≤ 24 only (n ≥ 12 was
+already 40/40), and the 50-generation follow-up for n = 2 and 3 only. The naive sweep was not re-run.
+
+### Bottleneck, 10 generations
+
+| n | runs | recovered | extinct | stalled | P(recover) | 95% CI | senescence-era (40 runs) |
+|---:|---:|---:|---:|---:|---:|---|---:|
+| 2 | 20 | 7 | 0 | 13 | 0.35 | [0.18, 0.57] | 0.00 |
+| 3 | 20 | 18 | 0 | 2 | 0.90 | [0.70, 0.97] | 0.10 |
+| 4 | 20 | 18 | 0 | 2 | 0.90 | [0.70, 0.97] | 0.17 |
+| 6 | 20 | 20 | 0 | 0 | 1.00 | [0.84, 1.00] | 0.55 |
+| 8 | 20 | 20 | 0 | 0 | 1.00 | [0.84, 1.00] | 0.78 |
+| 12–24 | 20 each | 20 | 0 | 0 | 1.00 | [0.84, 1.00] | 1.00 |
+
+### Bottleneck, 50 generations
+
+| n | runs | recovered | extinct | stalled | P(recover) | 95% CI | senescence-era (20 runs) |
+|---:|---:|---:|---:|---:|---:|---|---:|
+| 2 | 20 | 15 | 2 | 3 | 0.75 | [0.53, 0.89] | 0.00 |
+| 3 | 20 | 20 | 0 | 0 | 1.00 | [0.84, 1.00] | 0.25 |
+
+**The prediction holds.** The small-n curve moved with the sensing range, and by a lot: a pair went
+from never recovering in 60 runs to recovering three times in four within 50 generations.
+
+### What this means for #29 and #28, now
+
+**Collapse detection (#29): the measured threshold falls back to two born animals**, the biological
+minimum for a sexual species. A pair recovers 15/20 within 50 generations, so it is not doomed. Below
+two nothing can breed. As before, unborn young were not measured: each bottleneck released
+pregnancies with the bystanders.
+
+**Cull guard (#28): 6 for "regrows within ten generations"** (20/20, CI [0.84, 1.00]), down from 12.
+Three and four recover 18/20. The CI is wider than the senescence-era 12's [0.91, 1.00] because of the
+halved replicate count. If #28 wants the same confidence, re-run n = 4–8 at 40. The "only stop doom"
+guarantee is 2.
+
+**Re-measure when** #20's remaining scope (mate selection) or any MAJOR lands, in a predator-holding
+world, or on a larger grid. A fixed ~27-unit reach covers a smaller share of a bigger map, so the
+chance-encounter problem returns at lower density.
+
+| step | runs | wall time |
+|---|---:|---:|
+| establish 3 source worlds | 3 | 170 s |
+| bottleneck, 10 generations | 160 | 199 s |
+| bottleneck, 50 generations (n = 2, 3) | 40 | 84 s |
 
 ## Re-measured 2026-11-06: with senescence and float64 energy
 
