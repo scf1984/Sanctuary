@@ -32,35 +32,12 @@ from __future__ import annotations
 
 import statistics
 import time
+from dataclasses import replace
 
 import numpy as np
 
-from core.behaviour.drives import (
-    Fatigue,
-    FatigueConfig,
-    Hunger,
-    HungerConfig,
-    Lust,
-    LustConfig,
-    Thirst,
-    ThirstConfig,
-)
-from core.behaviour.exertion import Exertion, ExertionConfig
-from core.behaviour.service import Behaviour, BehaviourConfig
-from core.ecology.metabolism import Metabolism, MetabolismConfig
-from core.ecology.plants import Plants, PlantsConfig
-from core.ecology.service import Ecology
-from core.entities.store import EntityStore
-from core.genetics.expression import GeneticsConfig
-from core.genetics.registry import ExpressionMode, GeneRegistry, GeneSpec, Unit
-from core.genetics.service import Genetics
-from core.genetics.species import SpeciesRegistry
-from core.selection import Selection
-from core.services import ColumnRegistry
-from core.world.climate import Climate, ClimateConfig
-from core.world.diffusion import DiffusionConfig
-from core.world.terrain import Terrain
-from core.world.water import Water
+from clients.viewer.demo_world import demo_world_config
+from core.world.assembly import build_world
 
 SIZES = (1_000, 10_000, 100_000)
 CANDIDATE_COUNTS = (4, 8, 16, 32)
@@ -68,118 +45,28 @@ REPEATS = 7
 GRID = 256  # cells per side; held fixed so the field cost is constant across population sizes
 
 
-def _spec(
-    name: str, cost: float = 0.0, mode: ExpressionMode = ExpressionMode.MAGNITUDE
-) -> GeneSpec:
-    return GeneSpec(
-        name=name, cost=cost, expression_mode=mode, unit=Unit.DIMENSIONLESS, description=name
-    )
-
-
-GENES = (
-    _spec("size", cost=0.01),
-    _spec("sight", cost=0.01),
-    # A gene that only ever reduces upkeep must charge a positive cost, or it is a free lunch --
-    # Metabolism refuses to be built otherwise (#136).
-    _spec("heat_tolerance", cost=0.01),
-    _spec("cold_tolerance", cost=0.01),
-    _spec("mutability"),
-    _spec("choice_temperature", mode=ExpressionMode.EXPONENTIAL),
-    _spec("commitment"),
-)
-GENE_NAMES = tuple(gene.name for gene in GENES)
-
-
 class Bench:
-    """A world of `n` entities scattered over a fixed grid, with four of the five drives.
+    """A world of `n` founders on a fixed GRID x GRID map, built the way the game builds one.
 
-    Fear is left out deliberately: its cost is the cue field, which #22 already benchmarked and
-    which #114 does not change -- its `appeal` is a constant. Including it would measure #22.
+    Assembled through `build_world` from the demo world's coefficients rather than wired service by
+    service. The hand-wired original drifted out of step with every constructor it called (#257);
+    the composition root is the one place that has to stay in step anyway. The cost: all five
+    drives are registered, so fear's per-candidate reads are now inside `choose()`. The original
+    left fear out to avoid re-measuring #22's cue-field rebuild, which is a separate system and
+    is still outside these timings.
     """
 
     def __init__(self, n: int, n_candidates: int) -> None:
-        self.store = EntityStore(initial_capacity=n, n_drives=5, n_genes=len(GENES))
-        columns = ColumnRegistry()
-        genes = GeneRegistry(GENES)
-        species = SpeciesRegistry(genes.vocabulary)
-        species_id = species.register(GENE_NAMES)
-        self.genetics = Genetics(
-            self.store, columns, species, genes,
-            GeneticsConfig(mutability_gene="mutability", drift_margin=2.0, senescence=None),
+        config = demo_world_config(n_entities=n, seed=0)
+        config = replace(
+            config,
+            terrain=replace(config.terrain, width=GRID, height=GRID),
+            behaviour=replace(config.behaviour, n_candidates=n_candidates),
         )
-        heights = np.zeros((GRID, GRID), dtype=np.float32)
-        terrain = Terrain(heights, cell_size=1.0)
-        climate = Climate(
-            terrain, ClimateConfig(equator_y=0.0, equator_temperature=20.0, latitude_gradient=0.0)
-        )
-        water = Water(
-            depth=np.zeros((GRID, GRID), dtype=np.float32),
-            flow_direction=np.full((GRID, GRID), -1, dtype=np.int8),
-            flow_accumulation=np.ones((GRID, GRID), dtype=np.float32),
-            cell_size=1.0,
-        )
-        self.plants = Plants(
-            terrain, climate, water,
-            PlantsConfig(
-                solar_constant=1.0, latitude_tilt=0.0, min_growth_temperature=0.0,
-                optimal_growth_temperature=20.0, max_growth_temperature=40.0,
-                nutrient_per_biomass=1.0, initial_soil_nutrients=100.0, senescence_rate=0.01,
-                saturation_accumulation=10.0, max_rooting_depth=1.0,
-                forage_diffusion=DiffusionConfig(range=8.0, climb_penalty=0.5),
-            ),
-        )
-        ecology = Ecology(
-            self.store, columns, self.genetics, climate,
-            Metabolism(genes, MetabolismConfig(
-                basal_rate=1.0, thermoregulation_rate=0.5, neutral_temperature=20.0,
-                heat_tolerance_gene="heat_tolerance",
-                cold_tolerance_gene="cold_tolerance",
-            )),
-        )
-        exertion = Exertion(self.store, columns, ExertionConfig(recovery_rate=0.5))
-        self.behaviour = Behaviour(
-            self.store, columns, self.genetics, genes, terrain,
-            BehaviourConfig(
-                n_candidates=n_candidates, look_ahead=4.0, commitment_gene="commitment",
-                choice_temperature_gene="choice_temperature",
-            ),
-        )
-        self.hunger = Hunger(
-            self.store, ecology, self.genetics, self.plants, genes,
-            HungerConfig(
-                weight=1.0, satiation_energy=100.0, detection_threshold=0.1, sight_gene="sight"
-            ),
-        )
-        self.behaviour.register(self.hunger)
-        self.behaviour.register(Thirst(
-            self.store, climate,
-            ThirstConfig(weight=1.0, onset_temperature=25.0, saturation_temperature=40.0),
-        ))
-        self.behaviour.register(Lust(
-            self.store, ecology,
-            LustConfig(
-                weight=1.0, maturity_age=100, breeding_energy=20.0, abundant_energy=70.0
-            ),
-        ))
-        self.behaviour.register(Fatigue(
-            self.store, exertion, FatigueConfig(weight=1.0, exertion_saturation=1.0)
-        ))
-
-        rng = np.random.default_rng(0)
-        side = terrain.world_width
-        ids = self.store.allocate(
-            n,
-            x=rng.uniform(0.0, side, n).astype(np.float32),
-            y=rng.uniform(0.0, side, n).astype(np.float32),
-            energy=rng.uniform(0.0, 100.0, n).astype(np.float32),
-            health=np.ones(n, dtype=np.float32),
-            species_id=np.full(n, species_id, dtype=np.int32),
-        )
-        rows = np.array([self.store._id_to_row[i] for i in ids.tolist()], dtype=np.int64)
-        self.population = Selection.from_indices(rows, self.store.capacity)
-        matrix = np.zeros((n, len(GENES)), dtype=np.float32)
-        matrix[:, GENE_NAMES.index("sight")] = 1.0
-        self.genetics.set_genes(self.population, matrix)
+        world = build_world(config, seed=0)
+        self.behaviour = world.behaviour
+        self.plants = world.plants
+        self.population = world.founders
         self.rng = np.random.default_rng(1)
 
 
@@ -214,8 +101,8 @@ def main() -> None:
     print("\n== where the time goes at N=8 (9 options), ms/tick ==")
     print("  diffusion: Plants.forage_field(), rebuilt once per tick, independent of N")
     print("  reads:     forage_at() over the whole (n, 9) option block -- the N-scaled term")
-    print("  flat:      the three drives whose appeal is a constant (thirst, lust, fatigue)")
-    columns = ("diffusion", "positions", "reads", "flat", "draw", "measured total", "choose()")
+    print("  others:    urgency and appeal of the drives other than hunger")
+    columns = ("diffusion", "positions", "reads", "others", "draw", "measured total", "choose()")
     print("     n | " + " | ".join(f"{c:>14}" for c in columns))
     print("-" * (8 + 17 * len(columns)))
     for n in SIZES:

@@ -105,3 +105,33 @@ trees three times each on one machine, put the best-case call at 359.2 ms before
 The machine that produced those A/B numbers was running roughly 30% slower overall than the one
 these tables came from, which is why absolute figures from a re-run will not match; compare within
 a run, not across.
+
+## Re-run after #257 (2026-11-06)
+
+The script had stopped running: it wired every service by hand, and the constructors drifted (#257). It now builds its world through `build_world` from the demo coefficients on a 256×256 grid, so it can only break where the game's own composition root breaks. Two consequences for comparing with the tables above:
+- **All five drives are registered**, including fear, which the original left out.
+- **Every drive now reads more** than it did at #114: hunger also reads carrion and prey scent, lust reads mates' scent, and weights are genes. The "others" column replaces "flat drives", since none of them is constant any more.
+
+Same tables, one machine, `master` at d16c681, ms/tick:
+
+| n | N=4 | N=8 | N=16 | N=32 |
+|---:|---:|---:|---:|---:|
+| 1,000 | 15.2 | 17.8 | 26.9 | 38.7 |
+| 10,000 | 167.2 | 216.0 | 293.6 | 508.8 |
+| 100,000 | 2003.4 | 3062.5 | 2602.6 | 3015.2 |
+
+| n (N=8) | diffusion | positions | forage reads | others | draw | `choose()` |
+|---:|---:|---:|---:|---:|---:|---:|
+| 100,000 | 13.9 | 53.6 | 19.1 | 747.4 | 23.2 | 3062.5 |
+
+Per drive at n=100,000, N=8 (median of 3, ms):
+
+| drive | urgency | appeal |
+|---|---:|---:|
+| hunger | 96.5 | 699.1 |
+| lust | 152.3 | 503.0 |
+| fear | 292.2 | 1.2 |
+| fatigue | 80.4 | 195.7 |
+| thirst | 77.7 | 62.3 |
+
+**What changed:** `choose()` at n=100,000 went from 362 ms to about 3 s per tick, so it alone now exceeds §2.1's 1,000 ms tick. The 100,000 row is noisy (N=8 measured above N=16), but every column is far over budget. The forage-field term that dominated at #114 is now small. The cost is in what the drives read per candidate. The conclusion "N is affordable" still holds at the margin (0.36 ms per candidate per 1,000 entities), but the fixed floor (about 20 ms per 1,000 entities at N=4) does not fit the budget at 100,000. Filed as its own issue, not addressed here.
