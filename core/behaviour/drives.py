@@ -80,6 +80,39 @@ class DriveWeight:
         return self.genetics.expressed(selection)[:, self._index]
 
 
+def detected(reading: np.ndarray, threshold: float) -> np.ndarray:
+    """(n, n_options) float64 in [0, 1]: what a drive perceives of a field it has sampled (#253).
+
+    `reading` is the caller's sample of its field at each candidate, already scaled by whatever
+    acuity gene sharpens that sense. Readings below `threshold` are not perceived at all. What
+    survives is scaled to the animal's own best option.
+
+    **What it is for.** Every drive that steers by a continuous field (hunger's forage and prey,
+    thirst's water, lust's company, and #249's temperature next) perceives through this one rule,
+    so their appeals stay on one scale and comparable once the utilities are summed. The rule
+    itself is §2.5's: for a field that serves the whole population, sensitivity and range are one
+    parameter, so acuity can only scale what is sampled and a threshold is what gives it teeth.
+
+    **What it forbids.**
+    - **Steering by a raw reading.** Without the gate every animal detects every source in the
+      world faintly, and an acuity gene that is charged for buys nothing.
+    - **A flat non-zero appeal when nothing is perceived.** The row comes back all zeros, so the
+      drive drops out of the sum and the null option can win, instead of the animal marching
+      whichever way numerical noise leaned.
+    - **A negative appeal.** A reading worse than nothing (a smell opposite to your own, ground
+      worse than where you stand) is discarded by the positive threshold, never ranked.
+
+    Sampling and acuity stay with the caller on purpose. Each field is read differently (a
+    diffused grid, a self-excluded cue blend dotted against a signature), and thirst has no acuity
+    gene at all. A parameter only one caller needed would be §8.2's speculative generality.
+    `Fear` does not use this: it turns danger into a detection *probability* that saturates, and
+    is not normalised, because its appeal is aversion rather than attraction (§2.5).
+    """
+    found = np.where(reading >= threshold, reading, 0.0)
+    best = found.max(axis=1, keepdims=True)
+    return np.divide(found, best, out=np.zeros_like(found), where=best > 0.0)
+
+
 @dataclass(frozen=True)
 class HungerConfig:
     """Per-world tuning for the hunger drive.
@@ -211,15 +244,10 @@ class Hunger:
         )
 
         share = self.diet.animal_share(phenotype).astype(np.float64)[:, None]
+        threshold = self.config.detection_threshold
         return (
-            (1.0 - share) * self._detected(grazing) + share * self._detected(prey)
+            (1.0 - share) * detected(grazing, threshold) + share * detected(prey, threshold)
         ).astype(np.float32)
-
-    def _detected(self, reading: np.ndarray) -> np.ndarray:
-        """(n, n_options) float64 in [0, 1]: a field reading gated, then scaled to its own best."""
-        found = np.where(reading >= self.config.detection_threshold, reading, 0.0)
-        best = found.max(axis=1, keepdims=True)
-        return np.divide(found, best, out=np.zeros_like(found), where=best > 0.0)
 
 
 @dataclass(frozen=True)
@@ -302,11 +330,7 @@ class Thirst:
         cannot push an animal whichever way the numerical noise leaned.
         """
         reading = self.hydration.reachable_at(x, y).astype(np.float64)
-        found = np.where(reading >= self.config.detection_threshold, reading, 0.0)
-        best = found.max(axis=1, keepdims=True)
-        return np.divide(
-            found, best, out=np.zeros_like(found), where=best > 0.0
-        ).astype(np.float32)
+        return detected(reading, self.config.detection_threshold).astype(np.float32)
 
 
 @dataclass(frozen=True)
@@ -416,11 +440,7 @@ class Lust:
         # Dot each candidate's cue reading against the searcher's own signature. Negative means it
         # smells like the opposite of itself, which the positive threshold discards.
         reading = acuity[:, None] * np.einsum("nkc,nc->nk", perceived, own)
-        found = np.where(reading >= self.config.detection_threshold, reading, 0.0)
-        best = found.max(axis=1, keepdims=True)
-        return np.divide(
-            found, best, out=np.zeros_like(found), where=best > 0.0
-        ).astype(np.float32)
+        return detected(reading, self.config.detection_threshold).astype(np.float32)
 
     def urgency(self, selection: Selection) -> np.ndarray:
         """(len(selection),) float32: weighted energy surplus, zero before maturity.
