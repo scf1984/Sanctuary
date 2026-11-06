@@ -20,6 +20,9 @@ world's seasonal climate (`seasonal`, the default) and the same world with `seas
 — where an animal stands on the annual-mean map — so the two modes classify ground identically and
 differ only in what the animals live through.
 
+Since #249 the demo world has a thermal drive, so every mode here runs with animals that can
+sense the field and steer by it. thermal-divergence.md §5 has the comparison.
+
 Throwaway spike code (CLAUDE.md §8.3), not imported by anything. Run from a repository root with
 `PYTHONPATH=.`:
 

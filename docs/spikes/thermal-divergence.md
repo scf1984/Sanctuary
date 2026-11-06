@@ -162,3 +162,33 @@ same world with `seasons=None`, 200 founders, 4,000 ticks:
 
 Every seed grows from 200 into the thousands. Seasons cost about 8% of the standing population on
 average, which is what a winter is for, and none of the five comes close to collapse.
+
+## 5. With the thermal drive (#249)
+
+Since #249 animals can sense the temperature field and steer by it. Same split-map setup and six
+seeds as section 4, seasonal mode, 4,000 ticks, measured on `feat/249-thermal-drive`. The
+"seasonal, no drive" column is section 4's, measured on `feat/159-derived-weather`, so it predates
+#255's refactor (behaviour-neutral) and nothing else that moves this. The drive is the difference.
+
+| seed | heat gap | cold gap | Δcorr |
+|---:|---:|---:|---:|
+| 1 | +0.040 | −0.048 | +0.086 |
+| 2 | +0.139 | −0.228 | +0.279 |
+| 3 | +0.016 | −0.038 | +0.034 |
+| 4 | +0.137 | −0.078 | +0.322 |
+| 5 | +0.016 | −0.008 | +0.071 |
+| 6 | +0.045 | −0.012 | +0.209 |
+| **mean, with drive** | **+0.066** | **−0.069** | **+0.167** |
+| mean, seasonal, no drive (section 4) | +0.040 | −0.029 | +0.143 |
+
+- **Both tolerances now diverge, in the expected direction in 6 of 6 seeds.** The heat gap is about
+  1.6 times section 4's and the cold gap about 2.4 times, so the side that seasons alone left
+  unchanged is the one that moved most.
+- **Most likely mechanism: less mixing, not more selection.** An animal that can tell which way is
+  comfortable stays in the band that suits it instead of wandering across the map, so lineages on
+  hot and cold ground interbreed less. That is the half of ecological isolation #176 said climate
+  could supply and a blind animal never could.
+- **Still not locked in.** The spread is wide (heat gap +0.016 to +0.139) and two seeds sit near
+  zero. Six seeds of one sign are a direction, and a 6 × 4,000-tick statistical test is too slow
+  for the suite. `thermal-drive.md` has the range and viability side of the same change.
+

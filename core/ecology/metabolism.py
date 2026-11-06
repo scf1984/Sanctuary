@@ -174,13 +174,30 @@ class Metabolism:
         guarantee rests on rather than any check in here (#136).
         """
         trait_upkeep = expressed_genes @ self.gene_cost
-        heat_tolerance = expressed_genes[:, self._heat_tolerance_index]
-        cold_tolerance = expressed_genes[:, self._cold_tolerance_index]
+        thermoregulation = self.thermoregulation(expressed_genes, temperature)
+        return (self.config.basal_rate + trait_upkeep + thermoregulation).astype(np.float32)
+
+    def thermoregulation(
+        self, expressed_genes: np.ndarray, temperature: np.ndarray
+    ) -> np.ndarray:
+        """Energy units per tick: the thermoregulation term of `upkeep` alone.
+
+        expressed_genes: (n, n_genes) phenotype rows.
+        temperature: (n,) for each entity where it stands, or (n, k) for k places it might stand.
+            Each row is priced with that entity's own tolerances.
+
+        Public because the thermal drive (#249) has to want exactly what this charges. A drive that
+        recomputed the curve would be a second reading of one physical fact, free to drift from the
+        bill: the shape of defect #112 was.
+        """
+        # Shaped to broadcast against `temperature`, whether it is one place per row or several.
+        trailing = (1,) * (np.ndim(temperature) - 1)
+        heat_tolerance = expressed_genes[:, self._heat_tolerance_index].reshape(-1, *trailing)
+        cold_tolerance = expressed_genes[:, self._cold_tolerance_index].reshape(-1, *trailing)
         # At most one of these is non-zero for any animal, so each pays only its own side's bill
         # and carries the other side's tolerance as dead weight.
         too_hot = np.maximum(temperature - self.config.neutral_temperature, 0.0)
         too_cold = np.maximum(self.config.neutral_temperature - temperature, 0.0)
-        thermoregulation = self.config.thermoregulation_rate * (
+        return self.config.thermoregulation_rate * (
             too_hot**2 / (1.0 + heat_tolerance) + too_cold**2 / (1.0 + cold_tolerance)
         )
-        return (self.config.basal_rate + trait_upkeep + thermoregulation).astype(np.float32)

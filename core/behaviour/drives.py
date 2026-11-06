@@ -1,4 +1,4 @@
-"""The authored drives: hunger, thirst, fear, lust and fatigue (issue #22).
+"""The authored drives: hunger, thirst, fear, lust, fatigue (issue #22) and thermal (#249).
 
 Each is a vectorized function over the global arrays producing one score column, registered against
 `core.behaviour.service.Behaviour` rather than dispatched from it. They share no base class and no
@@ -43,12 +43,14 @@ from core.ecology.carrion import Carrion
 from core.ecology.cues import Scent
 from core.ecology.diet import Diet
 from core.ecology.hydration import Hydration
+from core.ecology.metabolism import Metabolism
 from core.ecology.plants import Plants
 from core.ecology.service import Ecology
 from core.entities.store import EntityStore
 from core.genetics.service import Genetics
 from core.genetics.registry import GeneRegistry, Unit
 from core.selection import Selection
+from core.world.climate import Climate
 from core.world.terrain import Terrain
 
 
@@ -331,6 +333,107 @@ class Thirst:
         """
         reading = self.hydration.reachable_at(x, y).astype(np.float64)
         return detected(reading, self.config.detection_threshold).astype(np.float32)
+
+
+@dataclass(frozen=True)
+class ThermalConfig:
+    """Per-world tuning for the thermal drive (#249).
+
+    weight_gene: the gene whose expressed value multiplies this drive's 0-1 shape (§2.5, #23).
+    acuity_gene: the gene whose expressed value scales the upkeep saving an animal perceives toward
+        each candidate: its thermal sense. A gene rather than a constant so how finely an animal
+        reads a gradient is under selection, and it must carry a positive cost in the vocabulary,
+        because it only ever helps (§2.5). Named rather than assumed, as every sense gene is.
+    detection_threshold: energy units per tick. The acuity-scaled saving below which no candidate
+        reads as better at all, the gate `detected` applies (#253). It is what gives the acuity gene
+        teeth: without it every animal perceives every gradient however faint, and a charged sense
+        buys nothing. Must be positive.
+    saturation_upkeep: energy units per tick. The thermoregulation bill at which the drive reaches
+        its full weight. Denominated in upkeep rather than degrees, because what the drive is for is
+        the energy the climate costs, and a degree costs a cold-tolerant animal less than a tender
+        one. Tune it against the world's ordinary upkeep (§2.1): it says how large a share of a
+        body's running cost the weather may take before escaping it outranks everything else.
+    """
+
+    weight_gene: str
+    acuity_gene: str
+    detection_threshold: float
+    saturation_upkeep: float
+
+    def __post_init__(self) -> None:
+        if self.detection_threshold <= 0:
+            raise ValueError(
+                f"detection_threshold must be positive, got {self.detection_threshold}; at zero "
+                "every gradient however faint is perceived and the acuity gene buys nothing"
+            )
+        if self.saturation_upkeep <= 0:
+            raise ValueError(
+                f"saturation_upkeep must be positive, got {self.saturation_upkeep}"
+            )
+
+
+class Thermal:
+    """Wanting a bearable temperature, and knowing which way it lies (#249).
+
+    **Urgency is the bill.** It is the thermoregulation term `Metabolism` charges this tick, read
+    through the animal's own heat and cold tolerance (#176) and scaled against `saturation_upkeep`.
+    So the drive wants exactly as much as the climate is costing, and a tolerant animal is driven
+    less by the same weather. Both follow from the cost rather than from an authored comfort band.
+
+    **Appeal is the saving.** For each candidate, how much less that bill would be standing there,
+    read from the derived temperature field (#159) at the candidate, scaled by the thermal acuity
+    gene and perceived through `detected` (#253). Only savings count: a candidate that would cost
+    more is discarded by the threshold, never ranked. Neither direction is authored. A cold animal
+    goes toward warmth and a hot one toward shade because those are the savings.
+
+    **The only drive that scores temperature** (§2.5: two drives reading one number turn the
+    contest into a coin flip). Thirst reads the hydration deficit, and heat reaches it only
+    physically, through `Hydration`'s water loss (#156, #254).
+
+    What this cannot do yet: the field is read where the animal can look, one `look_ahead` away, so
+    an animal follows the local gradient and has no memory of where it was comfortable. Whether
+    that yields seasonal range shifts is measured, not assumed (docs/spikes/thermal-divergence.md).
+    """
+
+    name = "thermal"
+
+    def __init__(
+        self,
+        store: EntityStore,
+        climate: Climate,
+        metabolism: Metabolism,
+        genetics: Genetics,
+        genes: GeneRegistry,
+        config: ThermalConfig,
+    ) -> None:
+        self.store = store
+        self.climate = climate
+        self.metabolism = metabolism
+        self.genetics = genetics
+        self.config = config
+        # Acuity scales a sampled saving rather than a radius, as sight and scent acuity do (#93).
+        self._acuity_index = genes.index_of(config.acuity_gene, unit=Unit.DIMENSIONLESS)
+        self._weight = DriveWeight(genetics, genes, config.weight_gene)
+
+    def urgency(self, selection: Selection) -> np.ndarray:
+        """(len(selection),) float32: the thermoregulation bill against saturation, weighted."""
+        mask = selection.to_mask()
+        temperature = self.climate.temperature_at(self.store.x[mask], self.store.y[mask])
+        bill = self.metabolism.thermoregulation(self.genetics.expressed(selection), temperature)
+        shape = np.clip(bill / self.config.saturation_upkeep, 0.0, 1.0)
+        return (self._weight.of(selection) * shape).astype(np.float32)
+
+    def appeal(self, selection: Selection, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+        """(n, n_options) float32 in [0, 1]: how much of the climate's bill each option would save."""
+        mask = selection.to_mask()
+        phenotype = self.genetics.expressed(selection)
+        here = self.climate.temperature_at(self.store.x[mask], self.store.y[mask])
+        there = self.climate.temperature_at(x, y)
+        bill_here = self.metabolism.thermoregulation(phenotype, here.astype(np.float64))
+        bill_there = self.metabolism.thermoregulation(phenotype, there.astype(np.float64))
+        acuity = phenotype[:, self._acuity_index].astype(np.float64)[:, None]
+        saving = acuity * (bill_here[:, None] - bill_there)
+        return detected(saving, self.config.detection_threshold).astype(np.float32)
 
 
 @dataclass(frozen=True)

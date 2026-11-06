@@ -66,6 +66,8 @@ from core.behaviour.drives import (
     HungerConfig,
     Lust,
     LustConfig,
+    Thermal,
+    ThermalConfig,
     Thirst,
     ThirstConfig,
 )
@@ -172,6 +174,7 @@ class WorldConfig:
     fear: FearConfig
     lust: LustConfig
     fatigue: FatigueConfig
+    thermal: ThermalConfig
     behaviour: BehaviourConfig
     scent_genes: ScentGenes
     genes: tuple[GeneSpec, ...]
@@ -285,14 +288,8 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
 
     species = SpeciesRegistry(genes.vocabulary)
     genetics = Genetics(store, columns, species, genes, config.genetics)
-    ecology = Ecology(
-        store,
-        columns,
-        genetics,
-        climate,
-        Metabolism(genes, config.metabolism),
-        plants,
-    )
+    metabolism = Metabolism(genes, config.metabolism)
+    ecology = Ecology(store, columns, genetics, climate, metabolism, plants)
     # One `Diet` for both halves of the allocation: grazing reads its plant side and predation its
     # animal side, and two instances would be two readings of one gene that could disagree.
     diet = Diet(genes, config.diet)
@@ -331,6 +328,9 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
         Fear(store, genetics, scent, genes, config.fear),
         Lust(store, ecology, genetics, scent, genes, config.lust),
         Fatigue(store, exertion, genetics, terrain, genes, config.fatigue),
+        # Reads the same `Metabolism` the pool is charged by, so it wants exactly what the climate
+        # costs (#249).
+        Thermal(store, climate, metabolism, genetics, genes, config.thermal),
     )
     for drive in drives:
         behaviour.register(drive)
@@ -426,7 +426,7 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
 # by column depends on it. It is declared here and checked against what was registered, rather than
 # left to whatever order the drives happened to be built in. It is no longer a tie-break (#114):
 # utilities are summed, and a sum does not depend on the order it was accumulated in.
-_DRIVE_NAMES: tuple[str, ...] = ("hunger", "thirst", "fear", "lust", "fatigue")
+_DRIVE_NAMES: tuple[str, ...] = ("hunger", "thirst", "fear", "lust", "fatigue", "thermal")
 
 
 def _ordered(systems: Mapping[str, Callable[[], None]]) -> tuple[Callable[[], None], ...]:
