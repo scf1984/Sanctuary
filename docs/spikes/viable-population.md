@@ -4,11 +4,132 @@ Measured for #29, under the decision recorded there on 2026-11-06: **a viable br
 calibrated offline by simulation**, and the measured number ships with the rule version. #28's cull
 guard reads the same number.
 
-The headline result is that **under today's rules there is no such number above two.** An
-established population knocked down to any size of two or more never died out in 620 runs. Small
-bottlenecks are slow, not doomed, and the reason is two missing mechanics rather than anything about
-small populations. What *does* have a threshold is a population of naive founders, and that is a
-different question.
+> **Superseded in part on 2026-11-06.** The original measurement below was taken before senescence
+> existed, and it said so. The re-measurement under senescence (#239, #244) and float64 energy (#240)
+> is the next section, and it is the one #29 and #28 should read. The original is kept below it
+> unchanged, because the comparison is the evidence for what senescence changed.
+
+## Re-measured 2026-11-06: with senescence and float64 energy
+
+`master` at ab9df5e. That includes #239 (speed, sight and scent decay with age), #244 (digestion yield
+decays with age), #240 (float64 energy), #176 (heat and cold tolerance), and #238 (temperature in
+world units). Same machine, bench, definitions, n values and replicate counts as the original. 15
+worker processes.
+
+**Definitions are unchanged, and checked rather than assumed.** The original expected senescence
+to turn "stalled" into "extinct". Within 10 generations it doesn't, for a measured reason: an old
+animal alone on a field nobody else grazes banks enormous reserves, so it outlives the horizon. In a
+probe of three n = 2 bottlenecks, the survivors held 500–1,200 energy at age 1,000–2,000, and every
+one died of age between about 2,700 and 5,000 ticks old, with vigour down to 0.02–0.06. That is
+5–9× the dense-world lifespan #244 measured (90th percentile of age at death about 571), because
+nothing competes for the food. So "stalled" is kept, and the 50-generation follow-up is what
+resolves it.
+
+Source worlds grew to 1,391, 390 and 4,342 born animals in 1,500 ticks. Generation time is 114
+ticks, so the horizon is 1,140 ticks.
+
+### Bottleneck, 10 generations
+
+| n | runs | recovered | extinct | stalled (bred) | P(recover) | 95% CI | before |
+|---:|---:|---:|---:|---:|---:|---|---:|
+| 2 | 40 | 0 | 0 | 40 (3) | 0.00 | [0.00, 0.09] | 0.12 |
+| 3 | 40 | 4 | 0 | 36 (3) | 0.10 | [0.04, 0.23] | 0.23 |
+| 4 | 40 | 7 | 0 | 33 (12) | 0.17 | [0.09, 0.32] | 0.35 |
+| 6 | 40 | 22 | 0 | 18 (11) | 0.55 | [0.40, 0.69] | 0.75 |
+| 8 | 40 | 31 | 0 | 9 (8) | 0.78 | [0.62, 0.88] | 0.88 |
+| 12 | 40 | 40 | 0 | 0 | 1.00 | [0.91, 1.00] | 1.00 |
+| 16–200 | 40 each | 40 | 0 | 0 | 1.00 | [0.91, 1.00] | 1.00 |
+
+### Bottleneck, 50 generations (5,680 ticks)
+
+| n | runs | recovered | extinct | stalled | P(recover) | 95% CI | before |
+|---:|---:|---:|---:|---:|---:|---|---:|
+| 2 | 20 | 0 | 6 | 14 | 0.00 | [0.00, 0.16] | 0.55 |
+| 3 | 20 | 5 | 5 | 10 | 0.25 | [0.11, 0.47] | 0.95 |
+| 4 | 20 | 14 | 2 | 4 | 0.70 | [0.48, 0.85] | 0.95 |
+| 6 | 20 | 18 | 1 | 1 | 0.90 | [0.70, 0.97] | 1.00 |
+| 8 | 20 | 19 | 0 | 1 | 0.95 | [0.76, 0.99] | 1.00 |
+
+**Extinctions now happen**: 14 of 100 long-horizon runs, against 0 of 620 before. The n = 2 runs
+still "stalled" at 5,680 ticks had not bred once (none exceeded their starting size). They are pairs
+ageing out on a full field, and by the probe above they die within a few thousand more ticks. So
+**n = 2 never recovered in 60 runs (0/40 and 0/20)**. Before senescence it recovered 11 times in 20
+over the same 50 generations, by outliving the wait for a meeting.
+
+**Why the small-n curve is so flat: the pair never meets.** In the probe, both animals were mature
+and well fed, and stayed 15–57 units apart for thousands of ticks without coming within the contact
+range of 2. Mate-finding steers only by the scent cue field, whose demo-world diffusion range is
+3.0. Beyond that nothing moves a lone animal toward others. This is filed as #251. **The small-n
+end of this curve measures that sensing range more than it measures demography**, so it moves if
+#251 is resolved.
+
+### Naive founders, 10 generations
+
+| n | runs | recovered | extinct | crashed | stalled (bred) | P(recover) | 95% CI | before |
+|---:|---:|---:|---:|---:|---:|---:|---|---:|
+| 2 | 40 | 0 | 22 | 0 | 18 (2) | 0.00 | [0.00, 0.09] | 0.00 |
+| 3 | 40 | 0 | 15 | 0 | 25 (0) | 0.00 | [0.00, 0.09] | 0.00 |
+| 4 | 40 | 0 | 6 | 0 | 34 (6) | 0.00 | [0.00, 0.09] | 0.00 |
+| 6 | 40 | 0 | 10 | 0 | 30 (4) | 0.00 | [0.00, 0.09] | 0.00 |
+| 8 | 40 | 0 | 1 | 0 | 39 (14) | 0.00 | [0.00, 0.09] | 0.00 |
+| 12 | 40 | 0 | 1 | 0 | 39 (26) | 0.00 | [0.00, 0.09] | 0.03 |
+| 16 | 40 | 1 | 0 | 0 | 39 (28) | 0.03 | [0.00, 0.13] | 0.03 |
+| 24 | 40 | 3 | 0 | 0 | 37 (36) | 0.07 | [0.03, 0.20] | 0.10 |
+| 32 | 40 | 5 | 0 | 0 | 35 (32) | 0.12 | [0.05, 0.26] | 0.45 |
+| 48 | 40 | 7 | 0 | 0 | 33 (32) | 0.17 | [0.09, 0.32] | 0.60 |
+| 64 | 40 | 13 | 0 | 0 | 27 (26) | 0.33 | [0.20, 0.48] | 0.88 |
+| 100 | 40 | 27 | 0 | 0 | 13 (11) | 0.68 | [0.52, 0.80] | 0.93 |
+
+Naive founders now cross P = 0.5 at **about n = 64–100**, against 32–48 before. Founders age from
+the moment they are placed and now take in less as they do, so an unselected founding cohort has
+less time to sort itself out before it breeds. **#240's crash outcome is gone: 0 crashes in 520
+naive runs**, against 15 in 160 at n ≤ 6 before. The worlds that used to raise now go extinct
+cleanly, which is part of why the extinct column grew (22 at n = 2, against 7 extinct plus 6 crashed).
+
+The grid-160 density check was not re-run (compute budget, below).
+
+### What this means for #29 and #28, now
+
+**Collapse detection (#29): the measured threshold rises from two to three born animals.** A
+population of two never recovered in 60 runs (upper 95% bound 0.16 at 50 generations, 0.09 at 10).
+Three recovered 5 times in 20 within 50 generations, so three is not doomed. Two caveats belong
+with the number:
+- **Unborn young were not measured.** Every bottleneck released pregnancies with the bystanders, so
+  the number counts *born* animals only. Whether a gestating young should count toward the three is
+  #29's call. The original section's "counting unborn young" was a reasoned extension of "two can
+  breed", not a measurement.
+- **It is a sensing-range artefact as much as a demographic one** (#251). Re-measure when #251
+  lands.
+
+**Cull guard (#28): unchanged at 12** for the "regrows within ten generations" guarantee (40/40, CI
+[0.91, 1.00]). Below that, n = 8 now fails 9 times in 40, against 5 before. The "only stop doom"
+guarantee moves with #29's number, from 2 to 3. As before, #28 should say which guarantee it gives.
+
+**Re-measure when** #251 lands, when #20's remaining scope (mate selection) or any MAJOR (§2.8)
+lands, or in a predator-holding world.
+
+### Compute (re-measurement)
+
+| step | runs | wall time |
+|---|---:|---:|
+| establish 3 source worlds | 3 | 72 s |
+| bottleneck, 10 generations | 520 | 365 s |
+| bottleneck, 50 generations | 100 | 554 s |
+| naive, grid 80 | 520 | 678 s |
+| **total** | **1,143** | **~28 min** |
+
+The 50-generation sweep cost 2.6× the original's, because pairs that once stalled cheaply now live
+long, banked lives and are simulated to the horizon.
+
+---
+
+# Original measurement (5fe0c75, before senescence)
+
+The headline result of the original measurement was that **under the rules at the time there was no
+such number above two.** An established population knocked down to any size of two or more never
+died out in 620 runs. Small bottlenecks were slow, not doomed, and the reason was two missing
+mechanics rather than anything about small populations. What *did* have a threshold was a
+population of naive founders, and that is a different question.
 
 ## What exists today, and what this was measured under
 
