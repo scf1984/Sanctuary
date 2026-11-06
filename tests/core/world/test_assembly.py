@@ -19,6 +19,7 @@ from core.behaviour.drives import (
     FearConfig,
     HungerConfig,
     LustConfig,
+    ThermalConfig,
     ThirstConfig,
 )
 from core.behaviour.exertion import ExertionConfig
@@ -81,6 +82,8 @@ GENE_NAMES = (
     "fear_weight",
     "lust_weight",
     "fatigue_weight",
+    "thermal_weight",
+    "thermal_acuity",
     "gestation_length",
     "senescence_resistance",
 )
@@ -230,6 +233,12 @@ def world_config(**overrides):
             travel_effort=0.25,
             climb_tolerance=4.0,
         ),
+        thermal=ThermalConfig(
+            weight_gene="thermal_weight",
+            acuity_gene="thermal_acuity",
+            detection_threshold=1e-3,
+            saturation_upkeep=0.15,
+        ),
         behaviour=BehaviourConfig(
             # Eight headings is enough that a forager can follow a gradient without the walk
             # visibly staircasing, and the per-entity jitter makes the effective resolution
@@ -277,6 +286,8 @@ def world_config(**overrides):
             "fear_weight": (0.6, 1.4),
             "lust_weight": (0.6, 1.4),
             "fatigue_weight": (0.6, 1.4),
+            "thermal_weight": (0.6, 1.4),
+            "thermal_acuity": (0.5, 1.5),
             # Spread across zero, which the squash reads as allocations either side of an even
             # split: founders are undecided about what they eat rather than declared herbivores.
             "diet_animal_derived": (-1.0, 1.0),
@@ -483,14 +494,14 @@ class TestABuiltWorldRuns:
         assert np.any(world.store.x[: alive.shape[0]][alive] != before)
 
     def test_every_drive_scores(self):
-        """All five are registered and all five run, which is the thing no test could check before
-        an assembly existed."""
+        """All six are registered and all six run, which is the thing no test could check before
+        an assembly existed. The sixth is #249's thermal drive."""
         world = build_world(world_config(), seed=6)
 
         world.loop.advance(1)
 
         breakdown = world.behaviour.breakdown(Selection.from_mask(world.store.alive))
-        assert set(breakdown) == {"hunger", "thirst", "fear", "lust", "fatigue"}
+        assert set(breakdown) == {"hunger", "thirst", "fear", "lust", "fatigue", "thermal"}
         assert all(scores.shape == (world.config.n_founders,) for scores in breakdown.values())
 
     def test_entities_stay_on_the_surface(self):

@@ -12,6 +12,8 @@ from core.behaviour.drives import (
     HungerConfig,
     Lust,
     LustConfig,
+    Thermal,
+    ThermalConfig,
     Thirst,
     ThirstConfig,
     detected,
@@ -68,6 +70,9 @@ GENE_NAMES = (
     "fear_weight",
     "lust_weight",
     "fatigue_weight",
+    # #249: the thermal drive's weight, and the sense that tells it which way is more comfortable.
+    "thermal_weight",
+    "thermal_acuity",
 )
 GENE_REGISTRY = gene_registry(
     GENE_NAMES,
@@ -262,8 +267,11 @@ def gene_rows(*rows):
     so by setting the gene.
     """
     matrix = np.zeros((len(rows), len(GENE_NAMES)), dtype=np.float32)
-    for drive in ("hunger", "thirst", "fear", "lust", "fatigue"):
+    for drive in ("hunger", "thirst", "fear", "lust", "fatigue", "thermal"):
         matrix[:, GENE_NAMES.index(f"{drive}_weight")] = 1.0
+    # A thermal sense of 1 reads an upkeep saving at face value, which is what these fixtures'
+    # thresholds are written against; a test about acuity says so by setting the gene.
+    matrix[:, GENE_NAMES.index("thermal_acuity")] = 1.0
     matrix[:, GENE_NAMES.index("diet_animal_derived")] = -20.0
     for i, genes in enumerate(rows):
         for name, value in genes.items():
@@ -1796,3 +1804,185 @@ class TestFatigueConfigRejectsWhatWouldBreakTheContest:
         movement."""
         with pytest.raises(ValueError, match="climb_tolerance"):
             self.base(climb_tolerance=tolerance)
+
+
+# The thermal drive's figures for these tests. Saturation is in the same unit as upkeep (energy
+# units per tick), so it reads directly against METABOLISM_CONFIG's rate of 0.5 per squared unit.
+THERMAL_CONFIG = ThermalConfig(
+    weight_gene="thermal_weight",
+    acuity_gene="thermal_acuity",
+    detection_threshold=0.1,
+    saturation_upkeep=50.0,
+)
+
+NORTH, SOUTH = 0, 1
+
+
+def graded_world(equator_temperature, gradient=1.0, grid=9):
+    """A world whose temperature falls `gradient` units per unit of y, from `equator_temperature`
+    at y = 0. Neutral is 20 (METABOLISM_CONFIG), so 15 makes every cell cold and 30 every cell hot.
+    """
+    world = World(grid=grid)
+    world.climate = Climate(
+        world.terrain,
+        ClimateConfig(
+            equator_y=0.0, equator_temperature=equator_temperature, latitude_gradient=gradient
+        ),
+    )
+    return world
+
+
+def thermal(world, config=THERMAL_CONFIG):
+    return Thermal(
+        world.store, world.climate, world.ecology.metabolism, world.genetics, world.genes, config
+    )
+
+
+def options_ns(world, selection, reach=2.0):
+    """(x, y) for a north option (toward y = 0), a south option and the null option, each (n, 3)."""
+    mask = selection.to_mask()
+    x = world.store.x[mask].astype(np.float64)[:, None]
+    y = world.store.y[mask].astype(np.float64)[:, None]
+    offsets = np.array([-reach, reach, 0.0])
+    return (
+        np.clip(x + np.zeros(3), 0.0, world.terrain.world_width),
+        np.clip(y + offsets, 0.0, world.terrain.world_height),
+    )
+
+
+class TestThermal:
+    """Wanting a bearable temperature, and knowing which way it lies (#249).
+
+    Urgency is the thermoregulation bill `Metabolism` actually charges, so the drive wants exactly as
+    much as the climate is costing the animal, through the same tolerance genes (#176). Appeal is how
+    much of that bill each candidate would save.
+    """
+
+    def test_an_animal_at_neutral_wants_nothing(self):
+        world = graded_world(equator_temperature=20.0, gradient=0.0)
+        selection = world.spawn(2, x=np.float32([4.0, 4.0]), y=np.float32([4.0, 4.0]))
+
+        assert thermal(world).urgency(selection) == pytest.approx([0.0, 0.0])
+
+    def test_urgency_is_the_upkeep_penalty_over_its_saturation(self):
+        """Cold by 9 units: the bill is 0.5 × 81 / (1 + tolerance). Read through the tolerance
+        genes, so a cold-tolerant animal is less driven by the same weather — the drive and the cost
+        cannot disagree about how much the climate hurts."""
+        world = graded_world(equator_temperature=15.0)
+        selection = world.spawn(
+            2,
+            x=np.float32([4.0, 4.0]),
+            y=np.float32([4.0, 4.0]),
+            genes=gene_rows({"cold_tolerance": 0.0}, {"cold_tolerance": 1.0}),
+        )
+
+        urgency = thermal(world).urgency(selection)
+
+        assert urgency == pytest.approx([40.5 / 50.0, 20.25 / 50.0])
+
+    def test_urgency_saturates_at_the_weight(self):
+        world = graded_world(equator_temperature=15.0, gradient=5.0)
+        selection = world.spawn(
+            1, x=np.float32([4.0]), y=np.float32([4.0]), genes=gene_rows({"thermal_weight": 2.0})
+        )
+
+        assert thermal(world).urgency(selection) == pytest.approx([2.0])
+
+    def test_a_cold_animal_prefers_the_warmer_heading(self):
+        world = graded_world(equator_temperature=15.0)
+        selection = world.spawn(3, x=np.float32([4.0] * 3), y=np.float32([4.0] * 3))
+        x, y = options_ns(world, selection)
+
+        appeal = thermal(world).appeal(selection, x, y)
+
+        assert appeal[:, NORTH] == pytest.approx(1.0)
+        assert appeal[:, SOUTH] == pytest.approx(0.0)
+        assert appeal[:, NULL] == pytest.approx(0.0)
+
+    def test_a_hot_animal_prefers_the_cooler_heading(self):
+        """The same drive, the other side of neutral: nothing in it is authored as 'seek warmth'."""
+        world = graded_world(equator_temperature=30.0)
+        selection = world.spawn(3, x=np.float32([4.0] * 3), y=np.float32([4.0] * 3))
+        x, y = options_ns(world, selection)
+
+        appeal = thermal(world).appeal(selection, x, y)
+
+        assert appeal[:, SOUTH] == pytest.approx(1.0)
+        assert appeal[:, NORTH] == pytest.approx(0.0)
+
+    def test_a_difference_below_the_threshold_is_not_perceived(self):
+        """`detected` gates on the acuity-scaled saving (#253): a gradient too faint for this sense
+        is all zeros, so the drive drops out of the sum, and a sharper sense perceives it."""
+        world = graded_world(equator_temperature=15.0, gradient=0.001)
+        selection = world.spawn(
+            2,
+            x=np.float32([4.0, 4.0]),
+            y=np.float32([4.0, 4.0]),
+            genes=gene_rows({"thermal_acuity": 1.0}, {"thermal_acuity": 1000.0}),
+        )
+        x, y = options_ns(world, selection)
+
+        appeal = thermal(world).appeal(selection, x, y)
+
+        assert appeal[0] == pytest.approx([0.0, 0.0, 0.0])
+        assert appeal[1, NORTH] == pytest.approx(1.0)
+
+    def test_choices_drift_toward_warmth_more_often_than_chance(self):
+        """The whole drive through `Behaviour.choose`: with only this drive registered, cold animals
+        take a warming heading far more often than a cooling one. Headings are jittered and sampled,
+        so this is a frequency, not a certainty."""
+        world = graded_world(equator_temperature=15.0, grid=21)
+        world.store = EntityStore(initial_capacity=400, n_drives=5, n_genes=len(GENE_NAMES))
+        world.columns = ColumnRegistry()
+        world.genetics = Genetics(
+            world.store, world.columns, world.species, world.genes, GENETICS_CONFIG
+        )
+        world.ecology = Ecology(
+            world.store,
+            world.columns,
+            world.genetics,
+            world.climate,
+            Metabolism(world.genes, METABOLISM_CONFIG),
+            plant_field(world.terrain, world.climate),
+        )
+        world.behaviour = Behaviour(
+            world.store,
+            world.columns,
+            world.genetics,
+            GENE_REGISTRY,
+            world.terrain,
+            BehaviourConfig(
+                n_candidates=8,
+                look_ahead=2.0,
+                commitment_gene="commitment",
+                choice_temperature_gene="choice_temperature",
+            ),
+        )
+        n = 400
+        selection = world.spawn(
+            n,
+            x=np.full(n, 10.0, dtype=np.float32),
+            y=np.full(n, 10.0, dtype=np.float32),
+            genes=gene_rows(*[{"choice_temperature": -2.0}] * n),
+        )
+        world.behaviour.register(thermal(world))
+
+        world.behaviour.choose(selection, np.random.default_rng(3))
+
+        rows = selection.to_indices()
+        moved = world.store.choice_moving[rows]
+        toward_equator = np.sin(world.store.choice_heading[rows]) < 0.0
+        warming = int((moved & toward_equator).sum())
+        cooling = int((moved & ~toward_equator).sum())
+        assert warming > 3 * max(cooling, 1), (warming, cooling)
+
+    @pytest.mark.parametrize(
+        "changes, message",
+        [
+            ({"detection_threshold": 0.0}, "detection_threshold"),
+            ({"saturation_upkeep": 0.0}, "saturation_upkeep"),
+        ],
+    )
+    def test_config_refuses_what_would_break_the_drive(self, changes, message):
+        with pytest.raises(ValueError, match=message):
+            replace(THERMAL_CONFIG, **changes)

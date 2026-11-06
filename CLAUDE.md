@@ -659,6 +659,28 @@ by" hunger and no animal stands still merely because the drive that won has no m
   an animal lose water, and wanting follows from having lost. Once it is a rate rather than a score,
   one number — the deficit — is both the urgency and the thing drinking removes.
 
+- **Animals sense temperature, and steer by what it costs them** — settled in #249. `Thermal` is
+  the only drive that scores the temperature field. Its urgency is the thermoregulation bill
+  `Metabolism` charges where the animal stands, read through its own heat and cold tolerance
+  (#176) and scaled against `saturation_upkeep`. Its appeal is how much of that bill each candidate
+  would save, sampled from the derived field (#159), scaled by a `thermal_acuity` gene that carries
+  a cost, and perceived through `detected` (#253). No direction is authored: a cold animal seeks
+  warmth and a hot one shade because those are the savings.
+
+  **One number, one drive.** `Thirst` reads the hydration deficit only, and heat reaches it
+  physically, through water loss (#156, #254). Two drives scoring heat would make the contest a
+  coin flip, as with fatigue and the energy pool below. `Metabolism.thermoregulation` is the single
+  definition of the curve, so the drive cannot want something other than what the climate costs.
+
+  **What it buys, measured** (docs/spikes/thermal-drive.md): a population sorts into the
+  comfortable band of its map, and hot and cold lineages mix less, so the tolerance genes diverge
+  further (docs/spikes/thermal-divergence.md §5). **What it does not buy on the demo world:
+  seasonal migration.** The map is too hot everywhere, and a seasonal swing that #159 caps below
+  the latitude gradient never reverses it, so the best ground is the same in every season. The sense
+  is one look-ahead with no memory, so nothing carries an animal across bad ground to good ground it
+  cannot see. Hibernation would also need a way to lower upkeep in place, which nothing provides.
+  Both remain behaviours a world has to make worth having, not ones to author.
+
   **Drinking is a rate, and that is what makes a waterhole dangerous.** A drink spans ticks like a
   meal. With water static (#165 — a lake cannot shrink) there is no depletion to contend over, so
   **time at the water's edge is the only cost a waterhole can charge**, and it is the real one: an
@@ -1678,10 +1700,6 @@ Rules:
 
 Not yet decided. Do not assume answers — ask.
 
-- **Whether animals sense temperature and act on it.** Weather itself is settled (§2.6, #159), but
-  a seasonal field on its own produces differential mortality — range contraction — not migration.
-  Migration and hibernation need a thermal drive that reads the field, and that drive and `Thirst`
-  would read the same number (heat load), which §2.5 rules out. Open on #249.
 - **The end of a rule version's lifecycle** (§2.8). A version is current, then supported; what
   happens after is undecided — frozen and runnable forever, migrated only with the player's
   explicit consent, or read-only. This decides how long old rule sets and their pinning tests must

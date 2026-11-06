@@ -28,6 +28,7 @@ from core.behaviour.drives import (
     FearConfig,
     HungerConfig,
     LustConfig,
+    ThermalConfig,
     ThirstConfig,
 )
 from core.behaviour.exertion import ExertionConfig
@@ -66,6 +67,20 @@ _GENERATION_TICKS = sum(_FOUNDER_MATURITY) / 2.0 + sum(_FOUNDER_GESTATION) / 2.0
 # §2.1: a year is a lifespan, about six generations, so ~1.5 generations live through each season.
 _GENERATIONS_PER_YEAR = 6
 _YEAR_LENGTH = round(_GENERATIONS_PER_YEAR * _GENERATION_TICKS)
+
+# The thermal drive's two numbers (#249), measured on this world's founders across a year
+# (docs/spikes/thermal-drive.md), not chosen. Both are energy units per tick.
+#
+# Saturation: a founder's upkeep *outside* thermoregulation is ~0.155 (0.22 total, of which the
+# climate takes ~0.065). Saturating at that says the weather may cost as much as everything else the
+# body does before escaping it outranks every other drive. Lower, and a typical hot afternoon would
+# already be an emergency; higher, and no weather this world produces ever is.
+_THERMAL_SATURATION = 0.15
+# Threshold: the best saving a founder can reach in one look-ahead has a median of ~0.005 and a 10th
+# percentile of ~0.001. At 0.002 an animal of acuity 1 perceives most gradients it stands in, one of
+# acuity 0.5 about half, one of 1.5 nearly all, so the charged sense buys something across the
+# founding band rather than everyone or no one noticing.
+_THERMAL_THRESHOLD = 0.002
 
 # Cue space is eight-dimensional, per CLAUDE.md §2.5's settled floor. The signature genes and the
 # two aversion directions are that reserved block, named here because the vocabulary is per world.
@@ -311,6 +326,29 @@ _GENES = (
             "fatigue badly for its world is outcompeted by one that does not. Read as a magnitude, "
             "because a negative weight would invert the drive. Free: mis-weighting is its own "
             "price, immediately."
+        ),
+    ),
+    GeneSpec(
+        name="thermal_weight",
+        cost=0.0,
+        expression_mode=ExpressionMode.MAGNITUDE,
+        unit=Unit.DIMENSIONLESS,
+        description=(
+            "How heavily the thermal drive counts in the drive contest (#249). A gene rather than a "
+            "constant, so temperament evolves rather than being designed (§2.5, #23). Read as a "
+            "magnitude, because a negative weight would invert the drive. Free: mis-weighting is "
+            "its own price, immediately."
+        ),
+    ),
+    GeneSpec(
+        name="thermal_acuity",
+        cost=0.01,
+        expression_mode=ExpressionMode.MAGNITUDE,
+        unit=Unit.DIMENSIONLESS,
+        description=(
+            "Thermal sense: scales the upkeep saving an animal perceives toward each heading, so a "
+            "sharper sense notices a fainter gradient (#249). Charged like sight and scent acuity, "
+            "because it only ever helps (§2.5)."
         ),
     ),
     GeneSpec(
@@ -567,6 +605,12 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
             # leaving its spread at 0.55, still the loudest voice in the contest.
             climb_tolerance=4.0,
         ),
+        thermal=ThermalConfig(
+            weight_gene="thermal_weight",
+            acuity_gene="thermal_acuity",
+            detection_threshold=_THERMAL_THRESHOLD,
+            saturation_upkeep=_THERMAL_SATURATION,
+        ),
         behaviour=BehaviourConfig(
             # Eight headings is enough that a forager can follow a gradient without the walk
             # visibly staircasing, and the per-entity jitter makes the effective resolution
@@ -621,6 +665,10 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
             "fear_weight": (0.6, 1.4),
             "lust_weight": (0.6, 1.4),
             "fatigue_weight": (0.6, 1.4),
+            "thermal_weight": (0.6, 1.4),
+            # Around 1, the same band as scent acuity, so founders differ in how finely they read a
+            # gradient and selection has something to act on (#249).
+            "thermal_acuity": (0.5, 1.5),
             # Around zero, so `exp` puts founding temperatures around 1 — the scale at which a
             # utility difference of one is a decisive preference rather than a faint one.
             "choice_temperature": (-0.3, 0.3),

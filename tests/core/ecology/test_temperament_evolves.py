@@ -44,7 +44,14 @@ def run(seed):
     return _RUNS[seed]
 
 
-WEIGHTS = ("hunger_weight", "thirst_weight", "fear_weight", "lust_weight", "fatigue_weight")
+WEIGHTS = (
+    "hunger_weight",
+    "thirst_weight",
+    "fear_weight",
+    "lust_weight",
+    "fatigue_weight",
+    "thermal_weight",
+)
 
 
 def weights(world, gene):
