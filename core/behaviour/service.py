@@ -215,12 +215,79 @@ class Behaviour(DomainService):
         angular resolution effectively continuous across a population — which is also why #114
         rejected a two-stage refinement pass: raising `n_candidates` and relying on this is cheaper
         than a hill-climb that biases toward the argmax before sampling can blur it.
+
+        A heading that `candidate_positions` would clip onto the animal's own position is re-aimed
+        (`_unfold`), so every travelling option really travels (#209).
         """
         n = len(selection)
         spacing = 2.0 * np.pi / self.config.n_candidates
         base = np.arange(self.config.n_candidates, dtype=np.float64) * spacing
         jitter = rng.uniform(0.0, spacing, size=n)[:, None]
-        return base[None, :] + jitter
+        return self._unfold(selection, base[None, :] + jitter)
+
+    def _unfold(self, selection: Selection, headings: np.ndarray) -> np.ndarray:
+        """`headings` with each one that clipping would fold onto the animal turned just far enough
+        that its full look-ahead point lies inside the world.
+
+        Clipping an outward heading's point onto the boundary is kept everywhere else, and that is
+        measured rather than assumed. It projects the move along the wall, and an indifferent
+        population under it holds its uniform density in the edge band (1.01 +- 0.02 of its area
+        share). Re-aiming every outward heading instead (mirroring it, redrawing it, or turning it
+        like this) thins that band to between 0.29 and 0.83, which makes walls repel animals
+        (docs/spikes/edge-candidates.md).
+
+        What clipping cannot do is give an animal standing exactly on the boundary anything for a
+        heading that points straight out of it, or into the corner it stands in. The point clips
+        onto the animal, and an option proposing no displacement is the null option under another
+        index. Winning it recorded a move that never happened (#209). Those headings, and only
+        those, are turned to the nearest heading whose full-reach point is in the world. That is
+        the wall turning the animal along itself, which is also what clipping does to every
+        heading that only grazes it.
+        """
+        mask = selection.to_mask()
+        x = self.store.x[mask].astype(np.float64)[:, None]
+        y = self.store.y[mask].astype(np.float64)[:, None]
+        reach = self.config.look_ahead
+        width, height = self.terrain.world_width, self.terrain.world_height
+        folded = (np.clip(x + reach * np.cos(headings), 0.0, width) == x) & (
+            np.clip(y + reach * np.sin(headings), 0.0, height) == y
+        )
+        if not folded.any():
+            return headings
+
+        rows, cols = np.nonzero(folded)
+        here_x, here_y, wanted = x[rows, 0], y[rows, 0], headings[rows, cols]
+        # Each wall bounds the arc of headings whose full-reach point stays on its side, so the
+        # in-world heading nearest a folded one is an end of one of those arcs. Left wall:
+        # cos h >= -x/r, ending at +-acos(-x/r). Bottom: sin h >= -y/r, ending at asin(-y/r) and
+        # pi - asin(-y/r). The other two mirror them. A wall out of reach clips its end to an axis
+        # direction, which the validity check below then judges like any other.
+        left = np.arccos(np.clip(-here_x / reach, -1.0, 1.0))
+        right = np.arccos(np.clip((width - here_x) / reach, -1.0, 1.0))
+        bottom = np.arcsin(np.clip(-here_y / reach, -1.0, 1.0))
+        top = np.arcsin(np.clip((height - here_y) / reach, -1.0, 1.0))
+        ends = np.stack(
+            [left, -left, right, -right, bottom, np.pi - bottom, top, np.pi - top], axis=1
+        )
+        end_x = here_x[:, None] + reach * np.cos(ends)
+        end_y = here_y[:, None] + reach * np.sin(ends)
+        # An arc's end lands *on* its wall, so it is judged with a rounding allowance, and
+        # `candidate_positions` clips away the residue.
+        slack = 1e-9 * max(width, height)
+        inside = (
+            (end_x >= -slack) & (end_x <= width + slack) & (end_y >= -slack) & (end_y <= height + slack)
+        )
+        if not inside.any(axis=1).all():
+            raise ValueError(
+                f"look_ahead {reach} reaches past every wall from a boundary point of a "
+                f"{width} x {height} world, so no heading keeps its look-ahead point inside it"
+            )
+        turn = np.abs(np.angle(np.exp(1j * (ends - wanted[:, None]))))
+        nearest = ends[np.arange(len(rows)), np.argmin(np.where(inside, turn, np.inf), axis=1)]
+
+        unfolded = headings.copy()
+        unfolded[rows, cols] = np.mod(nearest, 2.0 * np.pi)
+        return unfolded
 
     def candidate_positions(
         self, selection: Selection, headings: np.ndarray

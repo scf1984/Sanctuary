@@ -307,6 +307,75 @@ class TestCandidateOptions:
         assert reach == pytest.approx(np.full(N_CANDIDATES, LOOK_AHEAD))
 
 
+# The four corners and four mid-wall points of the fixture's 8x8 world: where `Movement._landing`
+# puts an animal that walks into the boundary, and so where clipping can fold an option onto it.
+ON_THE_BOUNDARY = [(0.0, 0.0), (8.0, 0.0), (0.0, 8.0), (8.0, 8.0), (0.0, 4.0), (8.0, 4.0),
+                   (4.0, 0.0), (4.0, 8.0)]
+
+
+class TestTheEdgeOffersNoFalseMoves:
+    """#209: clipping can fold a heading's look-ahead point onto the animal's own position, and
+    that option is then a stay-put dressed as a move. `choice_moving` means "did not pick the null
+    column" (decided on #209), so the fix is upstream of it: no travelling option may propose zero
+    displacement.
+    """
+
+    @pytest.mark.parametrize("position", ON_THE_BOUNDARY)
+    def test_every_travelling_option_moves_the_animal(self, position):
+        world = World(capacity=256)
+        selection = world.spawn(
+            200, x=np.full(200, position[0], np.float32), y=np.full(200, position[1], np.float32)
+        )
+        headings = world.behaviour.candidate_headings(selection, np.random.default_rng(0))
+
+        x, y = world.behaviour.candidate_positions(selection, headings)
+
+        displacement = np.hypot(x[:, :NULL] - x[:, NULL:], y[:, :NULL] - y[:, NULL:])
+        assert (displacement > 0.0).all()
+
+    @pytest.mark.parametrize("position", ON_THE_BOUNDARY)
+    def test_no_option_leaves_the_world(self, position):
+        world = World(capacity=256)
+        selection = world.spawn(
+            200, x=np.full(200, position[0], np.float32), y=np.full(200, position[1], np.float32)
+        )
+        headings = world.behaviour.candidate_headings(selection, np.random.default_rng(0))
+
+        x, y = world.behaviour.candidate_positions(selection, headings)
+
+        assert ((x >= 0.0) & (x <= world.terrain.world_width)).all()
+        assert ((y >= 0.0) & (y <= world.terrain.world_height)).all()
+
+    def test_a_cornered_animal_that_chooses_to_travel_is_sent_somewhere(self):
+        """The case #209 was found by: from the origin, a westward or southward option used to clip
+        onto the animal itself, so winning it recorded a move toward the spot it was standing on.
+        """
+        world = World(capacity=256)
+        selection = world.spawn(
+            200, x=np.zeros(200, np.float32), y=np.zeros(200, np.float32), temperature=RECKLESS
+        )
+        world.behaviour.register(ConstantDrive("nothing", urgency=0.0))
+        world.behaviour.choose(selection, np.random.default_rng(3))
+
+        target_x, target_y = world.behaviour.chosen_target(selection)
+
+        moving = world.store.choice_moving[selection.to_indices()]
+        assert moving.any()
+        assert (np.hypot(target_x, target_y)[moving] > 0.0).all()
+
+    def test_an_interior_animals_options_are_untouched(self):
+        """Only an option clipping would fold away is re-aimed. Everywhere else the shipped spread
+        holds, which is what keeps edge density uniform: re-aiming every outward heading inward
+        thins the edge band to under half its share (docs/spikes/edge-candidates.md).
+        """
+        world = World()
+        selection = world.spawn(1, x=np.float32([1.0]), y=np.float32([4.0]))
+
+        headings = world.behaviour.candidate_headings(selection, np.random.default_rng(0))
+
+        assert np.diff(headings[0]) == pytest.approx(np.full(N_CANDIDATES - 1, SPACING))
+
+
 class TestUtilities:
     def test_utility_is_urgency_times_appeal_summed_over_drives(self):
         world = World()
