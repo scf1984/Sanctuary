@@ -42,21 +42,28 @@ _COLUMN_NAMES = (
 # `age` is seedable, and deliberately so: a gestating entity is allocated at conception with a
 # **negative** age and is born when `Aging` counts it up to zero (#20). It still defaults to 0,
 # so an ordinary allocation is unaffected and a recycled row never keeps its predecessor's years.
+#
+# `choice_heading` is seedable for the same kind of reason. The commitment bonus rewards continuing
+# the incumbent heading, and a row that has never chosen still has one. Left at the zero default,
+# every founder and every newborn would start out due east, an authored direction that #20's births
+# would re-inject forever (#175). So the world's allocation paths seed it with a uniform bearing
+# from the world's own stream. The store holds no RNG to draw one itself. It still defaults to 0,
+# so a recycled row the caller does not seed never keeps the direction its predecessor was walking.
 _SEEDABLE_COLUMN_NAMES = frozenset(_COLUMN_NAMES) - {
     "alive",
     "dehydration",
     "exertion",
-    "choice_heading",
     "choice_moving",
     "choice_urge",
     "velocity_x",
     "velocity_y",
 }
 
-# Zeroed by allocate() on every row it hands out: a newborn is at rest, facing nowhere, having
-# decided nothing, and none of that is what the row's previous occupant left behind. Exactly the
-# non-seedable set above, listed separately because that one is a *rule* about what a caller may
-# pass and this one is the loop that enforces it — `alive` belongs to the first and not the second.
+# Zeroed by allocate() on every row it hands out: a newborn is at rest, having decided nothing, and
+# none of that is what the row's previous occupant left behind. This is the non-seedable set above,
+# without `alive` and with `choice_heading` added. They are listed separately because that one is a
+# *rule* about what a caller may pass and this one is the loop that enforces it. `choice_heading`
+# is in both: cleared first, then overwritten when the caller seeds it, exactly as `age` is.
 _CLEARED_ON_ALLOCATE = (
     "exertion",
     "dehydration",
@@ -116,7 +123,8 @@ class EntityStore:
         since standing still is one too and has no heading of its own (#100).
       choice_heading: ``(capacity,)`` float32, radians in [0, 2pi): the direction each entity
         chose to move last tick, which the commitment bonus biases the next choice toward
-        (#114, #100).
+        (#114, #100). Before an entity's first choice it holds the bearing it was allocated with
+        (#175).
         Stored as a heading rather than an option index because an index would silently mean a
         different direction if the candidate count were retuned.
       choice_urge: ``(capacity,)`` float32, unit-free utility: how much better the chosen option

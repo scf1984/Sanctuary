@@ -537,6 +537,9 @@ def _found(
         # defaults it to zero, which its own docstring calls dead (#106).
         health=np.ones(n, dtype=np.float32),
         species_id=np.full(n, species_id, dtype=np.int32),
+        # A uniform bearing each, so that the commitment bonus on a founder's first choice favours
+        # no direction the world did not produce. The zero default would be due east for all (#175).
+        choice_heading=rng.uniform(0.0, 2.0 * np.pi, n).astype(np.float32),
     )
     # The living set *is* the founding set at this instant, which is why the ids `allocate` returns
     # are not needed: nothing has died and nothing has been born. Asking `alive` rather than
