@@ -413,6 +413,22 @@ class TestGain:
 
         assert ecology.energy(selection) == pytest.approx([40.0])
 
+    def test_the_pool_is_credited_exactly_what_the_ledger_recorded(self):
+        """Feeding puts a mouthful on the float64 export ledger and credits its assimilated part
+        here. A pool that rounds the credit to float32 holds a different amount from what the
+        ledger says it owes, and that gap does not shrink with the population: on a world starving
+        to its last fraction of a body, the final unit burned read as more than had ever left the
+        field (#240). So the credit has to land exactly, at the ledger's own precision."""
+        ecology, selection = self._one_entity(40.0)
+        # 0.1 has no exact binary form, so float32 and float64 disagree about it.
+        credit = 0.1
+
+        ecology.gain(selection, np.array([credit]))
+
+        # `float()` first: NumPy compares a float32 against a Python float *at float32*, which
+        # would hide exactly the rounding this asserts is gone.
+        assert float(ecology.energy(selection)[0]) == 40.0 + credit
+
 
 class TestStarving:
     def test_selects_the_entities_whose_pool_has_run_out(self):

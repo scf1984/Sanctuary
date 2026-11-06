@@ -196,7 +196,7 @@ class Conception:
             z=self.store.z[first],
             # Negative, and counted up by `Aging` every tick. Birth is this reaching zero.
             age=-term,
-            energy=np.zeros(n, dtype=np.float32),
+            energy=np.zeros(n, dtype=np.float64),
             species_id=self.store.species_id[first],
             genes=offspring_genes,
             # A bearing of its own, for the same reason a founder gets one (#175). Left at zero,
@@ -209,7 +209,7 @@ class Conception:
         # Half each, so neither parent can be emptied by a birth the other could afford, and both
         # are poorer by exactly what the young holds — which is what makes the cost real without an
         # exchange rate being chosen.
-        half = np.full(n, self.config.offspring_energy / 2.0, dtype=np.float32)
+        half = np.full(n, self.config.offspring_energy / 2.0, dtype=np.float64)
         self.ecology.transfer(Selection.from_indices(first, self.store.capacity), young, half)
         self.ecology.transfer(Selection.from_indices(second, self.store.capacity), young, half)
 

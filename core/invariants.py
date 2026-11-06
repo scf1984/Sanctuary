@@ -40,18 +40,9 @@ import numpy as np
 
 from core.behaviour.movement import Movement
 from core.ecology.carrion import Carrion
-from core.ecology.plants import Plants
+from core.ecology.plants import Plants, ledger_agrees
 from core.entities.store import EntityStore
 from core.selection import Selection
-
-# Measured, not guessed (§8.5, #214). On the demo world the gap between the export ledger and what
-# bodies and carrion hold is float32 rounding on the `energy` column: at most 1.7e-6 relative over
-# 2,000 ticks on seeds 1-3 (1,363-4,711 animals), and over 12,500 ticks on seed 2 it reached that
-# early and then sat near 2e-7 without growing. 1e-4 is ~60x clear of it. One average body is
-# 2e-4 to 7e-4 of the outstanding total at those populations, so a single unreturned animal trips;
-# at much larger populations one body falls under the bound, but a leak accumulates against the
-# absolute ledger and trips once it adds up.
-EXPORT_LEDGER_TOLERANCE = 1e-4
 
 
 @dataclass(frozen=True)
@@ -276,9 +267,7 @@ def nutrients_are_conserved(plants: Plants, relative_tolerance: float = 1e-9) ->
     return check
 
 
-def exported_nutrients_are_held(
-    plants: Plants, carrion: Carrion, relative_tolerance: float = EXPORT_LEDGER_TOLERANCE
-) -> Predicate:
+def exported_nutrients_are_held(plants: Plants, carrion: Carrion) -> Predicate:
     """Build a predicate asserting every nutrient on the export ledger is held somewhere (#214).
 
     `Plants.exported_nutrients` means "grazed out of the field and **not yet returned**", and
@@ -296,10 +285,11 @@ def exported_nutrients_are_held(
     time the harness looks. A row released while still holding energy — the leak #214 measured —
     leaves the left side unchanged and the right side short, and trips on the tick it happens.
 
-    Compared in energy units, the store's own, because that is what both sides are made of.
-    `relative_tolerance` covers float32 rounding on the `energy` column and nothing more; see
-    `EXPORT_LEDGER_TOLERANCE`. A slow leak that stays under it per tick still accumulates, because
-    the comparison is against the absolute ledger and not against last tick's gap.
+    Compared in energy units, the store's own, because that is what both sides are made of. The
+    allowance is `plants.ledger_agrees`, the same one `return_nutrients`' guard uses: float64
+    rounding between two sums taken in different orders, and nothing more (#240). A slow leak that
+    stays under it per tick still accumulates, because the comparison is against the absolute ledger
+    and not against last tick's gap.
     """
     per_biomass = plants.config.nutrient_per_biomass
 
@@ -308,7 +298,7 @@ def exported_nutrients_are_held(
         in_bodies = float(store.energy[store.alive].sum(dtype=np.float64))
         on_ground = float(carrion.mass.sum())
         held = in_bodies + on_ground
-        if math.isclose(held, owed, rel_tol=relative_tolerance):
+        if ledger_agrees(held, owed, per_biomass):
             return None
         return Violation(
             f"export ledger owes {owed!r} energy units but living bodies hold {in_bodies!r} and "

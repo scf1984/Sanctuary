@@ -28,6 +28,7 @@ matter.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -37,6 +38,39 @@ from core.world.barriers import Barriers
 from core.world.diffusion import CostAwareDiffusion, DiffusionConfig
 from core.world.terrain import Terrain
 from core.world.water import Water
+
+# How far the export ledger and the bodies it is owed by may disagree, before the gap means something
+# other than float64 rounding (#240). Both sides are float64, but they are summed in different
+# orders (the ledger per tick, a pool per meal), so they agree to a few ulps and not to the bit.
+#
+# Measured over 4,000 ticks on demo seeds 1-3, with the ledger owing up to ~1.9e5 units:
+#
+# - Relative: at most 1.4e-14. 1e-12 is ~70x clear of it. It replaces #236's float32-era 1e-4, under
+#   which a leak of a hundredth of a body could hide in a large world. This term only governs
+#   ledgers beyond ~1e8, where it exceeds the absolute floor below.
+# - Absolute: needed because a world that dies out is left owing its last rounding with nothing
+#   alive to hold it, which is relative to zero. #240's starving worlds ended owing 2.7e-12. The
+#   gap also drifts rather than holding still: worst on seed 1, from 3e-11 at tick 500 to 2.3e-9 at
+#   tick 4,000, about 6e-13 per tick. At that rate 1e-4 lasts ~1.7e8 ticks, about five years at
+#   §2.1's live rate. Worlds keep running while the player is away (§2.4), so a floor sized to the
+#   measured gap alone (~1e-8) would trip within days. It still catches any leak over ~2e-6 of one
+#   demo body.
+LEDGER_RELATIVE_TOLERANCE = 1e-12
+LEDGER_ABSOLUTE_TOLERANCE = 1e-4  # nutrient units, the ledger's own
+
+
+def ledger_agrees(a: float, b: float, nutrient_per_biomass: float = 1.0) -> bool:
+    """Whether two amounts on the export ledger agree to within float64 rounding (#240).
+
+    a, b: both in the same units. Pass `nutrient_per_biomass` when they are energy units, so the
+        absolute floor is compared in the ledger's own nutrient units.
+    """
+    return math.isclose(
+        a,
+        b,
+        rel_tol=LEDGER_RELATIVE_TOLERANCE,
+        abs_tol=LEDGER_ABSOLUTE_TOLERANCE / nutrient_per_biomass,
+    )
 
 
 @dataclass(frozen=True)
@@ -329,7 +363,13 @@ class Plants:
             raise ValueError("returned biomass must be non-negative")
 
         returned = float(biomass.sum()) * self.config.nutrient_per_biomass
-        if returned > self.exported_nutrients:
+        # Over by rounding is not over. A world starving out returns its last animal's whole body
+        # against a ledger that owes exactly that body, give or take the float64 ulps the two were
+        # summed with. Refusing that would end every extinction by starvation as an exception
+        # rather than a collapse (#240).
+        if returned > self.exported_nutrients and not ledger_agrees(
+            returned, self.exported_nutrients
+        ):
             raise ValueError(
                 f"cannot return more nutrients than have left the field: returning {returned} "
                 f"against {self.exported_nutrients} outstanding"

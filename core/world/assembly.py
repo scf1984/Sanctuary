@@ -533,7 +533,7 @@ def _found(
         n,
         x=x,
         y=y,
-        energy=np.full(n, config.founder_energy, dtype=np.float32),
+        energy=np.full(n, config.founder_energy, dtype=np.float64),
         # Full health: injury is a state the world produces, not one it starts in. `allocate`
         # defaults it to zero, which its own docstring calls dead (#106).
         health=np.ones(n, dtype=np.float32),

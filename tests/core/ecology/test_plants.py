@@ -311,6 +311,28 @@ class TestReturningNutrients:
                 np.array([5.0]), np.array([5.0]), np.array([outstanding * 2.0])
             )
 
+    def test_the_last_body_returned_over_by_rounding_is_accepted(self):
+        """A world starving out returns its last body against a ledger that owes exactly that
+        body, give or take the float64 ulps the two were summed with. Refusing it ended every
+        extinction by starvation as an exception rather than a collapse (#240)."""
+        plants = make_plants()
+        body = 50.0
+        plants.record_founding_stock(body)
+
+        plants.return_nutrients(np.array([5.0]), np.array([5.0]), np.array([body * (1.0 + 4e-15)]))
+
+        assert plants.exported_nutrients == pytest.approx(0.0, abs=1e-12)
+
+    def test_a_hundredth_of_a_body_over_is_still_rejected(self):
+        """The allowance is float64 rounding, not slack: a real over-return of even 1% of the
+        last body is invention and still raises (§8.7)."""
+        plants = make_plants()
+        body = 50.0
+        plants.record_founding_stock(body)
+
+        with pytest.raises(ValueError, match="more nutrients than have left"):
+            plants.return_nutrients(np.array([5.0]), np.array([5.0]), np.array([body * 1.01]))
+
 
 class TestFoundingStock:
     """Founders exist before anything has been grazed, so their bodies are nutrients that are out
