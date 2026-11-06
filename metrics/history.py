@@ -93,6 +93,10 @@ class Sample:
         same before and after selection moves the population's speed by a third. A mean that climbs
         across generations is selection, and a spread that collapses is a population running out of
         the variation it would need to adapt again.
+
+        Read through `Genetics.heritable`, so senescence is **not** in them (#239). Age degrades
+        performance traits at expression time, and over the aged phenotype a population growing
+        older would read as selection against speed, and a mixed-age cohort as genetic variation.
     **There is deliberately no single diversity scalar**, and the reason is measured rather than
     aesthetic. The obvious one — the mean per-gene variance of the expressed phenotype — reads 17.5
     on the demo world at tick 120, of which almost all is `maturity_age` alone: it is founded over
@@ -218,7 +222,7 @@ class MetricHistory:
     def _phenotype(self, living: Selection) -> dict:
         """Per-gene mean and spread of the expressed phenotype.
 
-        One `expressed` call for both, because it rebuilds the whole `(n, n_genes)` block and asking
+        One `heritable` call for both, because it rebuilds the whole `(n, n_genes)` block and asking
         twice would be a block nobody needed — the same argument #114 makes for sampling candidate
         positions once and sharing them across drives.
         """
@@ -232,7 +236,7 @@ class MetricHistory:
                 "expressed_mean": (0.0,) * width,
                 "expressed_spread": (0.0,) * width,
             }
-        expressed = self.genetics.expressed(living).astype(np.float64)
+        expressed = self.genetics.heritable(living).astype(np.float64)
         return {
             "expressed_mean": tuple(expressed.mean(axis=0).tolist()),
             "expressed_spread": tuple(expressed.std(axis=0).tolist()),

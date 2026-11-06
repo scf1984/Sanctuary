@@ -46,7 +46,7 @@ PLANTS_CONFIG = PlantsConfig(
     forage_diffusion=DiffusionConfig(range=4.0, climb_penalty=0.5),
 )
 FEEDING_CONFIG = FeedingConfig(intake_rate=4.0, assimilation_max=0.5, size_gene="size")
-GENETICS_CONFIG = GeneticsConfig(mutability_gene="mutability", drift_margin=2.0)
+GENETICS_CONFIG = GeneticsConfig(mutability_gene="mutability", drift_margin=2.0, senescence=None)
 # Nothing here charges upkeep: these tests are about what a strike moves, and a basal drain would
 # put a second withdrawal in every assertion for no gain.
 METABOLISM_CONFIG = MetabolismConfig(

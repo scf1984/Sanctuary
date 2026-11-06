@@ -101,6 +101,7 @@ CUE_GENES = (*SIGNATURE_GENES, *FLAT_AVERSION)
 GENETICS_CONFIG = GeneticsConfig(
     mutability_gene="mutability",
     drift_margin=2.0,
+    senescence=None,
 )
 
 METABOLISM_CONFIG = MetabolismConfig(

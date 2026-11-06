@@ -42,6 +42,7 @@ from core.behaviour.movement import Movement
 from core.ecology.carrion import Carrion
 from core.ecology.plants import Plants
 from core.entities.store import EntityStore
+from core.genetics.service import Genetics
 from core.selection import Selection
 
 # Measured, not guessed (§8.5, #214). On the demo world the gap between the export ledger and what
@@ -209,7 +210,7 @@ def no_alive_entity_is_more_than_dry(store: EntityStore) -> Optional[Violation]:
 
 
 def no_entity_exceeds_its_top_speed(movement: Movement) -> Predicate:
-    """Build a predicate flagging alive rows travelling faster than their expressed `speed` gene.
+    """Build a predicate flagging alive rows travelling faster than they have ever been able to.
 
     §2.5 rejected a speed cap outright — top speed is a gene under selection, and an authored
     ceiling on an evolving trait is what "author the physics, not the outcomes" forbids. What
@@ -217,6 +218,13 @@ def no_entity_exceeds_its_top_speed(movement: Movement) -> Predicate:
     actually happened, and that displacement is never longer than the velocity it aimed for, which
     is on the segment between last tick's velocity and `top_speed × pace`. So the bound holds by
     induction from a standing start, with no clamp anywhere.
+
+    **The bound is `peak_speed`, the top speed at the animal's youngest, not today's** (#239).
+    Senescence lowers top speed every tick lived, and `age_increment` runs after `movement` (§2.1),
+    so an animal that moved at full pace ends the tick a decay step faster than its new top speed —
+    legitimately, and then for as long as momentum carries it (#204). The induction still holds
+    against the largest top speed the animal has had, and since ageing only ever lowers it, that is
+    its peak. Anything a writer of `velocity_x` could get wrong still lands above it.
 
     This is that argument asserted rather than believed, which is exactly what §8.2 asks for when
     something genuinely cannot occur: a branch in the hot loop would be a defensive check against
@@ -238,7 +246,7 @@ def no_entity_exceeds_its_top_speed(movement: Movement) -> Predicate:
         speed = np.hypot(
             store.velocity_x[mask].astype(np.float64), store.velocity_y[mask].astype(np.float64)
         )
-        over = speed > movement.top_speed(living) * (1.0 + relative_slack)
+        over = speed > movement.peak_speed(living) * (1.0 + relative_slack)
         return _rows_violation(
             np.flatnonzero(mask)[over], "alive entities travelling above their top speed"
         )
@@ -318,6 +326,28 @@ def exported_nutrients_are_held(
     return check
 
 
+def senescence_decay_stays_in_unit_interval(genetics: Genetics) -> Predicate:
+    """Build a predicate flagging living rows whose senescence decay has left (0, 1] (§2.5, §6).
+
+    The formula guarantees the bound by construction — a positive base rate over a denominator never
+    below 1, through an exponential that approaches zero without reaching it — so this guards a
+    *future change to the formula*, not the formula as written (#21's follow-up). A decay of zero
+    would make an old animal literally motionless; one above 1 would let it rejuvenate. Either is a
+    different mechanism from the one §2.5 settled, and both would pass silently through every
+    consumer, because a phenotype is just a number.
+    """
+
+    def check(store: EntityStore) -> Optional[Violation]:
+        rows = np.flatnonzero(store.alive)
+        if not rows.size:
+            return None
+        remaining = genetics.senescence_decay_at(rows)
+        outside = ~((remaining > 0.0) & (remaining <= 1.0))
+        return _rows_violation(rows[outside], "senescence decay outside (0, 1]")
+
+    return check
+
+
 def default_registry(
     min_x: float,
     max_x: float,
@@ -326,6 +356,7 @@ def default_registry(
     plants: Optional[Plants] = None,
     movement: Optional[Movement] = None,
     carrion: Optional[Carrion] = None,
+    genetics: Optional[Genetics] = None,
 ) -> InvariantRegistry:
     """The invariants checkable against `core/` as it exists today, over a world of the given
     bounds.
@@ -341,6 +372,8 @@ def default_registry(
     carrion: the world's carrion field, if it has one. Supplying it adds the export-ledger check,
         which needs every place an outstanding unit can lie; the field it is built over is
         `carrion.plants`, so a world passing both gets one ledger watched, not two.
+    genetics: the world's genetics service, if it has one and its animals age. Supplying it adds
+        the senescence bound, optional on the same terms as `movement`.
     """
     registry = InvariantRegistry()
     registry.register("no_alive_entity_occupies_a_free_row", no_alive_entity_occupies_a_free_row)
@@ -360,5 +393,10 @@ def default_registry(
     if movement is not None:
         registry.register(
             "no_entity_exceeds_its_top_speed", no_entity_exceeds_its_top_speed(movement)
+        )
+    if genetics is not None:
+        registry.register(
+            "senescence_decay_stays_in_unit_interval",
+            senescence_decay_stays_in_unit_interval(genetics),
         )
     return registry

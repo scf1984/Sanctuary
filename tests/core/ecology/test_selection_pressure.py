@@ -39,6 +39,7 @@ GENE_NAMES = ("size", "speed", "sight", "heat_tolerance", "cold_tolerance", "mut
 GENETICS_CONFIG = GeneticsConfig(
     mutability_gene="mutability",
     drift_margin=2.0,
+    senescence=None,
 )
 GENE_REGISTRY = gene_registry(
     GENE_NAMES, {"size": 2.0, "speed": 3.0, "heat_tolerance": 1.0, "cold_tolerance": 1.0}

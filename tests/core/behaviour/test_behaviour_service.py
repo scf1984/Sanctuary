@@ -14,7 +14,7 @@ from tests.support.genes import gene_registry
 
 GENE_NAMES = ("mutability", "choice_temperature", "commitment")
 GENE_REGISTRY = gene_registry(GENE_NAMES)
-GENETICS_CONFIG = GeneticsConfig(mutability_gene="mutability", drift_margin=2.0)
+GENETICS_CONFIG = GeneticsConfig(mutability_gene="mutability", drift_margin=2.0, senescence=None)
 
 N_CANDIDATES = 8
 LOOK_AHEAD = 2.0

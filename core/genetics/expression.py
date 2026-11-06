@@ -26,6 +26,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from core.genetics.registry import ExpressionMode, GeneRegistry, Unit
+from core.genetics.senescence import SenescenceConfig
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,11 @@ class GeneticsConfig:
         distribution, so what matters is its size and not its sign.
     drift_margin: how far outside the parental min/max an offspring may land, in units of the draw's
         own spread. Must be positive; zero forbids drift outright.
+    senescence: how performance traits degrade with age (`core.genetics.senescence`, #239), or
+        None for a world whose animals do not age. Required rather than defaulted, so that "nothing
+        ages" is something a config says outright and never what it gets by omission (§8.7).
+        `build_world` refuses None: an assembled world without senescence is the immortality bug
+        #239 fixed. The opt-out exists for service-level test fixtures, which never advance `age`.
 
     The modes themselves are not here: they are per-gene declarations and live on each `GeneSpec`
     in `core.genetics.registry` (#111).
@@ -44,6 +50,7 @@ class GeneticsConfig:
 
     mutability_gene: str
     drift_margin: float
+    senescence: SenescenceConfig | None
 
     def __post_init__(self) -> None:
         if self.drift_margin <= 0.0:

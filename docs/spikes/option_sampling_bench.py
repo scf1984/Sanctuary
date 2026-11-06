@@ -105,7 +105,7 @@ class Bench:
         species_id = species.register(GENE_NAMES)
         self.genetics = Genetics(
             self.store, columns, species, genes,
-            GeneticsConfig(mutability_gene="mutability", drift_margin=2.0),
+            GeneticsConfig(mutability_gene="mutability", drift_margin=2.0, senescence=None),
         )
         heights = np.zeros((GRID, GRID), dtype=np.float32)
         terrain = Terrain(heights, cell_size=1.0)

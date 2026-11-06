@@ -1055,6 +1055,20 @@ by" hunger and no animal stands still merely because the drive that won has no m
   it costs no column and no extra pass. Note the consistent consequence: since upkeep is charged
   from the expressed phenotype, an atrophied trait also costs less to maintain.
 
+  **What reads the aged phenotype and what does not** — settled while implementing it (#239).
+  Everything that *uses* a trait reads `Genetics.expressed`, which carries the decay: movement,
+  sensing, feeding, upkeep. Everything that *compares genomes* reads `Genetics.heritable`, which is
+  the same phenotype without it: genetic distance (and so mate compatibility and speciation) and
+  the metrics' per-gene mean and spread. Over the aged phenotype two identical genomes of different
+  ages would read as genetically apart, and a population growing old would read as selection
+  against speed. An unborn row's negative age (#20) reads as zero lived — the gestation clock is
+  not years — so nothing is born pre-aged and nothing unborn rejuvenates.
+
+  Which traits are "performance" is the narrow reading of the sentence above: `speed`, `sight` and
+  `scent_acuity` in the demo world, named per world in `SenescenceConfig.decaying_genes`. Agility,
+  haste, toxicity, digestion and reproductive output do not decay; widening the set is a rules
+  change (§2.8) for whoever measures that it should.
+
   **Decay is strictly positive and never reaches zero, and the formula guarantees that rather than
   a clamp doing so:**
 

@@ -22,6 +22,7 @@ SCENT_GENES = ScentGenes(emission_gene="scent_emission", signature_genes=SIGNATU
 GENETICS_CONFIG = GeneticsConfig(
     mutability_gene="mutability",
     drift_margin=2.0,
+    senescence=None,
 )
 GENE_REGISTRY = gene_registry(GENE_NAMES)
 

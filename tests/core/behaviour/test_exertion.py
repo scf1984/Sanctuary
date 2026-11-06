@@ -34,6 +34,7 @@ GENE_NAMES = ("size", "speed", "agility", "haste", "heat_tolerance", "cold_toler
 GENETICS_CONFIG = GeneticsConfig(
     mutability_gene="mutability",
     drift_margin=2.0,
+    senescence=None,
 )
 # `agility` is costed because `Movement` refuses to build without it (§2.5, #204).
 GENE_REGISTRY = gene_registry(GENE_NAMES, {"heat_tolerance": 1.0, "cold_tolerance": 1.0, "agility": 1.0})

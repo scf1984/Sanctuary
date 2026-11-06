@@ -190,6 +190,12 @@ class WorldConfig:
                 raise ValueError(f"founder range for '{name}' is inverted: ({low}, {high})")
         if self.n_founders < 1:
             raise ValueError("a world needs at least one founder")
+        if self.genetics.senescence is None:
+            raise ValueError(
+                "an assembled world must age: genetics.senescence is None, which makes every "
+                "animal that can feed immortal (§2.5, #239). The opt-out is for service-level "
+                "test fixtures that never advance `age`, not for a world"
+            )
 
 
 @dataclass(frozen=True)
@@ -370,6 +376,7 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
             plants=plants,
             movement=movement,
             carrion=carrion,
+            genetics=genetics,
         ),
         debug_checks=debug_checks,
         growth=config.growth,
