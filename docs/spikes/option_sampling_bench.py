@@ -81,7 +81,8 @@ GENES = (
     _spec("sight", cost=0.01),
     # A gene that only ever reduces upkeep must charge a positive cost, or it is a free lunch --
     # Metabolism refuses to be built otherwise (#136).
-    _spec("insulation", cost=0.01),
+    _spec("heat_tolerance", cost=0.01),
+    _spec("cold_tolerance", cost=0.01),
     _spec("mutability"),
     _spec("choice_temperature", mode=ExpressionMode.EXPONENTIAL),
     _spec("commitment"),
@@ -131,7 +132,8 @@ class Bench:
             self.store, columns, self.genetics, climate,
             Metabolism(genes, MetabolismConfig(
                 basal_rate=1.0, thermoregulation_rate=0.5, neutral_temperature=20.0,
-                insulation_gene="insulation",
+                heat_tolerance_gene="heat_tolerance",
+                cold_tolerance_gene="cold_tolerance",
             )),
         )
         exertion = Exertion(self.store, columns, ExertionConfig(recovery_rate=0.5))

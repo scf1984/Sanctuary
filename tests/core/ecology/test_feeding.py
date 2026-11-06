@@ -32,11 +32,11 @@ from core.world.water import Water
 
 from tests.support.genes import gene_registry
 
-GENE_NAMES = ("size", "insulation", "diet_animal_derived", "mutability")
-# `insulation` is here only because `Metabolism` requires a costed one — a gene that reduces
-# upkeep and charges nothing is a free lunch (§2.5). These tests keep the world at the neutral
-# temperature so it never actually bites.
-GENE_REGISTRY = gene_registry(GENE_NAMES, {"insulation": 1.0})
+GENE_NAMES = ("size", "heat_tolerance", "cold_tolerance", "diet_animal_derived", "mutability")
+# The tolerance genes are here only because `Metabolism` requires costed ones — a gene that
+# reduces upkeep and charges nothing is a free lunch (§2.5). These tests keep the world at the
+# neutral temperature so they never actually bite.
+GENE_REGISTRY = gene_registry(GENE_NAMES, {"heat_tolerance": 1.0, "cold_tolerance": 1.0})
 GENETICS_CONFIG = GeneticsConfig(mutability_gene="mutability", drift_margin=2.0)
 
 PLANTS_CONFIG = PlantsConfig(
@@ -58,7 +58,8 @@ METABOLISM_CONFIG = MetabolismConfig(
     basal_rate=1.0,
     thermoregulation_rate=0.5,
     neutral_temperature=25.0,
-    insulation_gene="insulation",
+    heat_tolerance_gene="heat_tolerance",
+    cold_tolerance_gene="cold_tolerance",
 )
 
 

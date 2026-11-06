@@ -29,7 +29,7 @@ from tests.support.genes import gene_registry
 from tests.support.plants import plant_field
 
 
-GENE_NAMES = ("size", "speed", "agility", "haste", "insulation", "mutability")
+GENE_NAMES = ("size", "speed", "agility", "haste", "heat_tolerance", "cold_tolerance", "mutability")
 
 # Every gene declares how its stored value is read (#104). These are all quantities, so all fold
 # across zero; `mutability` is in the vocabulary because inheritance's spread floor is a gene, and
@@ -41,18 +41,19 @@ GENETICS_CONFIG = GeneticsConfig(
 # `agility` is costed because `Movement` refuses to build without it: turning faster is pure
 # benefit, so a free agility gene runs away in every world (§2.5, #204). It is the only cost that
 # matters to a step, since the locomotion charge under test is what these tests measure.
-GENE_REGISTRY = gene_registry(GENE_NAMES, {"insulation": 1.0, "agility": 1.0})
+GENE_REGISTRY = gene_registry(GENE_NAMES, {"heat_tolerance": 1.0, "cold_tolerance": 1.0, "agility": 1.0})
 
 # Free metabolism: every gene costs nothing and there is no basal rate, so the only thing that
-# moves an energy pool in these tests is the locomotion charge under test. Insulation still carries
-# a positive cost because MetabolismConfig requires it to (a free insulation gene is a free lunch),
-# and no cohort below expresses a non-zero value for it.
+# moves an energy pool in these tests is the locomotion charge under test. The tolerance genes
+# still carry a positive cost because MetabolismConfig requires it (a free tolerance is a free
+# lunch), and no cohort below expresses a non-zero value for either.
 FREE_METABOLISM = MetabolismConfig(
     dehydration_penalty=0.0,
     basal_rate=0.0,
     thermoregulation_rate=0.0,
     neutral_temperature=20.0,
-    insulation_gene="insulation",
+    heat_tolerance_gene="heat_tolerance",
+    cold_tolerance_gene="cold_tolerance",
 )
 
 MOVEMENT_CONFIG = MovementConfig(
@@ -344,7 +345,7 @@ class TestAStepGoesWhereItWasAimed:
 
         assert world.movement.top_speed(speedy) == pytest.approx(7.0)
 
-        sessile_id = world.species.register(("size", "insulation"))
+        sessile_id = world.species.register(("size", "heat_tolerance", "cold_tolerance"))
         world.genetics.speciate(speedy, sessile_id)
 
         assert world.movement.top_speed(speedy) == pytest.approx(0.0)
@@ -431,7 +432,7 @@ class TestWhatAStepCosts:
         """Cost follows the expressed phenotype (§2.5), the same rule metabolism obeys."""
         world = World(flat_heights())
         # Everything but size, so the only thing this species is missing is the one under test.
-        weightless_id = world.species.register(("speed", "agility", "haste", "insulation"))
+        weightless_id = world.species.register(("speed", "agility", "haste", "heat_tolerance", "cold_tolerance"))
         heavy = world.place(0.0, 10.0, speed=4.0, size=3.0)
         weightless = world.place(0.0, 10.0, speed=4.0, size=3.0)
         world.genetics.speciate(weightless, weightless_id)
@@ -738,7 +739,7 @@ class TestPaceIsBoughtWithUrge:
         gene ambles at any provocation, which is the same rule `top_speed` obeys."""
         world = World(flat_heights())
         walker = world.place(10.0, 10.0, speed=5.0)
-        placid_id = world.species.register(("size", "speed", "agility", "insulation"))
+        placid_id = world.species.register(("size", "speed", "agility", "heat_tolerance", "cold_tolerance"))
         world.genetics.speciate(walker, placid_id)
 
         assert world.movement.pace(walker, np.array([4.0])) == pytest.approx(
@@ -909,9 +910,9 @@ class TestVelocityChangesAtABoundedRate:
 
 class TestAgilityMustBePaidFor:
     def test_a_free_agility_gene_is_rejected_at_construction(self):
-        """§2.5's rule for insulation and senescence resistance, and agility is the same shape:
-        there is no world in which turning faster is worse, so a gene that only ever buys it and
-        charges nothing runs away everywhere. Refused where the cost and the caller's intent first
+        """§2.5's rule for the tolerance genes and senescence resistance, and agility is the same
+        shape: there is no world in which turning faster is worse, so a gene that only ever buys
+        it and charges nothing runs away everywhere. Refused where the cost and the caller's intent first
         meet, rather than noticed later as a lineage that corners impossibly (§8.7)."""
         world = World(flat_heights())
         with pytest.raises(ValueError, match="agility"):
@@ -922,7 +923,7 @@ class TestAgilityMustBePaidFor:
                 world.exertion,
                 world.genetics,
                 world.terrain,
-                gene_registry(GENE_NAMES, {"insulation": 1.0}),
+                gene_registry(GENE_NAMES, {"heat_tolerance": 1.0, "cold_tolerance": 1.0}),
                 MOVEMENT_CONFIG,
                 Barriers(world.terrain),
             )

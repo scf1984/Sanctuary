@@ -26,7 +26,7 @@ from core.world.terrain import Terrain
 from tests.support.genes import gene_registry
 from tests.support.plants import plant_field
 
-GENE_NAMES = ("size", "speed", "agility", "haste", "insulation", "fatigue_weight", "mutability")
+GENE_NAMES = ("size", "speed", "agility", "haste", "heat_tolerance", "cold_tolerance", "fatigue_weight", "mutability")
 
 # Every gene declares how its stored value is read (#104). These are all quantities, so all fold
 # across zero; `mutability` is in the vocabulary because inheritance's spread floor is a gene, and
@@ -36,7 +36,7 @@ GENETICS_CONFIG = GeneticsConfig(
     drift_margin=2.0,
 )
 # `agility` is costed because `Movement` refuses to build without it (§2.5, #204).
-GENE_REGISTRY = gene_registry(GENE_NAMES, {"insulation": 1.0, "agility": 1.0})
+GENE_REGISTRY = gene_registry(GENE_NAMES, {"heat_tolerance": 1.0, "cold_tolerance": 1.0, "agility": 1.0})
 
 # Fatigue grades travelling options rather than vetoing them (#207). These are the shipped world's
 # figures; nothing below asserts on them, and `TestFatigueGradesTravel` states its own.
@@ -52,7 +52,8 @@ FREE_METABOLISM = MetabolismConfig(
     basal_rate=0.0,
     thermoregulation_rate=0.0,
     neutral_temperature=20.0,
-    insulation_gene="insulation",
+    heat_tolerance_gene="heat_tolerance",
+    cold_tolerance_gene="cold_tolerance",
 )
 
 MOVEMENT_CONFIG = MovementConfig(

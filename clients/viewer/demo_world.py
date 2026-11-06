@@ -100,7 +100,7 @@ _GENES = (
     GeneSpec(
         name="agility",
         # Costed like speed, and it must be costed at all: turning faster is pure benefit, so a
-        # free agility gene runs away in every world (§2.5's rule for insulation). `Movement`
+        # free agility gene runs away in every world (§2.5's rule for the tolerances). `Movement`
         # refuses to build without a positive figure here.
         cost=0.01,
         expression_mode=ExpressionMode.MAGNITUDE,
@@ -124,13 +124,24 @@ _GENES = (
         ),
     ),
     GeneSpec(
-        name="insulation",
+        name="heat_tolerance",
         cost=0.01,
         expression_mode=ExpressionMode.MAGNITUDE,
         unit=Unit.DIMENSIONLESS,
         description=(
-            "Damps thermoregulation upkeep with diminishing returns. Must charge a positive cost: "
-            "a gene that only reduces upkeep and charges nothing is unbounded free benefit."
+            "Damps the upkeep of being hotter than neutral, with diminishing returns, and does "
+            "nothing on the cold side (#176). Must charge a positive cost: a gene that only "
+            "reduces upkeep and charges nothing is unbounded free benefit."
+        ),
+    ),
+    GeneSpec(
+        name="cold_tolerance",
+        cost=0.01,
+        expression_mode=ExpressionMode.MAGNITUDE,
+        unit=Unit.DIMENSIONLESS,
+        description=(
+            "Damps the upkeep of being colder than neutral, with diminishing returns, and does "
+            "nothing on the hot side (#176). Costed for the same reason as heat tolerance."
         ),
     ),
     GeneSpec(
@@ -424,13 +435,18 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
         cue_field=CueFieldConfig(diffusion_range=3.0),
         metabolism=MetabolismConfig(
             basal_rate=0.05,
-            thermoregulation_rate=0.01,
+            # Per squared degree (#176), re-derived from the linear 0.01 per degree rather than
+            # carried over: divided by the 8.0 degrees this map's mean cell sits from neutral
+            # (26.2-29.4 against 20), so the typical animal's bill is what it was and only the
+            # curve's shape moved. Re-derive it, not keep it, if the climate or neutral changes.
+            thermoregulation_rate=0.00125,
             # A bone-dry animal pays six times its ordinary upkeep, so it burns a full pool in a
             # few dozen ticks rather than surviving indefinitely on fat. This is the whole of how
             # thirst kills (#156) — tuned against `HydrationConfig.loss_rate` as one pair.
             dehydration_penalty=5.0,
             neutral_temperature=20.0,
-            insulation_gene="insulation",
+            heat_tolerance_gene="heat_tolerance",
+            cold_tolerance_gene="cold_tolerance",
         ),
         genetics=GeneticsConfig(
             mutability_gene="mutability",
@@ -516,7 +532,8 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
             # long again to reverse. Wide enough that founders differ in nimbleness from the first
             # generation, which is what selection needs to build a predator and its prey out of.
             "agility": (0.3, 0.9),
-            "insulation": (0.0, 0.5),
+            "heat_tolerance": (0.0, 0.5),
+            "cold_tolerance": (0.0, 0.5),
             "sight": (2.0, 6.0),
             "scent_emission": (0.5, 1.5),
             "scent_acuity": (0.5, 1.5),

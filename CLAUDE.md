@@ -240,9 +240,31 @@ by" hunger and no animal stands still merely because the drive that won has no m
   inseparable — an unexpressed gene is carried and inherited but neither paid for nor gained from.
   Cost coefficients are a per-world table, never constants in `core/`, and **every gene in the
   vocabulary must declare a cost, zero included**: a gene added without one would silently become a
-  free trait, which defeats the whole budget. Any gene that *reduces* upkeep — insulation damping
-  thermoregulation cost is the first — must itself charge a positive cost, or it is unbounded free
-  benefit and runs away in every climate.
+  free trait, which defeats the whole budget. Any gene that *reduces* upkeep — the thermal
+  tolerances damping thermoregulation cost are the first — must itself charge a positive cost, or
+  it is unbounded free benefit and runs away in every climate. This is **the tolerance rule** the
+  rest of this document refers to.
+
+  **Thermal tolerance is one gene per side of neutral** (#176). Thermoregulation charges the
+  *square* of how far ambient sits from a per-world `neutral_temperature`, and `heat_tolerance` and
+  `cold_tolerance` each damp only their own side, as `rate × deviation² / (1 + tolerance)`. One
+  symmetric `insulation` gene came first and could not do what the paragraph above claims: it
+  priced a cell 15 degrees too hot exactly like one 15 degrees too cold, so a desert lineage and an
+  arctic one evolved toward the same animal. Split per side, hot and cold ground price the same
+  animal differently, and a hybrid carries both genes at intermediate values — too little for one
+  side and dead weight on the other. The square, rather than the earlier linear charge, is gentle
+  near neutral so variation in the tolerances survives to be selected on, and steep far from it so
+  extreme ground stays a graded barrier rather than a plateau. The damping divides the squared bill
+  rather than sitting inside the square, because inside it a tolerance would earn quadratic returns
+  and break the tolerance rule's own requirement of diminishing ones.
+
+  What that buys is **measured, and smaller than the sentence above it might suggest**
+  (`docs/spikes/thermal-divergence.md`). The price difference is structural and tested. On the demo
+  map split around its median temperature, hot ground carries more heat tolerance and cold ground
+  more cold tolerance in every seed, but by about 0.01 in gene value after 4,000 ticks, because a
+  3-degree range is crossed far faster than selection acts. So "different biomes select different
+  builds" now holds in direction; whether it holds strongly enough to split species depends on how
+  far apart, and how long, isolated populations live (#16, #159).
 
   **A gene declares its cost, expression mode and unit in one place** — `core.genetics.registry`,
   settled in #111, which owned it. A `GeneSpec` carries all three, and the registry it builds is
@@ -313,7 +335,7 @@ by" hunger and no animal stands still merely because the drive that won has no m
 
   | mode | used by | why |
   |---|---|---|
-  | magnitude (`abs`) | size, speed, acuity, camouflage, insulation, mutability, commitment (#100) | a quantity cannot be negative |
+  | magnitude (`abs`) | size, speed, acuity, camouflage, heat and cold tolerance, mutability, commitment (#100) | a quantity cannot be negative |
   | raw, signed | cue signature, aversion | sign carries information and doubles the discriminating power of cue space |
   | exponential (`exp`) | choice temperature (#114) | a **scale**, which must stay strictly positive and multiply rather than add |
 
@@ -427,7 +449,7 @@ by" hunger and no animal stands still merely because the drive that won has no m
   **Divided by size, so mass resists a change of direction.** That is free physics rather than an
   authored penalty, and it gives `size` its first downside beyond upkeep — a real speed-against-
   agility axis, which is the difference between a predator and its prey being *different kinds of
-  animal* and being two speed values. `agility` must charge a positive cost, per the insulation
+  animal* and being two speed values. `agility` must charge a positive cost, per the tolerance
   rule above: there is no world in which turning faster is worse.
 
   **The change is capped in magnitude, never per axis**, or an animal would turn faster along the
@@ -1006,10 +1028,10 @@ by" hunger and no animal stands still merely because the drive that won has no m
   | `aversion0_0..7`, `aversion1_0..7` | two directions in cue space — what frightens me | 0 |
   | `scent_emission` | broadcast strength on the scent modality | see below |
   | `scent_acuity`, `sight_acuity` | detection sensitivity per modality | positive |
-  | `camouflage` | damps visual conspicuousness | **positive**, per the insulation rule above |
+  | `camouflage` | damps visual conspicuousness | **positive**, per the tolerance rule above |
   | `sex_allocation`, `selfing_rate` | reproduction, continuously (#20) | #20's to set |
   | `maturity_age` | ticks before an animal seeks a mate at all | 0 — late maturity is already paid for in generations forgone |
-  | `senescence_resistance` | damps how fast performance traits degrade with age | **positive**, per the insulation rule |
+  | `senescence_resistance` | damps how fast performance traits degrade with age | **positive**, per the tolerance rule |
   | `commitment` | how doggedly last tick's *bearing* is held — half the width of the band a rival drive must clear (#100) | 0 — dithering and tunnel vision are each their own price |
   | `choice_temperature` | how much an animal explores rather than taking its best option (#114) | 0 — exploring badly is its own price, exactly as `mutability` above |
   | `mutability` | the floor under an offspring's inherited drift (#104) | 0 — an unfit brood is its own price; see the inheritance rule above |
@@ -1024,7 +1046,7 @@ by" hunger and no animal stands still merely because the drive that won has no m
   A lifespan gene was considered and rejected: living longer is pure benefit, so it runs away and
   every lineage evolves toward immortality. `senescence_resistance` inverts that into something the
   budget already knows how to bound — it *reduces* degradation and therefore must charge positive
-  upkeep, exactly as insulation must. Biologically this is right too: bodily maintenance and repair
+  upkeep, exactly as the thermal tolerances must. Biologically this is right too: bodily maintenance and repair
   are metabolically expensive. The equilibrium is then set by the environment rather than by a
   designer — high-predation worlds favour breed-fast-die-young, safe ones favour the long-lived —
   which is real life-history theory falling out of the energy budget.
@@ -1041,7 +1063,7 @@ by" hunger and no animal stands still merely because the drive that won has no m
   decay = exp(−rate × age)                             always in (0, 1]
   ```
 
-  The `1 +` denominator is the shape insulation already uses against thermoregulation, for the same
+  The `1 +` denominator is the shape the thermal tolerances already use against thermoregulation, for the same
   reason: a gene that only ever *reduces* something must have diminishing returns, or it buys its
   way out of the mechanism entirely — here, into immortality. `senescence_resistance` is read as a
   magnitude so the denominator is never below 1, and the exponential approaches zero without
@@ -1059,7 +1081,7 @@ by" hunger and no animal stands still merely because the drive that won has no m
   **Camouflage is environment-dependent**: visual conspicuousness is `size × (1 − camouflage ×
   match(local terrain))`, so the same allele is excellent on scree and useless on grass, and
   climate zones select for different camouflage without a designer — the same argument metabolism
-  makes for insulation.
+  makes for the thermal tolerances.
 
   **Scent emission has no cost line above because charging it would be a trap.** Low emission is
   already a survival benefit, so a positive cost would make silence both cheaper *and* safer and

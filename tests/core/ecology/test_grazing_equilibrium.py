@@ -32,8 +32,8 @@ from core.world.water import Water
 
 from tests.support.genes import gene_registry
 
-GENE_NAMES = ("size", "insulation", "diet_animal_derived", "mutability")
-GENE_REGISTRY = gene_registry(GENE_NAMES, {"size": 0.02, "insulation": 0.01})
+GENE_NAMES = ("size", "heat_tolerance", "cold_tolerance", "diet_animal_derived", "mutability")
+GENE_REGISTRY = gene_registry(GENE_NAMES, {"size": 0.02, "heat_tolerance": 0.01, "cold_tolerance": 0.01})
 GENETICS_CONFIG = GeneticsConfig(mutability_gene="mutability", drift_margin=2.0)
 
 PLANTS_CONFIG = PlantsConfig(
@@ -54,7 +54,8 @@ METABOLISM_CONFIG = MetabolismConfig(
     basal_rate=0.05,
     thermoregulation_rate=0.01,
     neutral_temperature=20.0,
-    insulation_gene="insulation",
+    heat_tolerance_gene="heat_tolerance",
+    cold_tolerance_gene="cold_tolerance",
 )
 
 

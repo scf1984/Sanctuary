@@ -18,7 +18,7 @@ def spec(name, cost=0.0, mode=ExpressionMode.MAGNITUDE, unit=Unit.DIMENSIONLESS)
 SPECS = (
     spec("size", cost=0.02),
     spec("speed", cost=0.03, unit=Unit.LENGTH),
-    spec("insulation", cost=0.01),
+    spec("cold_tolerance", cost=0.01),
     spec("signature_0", mode=ExpressionMode.SIGNED),
     spec("mutability"),
 )
@@ -60,7 +60,7 @@ class TestConstruction:
         assert registry.vocabulary.names == (
             "size",
             "speed",
-            "insulation",
+            "cold_tolerance",
             "signature_0",
             "mutability",
         )
@@ -102,7 +102,7 @@ class TestCostsAndModesCannotDisagree:
 
 class TestResolvingAGene:
     def test_index_of_returns_the_column(self):
-        assert GeneRegistry(SPECS).index_of("insulation") == 2
+        assert GeneRegistry(SPECS).index_of("cold_tolerance") == 2
 
     def test_index_of_raises_for_an_unknown_gene(self):
         with pytest.raises(KeyError, match="not in gene vocabulary"):
@@ -116,7 +116,7 @@ class TestResolvingAGene:
         # gene it will read as a length must get a length, and both sides being floats is exactly
         # why nothing else can catch it.
         with pytest.raises(ValueError, match="declared in dimensionless.*read as length"):
-            GeneRegistry(SPECS).index_of("insulation", unit=Unit.LENGTH)
+            GeneRegistry(SPECS).index_of("cold_tolerance", unit=Unit.LENGTH)
 
     def test_spec_returns_the_declaration(self):
         assert GeneRegistry(SPECS).spec("speed").unit is Unit.LENGTH
@@ -145,7 +145,7 @@ class TestGeneratedMap:
 
     def test_describe_names_every_gene_with_its_declared_facts(self):
         described = GeneRegistry(SPECS).describe()
-        for name in ("size", "speed", "insulation", "signature_0", "mutability"):
+        for name in ("size", "speed", "cold_tolerance", "signature_0", "mutability"):
             assert name in described
         assert "magnitude" in described
         assert "signed" in described

@@ -97,7 +97,7 @@ class HungerConfig:
         and half the selection pressure on the trait would vanish. Must be positive; at zero the
         faintest trace anywhere counts as food found.
     sight_gene: the gene whose expressed value scales what an animal can detect. Named here rather
-        than assumed, exactly as `MetabolismConfig.insulation_gene` is, because the vocabulary is
+        than assumed, exactly as `MetabolismConfig.heat_tolerance_gene` is, because the vocabulary is
         per-world.
 
     How far an animal will walk for food is no longer set here: it is the range of the plant
@@ -446,7 +446,7 @@ class FearConfig:
         rather than a constant, so temperament evolves rather than being designed (§2.5,
         #23). Read as a magnitude: a negative weight would invert the drive.
     scent_acuity_gene: the gene whose expressed value is scent detection sensitivity. Named here
-        rather than assumed, as `MetabolismConfig.insulation_gene` is, because the vocabulary is
+        rather than assumed, as `MetabolismConfig.heat_tolerance_gene` is, because the vocabulary is
         per-world.
     aversion_genes: one gene block per **aversion direction**, each naming its genes in cue-channel
         order. Every block must be exactly as long as the cue field has channels — a mismatch would

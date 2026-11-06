@@ -62,7 +62,7 @@ class MovementConfig:
     speed_gene: the gene whose expressed value is top speed, in **world units per tick** — the
         tick being the only clock (§2.1), so a step is one tick's worth by construction and there
         is no timestep to pass in. Named here rather than assumed, as
-        `MetabolismConfig.insulation_gene` is, because the vocabulary is per-world.
+        `MetabolismConfig.heat_tolerance_gene` is, because the vocabulary is per-world.
     size_gene: the gene whose expressed value scales every cost term below, and which divides
         `agility_gene` to give the rate velocity may change at. A bigger body is more expensive to
         haul over the same ground and up the same hill *and* slower to turn, which together are the
@@ -72,8 +72,8 @@ class MovementConfig:
         per tick per tick** — a length, since the tick is unitless, exactly as `speed_gene` is.
         Divided by expressed size, so `agility / size` is the real acceleration and a lineage can
         trade being big against being nimble. Must charge a positive cost: turning quickly is pure
-        benefit otherwise and runs away in every world, which is the rule §2.5 states for
-        insulation and senescence resistance.
+        benefit otherwise and runs away in every world, which is the rule §2.5 states for the
+        tolerance genes and senescence resistance.
     haste_gene: the gene whose expressed value converts a utility advantage into a pace — how
         readily this animal turns a reason into speed. Read as a scale (see `Movement.pace`), and
         free, because hurrying already charges `exertion_premium` on every world unit: the
@@ -204,8 +204,8 @@ class Movement(DomainService):
         self._agility_index = genes.index_of(config.agility_gene, unit=Unit.LENGTH)
         self._haste_index = genes.index_of(config.haste_gene, unit=Unit.DIMENSIONLESS)
         # A gene that only ever buys performance and charges nothing runs away in every world —
-        # §2.5's rule for insulation and senescence resistance, and agility is the same shape:
-        # there is no world in which turning faster is worse. Refused at construction rather than
+        # §2.5's rule for the tolerance genes and senescence resistance, and agility is the same
+        # shape: there is no world in which turning faster is worse. Refused at construction rather than
         # guarded per tick, at the one place the cost and the caller's intent are both in hand
         # (§8.7).
         if genes.spec(config.agility_gene).cost <= 0:

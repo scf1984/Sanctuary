@@ -5,7 +5,7 @@ has no reason to prefer one half-line, and the multiplicative range it replaced 
 below zero (`core.genetics.inheritance`). But once a gene may be negative, **each gene has to declare
 how it is read**, because the answer differs by gene and cannot be guessed from the value:
 
-- a *quantity* — size, speed, acuity, insulation — cannot be negative, and is read as a magnitude
+- a *quantity* — size, speed, acuity, heat tolerance — cannot be negative, and is read as a magnitude
 - a *direction* — cue signature, aversion — carries information in its sign, which is what doubles
   the discriminating power of cue space (§2.5), and is read raw
 

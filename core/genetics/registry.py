@@ -103,7 +103,7 @@ class Unit(Enum):
     """
 
     DIMENSIONLESS = "dimensionless"
-    """A bare multiplier or a coordinate: size, insulation, acuity, cue signature, mutability."""
+    """A bare multiplier or a coordinate: size, heat tolerance, acuity, cue signature, mutability."""
 
     LENGTH = "length"
     """World units — the denomination x, y, elevation and cell size share (#112). `speed` is a
