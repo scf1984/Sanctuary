@@ -19,6 +19,7 @@ from core.selection import Selection
 from core.services import ColumnRegistry
 
 from tests.support.genes import gene_registry
+from tests.support.timing import wall_clock
 
 GENE_NAMES = ("size", "speed", "sight", "camouflage", "clutch_size", "gestation", "mutability")
 
@@ -185,6 +186,7 @@ class TestSplitCostsNoReallocation:
         for name, array in columns_before.items():
             assert getattr(store, name) is array, f"column '{name}' was replaced by the split"
 
+    @wall_clock
     def test_split_cost_does_not_scale_with_population(self):
         """A split writes only the diverged rows, so splitting a fixed-size group out of a 100x
         larger world must not cost 100x more. Asserts a ratio, not a wall-clock budget, so the

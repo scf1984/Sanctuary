@@ -6,6 +6,7 @@ import pytest
 
 from core.selection import Selection
 from core.spatial import SpatialIndex
+from tests.support.timing import wall_clock
 
 
 class FakeStore:
@@ -233,6 +234,7 @@ class TestIncrementalUpdate:
         assert index._buckets == buckets_before
 
 
+@wall_clock
 class TestPerformance:
     """Query cost benchmarked at the populations from #1 (docs/spikes/soa-throughput.md).
 

@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from core.entities.store import EntityStore, EntityStoreFull, UnknownEntityError
+from tests.support.timing import wall_clock
 
 
 def make_store(initial_capacity=8, n_drives=3, n_genes=4):
@@ -283,6 +284,7 @@ class TestGrowth:
 
 
 class TestGrowthUnderLoad:
+    @wall_clock
     def test_growth_at_spike_scale_stays_within_budget(self):
         # docs/spikes/soa-throughput.md (issue #1) measured a single-column doubling copy at
         # 100,000 rows at 2.53ms. This store's grow() copies nine columns (one 2D), so a
