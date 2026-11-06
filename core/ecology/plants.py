@@ -168,9 +168,9 @@ class Plants:
     soil_nutrients:   (height, width) float64, nutrient units. The unbound pool growth draws on.
     potential_growth: (height, width) float64, energy units per cell per tick. Light-,
                       temperature- and moisture-limited gain, before the soil is consulted.
-                      Static: it is a pure function of terrain, climate and water, all of which are
-                      themselves static between terraforming interventions, so it is computed once
-                      here rather than per tick.
+                      This tick's value: light and water are static between terraforming
+                      interventions, but temperature moves with the seasons and the weather
+                      (#159), so `grow()` re-multiplies the temperature response every tick.
     moisture:         (height, width) float64, dimensionless in [0, 1]. Soil wetness, already
                       folded into `potential_growth`; kept as its own attribute because the
                       diagnostic viewer's overlays (§3.3) need to show *why* a region is barren,
@@ -224,12 +224,11 @@ class Plants:
         self.config = config
 
         self.moisture = _moisture(water, config)
-        self.potential_growth = (
-            config.solar_constant
-            * _insolation(terrain, climate, config)
-            * _temperature_response(climate, config)
-            * self.moisture
-        )
+        # Light and water do not move with the seasons; temperature does (#159). Light is held so
+        # each tick multiplies in only the term that changed, in the same order as ever, so a world
+        # without seasons grows exactly what it always grew.
+        self._light = config.solar_constant * _insolation(terrain, climate, config)
+        self.potential_growth = self._light * _temperature_response(climate, config) * self.moisture
         self.forage_diffusion = CostAwareDiffusion(terrain, config.forage_diffusion, barriers)
         self.biomass = np.zeros(terrain.heights.shape, dtype=np.float64)
         self.soil_nutrients = np.full(
@@ -254,6 +253,12 @@ class Plants:
         senescence losses meet the gain, so carrying capacity falls out of the terrain rather than
         being authored (§2.3).
         """
+        # This tick's warmth: the climate rewrote its field at the top of the tick, and a season or
+        # a cold snap moves what a cell can grow (#159). Re-read every tick rather than only under
+        # seasons, because a static climate reproduces the same product exactly.
+        self.potential_growth[...] = (
+            self._light * _temperature_response(self.climate, self.config) * self.moisture
+        )
         senesced = self.biomass * self.config.senescence_rate
         self.biomass -= senesced
         self.soil_nutrients += senesced * self.config.nutrient_per_biomass

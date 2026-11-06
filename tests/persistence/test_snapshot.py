@@ -67,6 +67,21 @@ class TestARoundTripIsTheSameWorld:
         assert restored.plants.exported_nutrients == saved.plants.exported_nutrients
         assert restored.plants.total_nutrients() == pytest.approx(saved.plants.total_nutrients())
 
+    def test_the_sky_comes_back_without_being_stored(self, tmp_path):
+        """Weather is a function of the tick and the seed (#159), so a snapshot holds none of it
+        (§3.2) and the reload evaluates it. A stored field would be a derivation that could disagree
+        with the tick beside it."""
+        saved = run(80)
+        assert saved.config.climate.seasons is not None, "the demo world should have seasons"
+        path = save(saved, tmp_path / "w.npz")
+
+        restored = world()
+        load(restored, path)
+
+        assert np.array_equal(restored.climate.temperature, saved.climate.temperature)
+        with np.load(path, allow_pickle=False) as archive:
+            assert not [name for name in archive.files if "climate" in name or "temperature" in name]
+
     def test_a_world_that_grew_its_store_reloads_at_that_capacity(self, tmp_path):
         """Capacity is taken from the snapshot's own columns rather than being told separately, so
         a world that doubled while running does not need the target world to have doubled too."""

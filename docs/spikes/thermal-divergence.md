@@ -99,3 +99,66 @@ geography gives with the demo world's own thermal pressure.
 - No statistical test locks in the evolutionary result, because it is not robust at this scale
   (§8.1 explore-then-lock-in only locks in what is robust). The price-level contract in section 1
   is locked in.
+
+## 4. Re-measured with seasons (#159)
+
+The demo world now has seasons and weather: a 720-tick year (six founding generations),
+`amplitude_fraction = 0.5`, and weather of 1.0 temperature units per spell, ~30 ticks long, about
+five systems across the map. `thermal_divergence.py` gained a mode argument. `seasonal` runs the
+demo world's own climate, and `static` runs the same world with `seasons=None`. Both classify
+"hot ground" by the **static** field, so the two modes sort animals identically and differ only in
+what the animals live through. Same split-map setup as section 3, same six seeds, 4,000 ticks,
+measured on `feat/159-derived-weather`. Both columns were run on that branch, so they share
+everything merged since #176 (senescence #239/#244, float64 energy #240, temperature units #238).
+The static column therefore differs from section 3's table, which predates those changes.
+
+Gap = (mean on hot ground) − (mean on cold ground), so a positive heat gap and a negative cold gap
+are the expected signs. Δcorr = `corr` at 4,000 minus at tick 0.
+
+| seed | static: heat gap | static: cold gap | static: Δcorr | seasonal: heat gap | seasonal: cold gap | seasonal: Δcorr |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | +0.010 | −0.003 | +0.095 | +0.028 | −0.084 | +0.119 |
+| 2 | +0.011 | −0.017 | +0.067 | +0.060 | −0.039 | +0.204 |
+| 3 | +0.028 | −0.086 | +0.126 | +0.043 | −0.023 | +0.101 |
+| 4 | +0.005 | −0.043 | +0.139 | +0.041 | −0.017 | +0.126 |
+| 5 | −0.004 | −0.010 | +0.112 | +0.045 | −0.015 | +0.170 |
+| 6 | +0.016 | −0.029 | +0.140 | +0.021 | +0.004 | +0.139 |
+| **mean** | **+0.011** | **−0.031** | **+0.113** | **+0.040** | **−0.029** | **+0.143** |
+
+What seasons changed, and what they did not:
+
+- **Heat tolerance diverges about four times as much**: a mean gap of +0.040 against +0.011,
+  in the expected direction in 6 of 6 seeds (5 of 6 static). The two ranges barely overlap (static
+  −0.004 to +0.028, seasonal +0.021 to +0.060).
+- **Cold tolerance diverges no more than before**: −0.029 against −0.031, expected sign in 5 of 6
+  (6 of 6 static).
+- **The overall correlation grows a little more** (+0.143 against +0.113), and is positive in every
+  seed in both modes.
+- **The larger effect is not divergence at all: both tolerances rise everywhere.** Population means
+  at tick 4,000 sit around 0.3–0.5 under seasons against 0.15–0.4 static. A climate that varies in
+  time selects for a wider comfortable band in every lineage, which is the generalist response
+  #176's discussion predicted ("in a world where temperature varies in *time*, … insulation regains
+  its value").
+
+So seasons make climate a stronger axis on the heat side, and leave it a weak one overall. The
+reason is the same as in section 3, and seasons cannot fix it: the demo map's latitude span is about
+2 temperature units, the seasonal swing is a fraction of that by construction (#159's inversion
+guard), and animals cross the whole map faster than selection acts. Still **not locked in** by a
+statistical test: six seeds whose ranges nearly touch are a direction, not a robust result. The
+place this becomes decisive is a world with a wider thermal span or barriers between zones, which
+is #16's to define.
+
+Viability with seasons, `thermal_viability.py` (seasonal, the demo world as shipped) against the
+same world with `seasons=None`, 200 founders, 4,000 ticks:
+
+| seed | living, static | living, seasonal |
+|---:|---:|---:|
+| 1 | 3,117 | 2,983 |
+| 2 | 3,181 | 2,488 |
+| 3 | 3,722 | 3,201 |
+| 4 | 3,448 | 3,414 |
+| 5 | 3,757 | 3,751 |
+| **mean** | **3,445** | **3,167** |
+
+Every seed grows from 200 into the thousands. Seasons cost about 8% of the standing population on
+average, which is what a winter is for, and none of the five comes close to collapse.
