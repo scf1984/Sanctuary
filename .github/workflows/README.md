@@ -49,6 +49,14 @@ installs pygame is a standing check that it really is.
 `python_version`), so running them once on the floor is the configured behaviour rather than an
 arbitrary choice of leg.
 
+### Adding, renaming or removing a job
+
+Update `CI_JOBS` in `tests/test_workflows.py`. That test parses every file here with a loader that
+rejects duplicate keys, and checks that every gate is still a job. A workflow with a duplicate key
+fails on GitHub in 0s, with no logs and no job-level signal, and stops enforcing every gate in the
+file. That is how `lint` silently vanished in PR #133 (#134). Run the test before pushing a workflow
+edit. It cannot protect a branch whose workflow is too broken for the suite to run.
+
 ---
 
 ## `claude.yml` — delegated implementation
