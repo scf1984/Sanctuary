@@ -1044,7 +1044,8 @@ by" hunger and no animal stands still merely because the drive that won has no m
   **Senescence is degradation, not a timer.** There is no `life_expectancy` gene and no death clock.
   Instead, *performance* traits decay with age — speed, sight and scent acuity — while identity
   traits (cue signature) and capacity traits (size) do not. An old animal is slower, so it catches
-  less and escapes less, and it eventually cannot cover its own upkeep. **Death then falls out of
+  less and escapes less, and its gut extracts less from each mouthful (below), so it eventually
+  cannot cover its own upkeep. **Death then falls out of
   starvation and predation, mechanisms that already exist**, rather than from an age check; #21
   needs no separate mortality rule for old age, and `Ecology.starving` is already the path.
 
@@ -1071,8 +1072,19 @@ by" hunger and no animal stands still merely because the drive that won has no m
 
   Which traits are "performance" is the narrow reading of the sentence above: `speed`, `sight` and
   `scent_acuity` in the demo world, named per world in `SenescenceConfig.decaying_genes`. Agility,
-  haste, toxicity, digestion and reproductive output do not decay; widening the set is a rules
-  change (§2.8) for whoever measures that it should.
+  haste, toxicity and reproductive output do not decay; widening the set is a rules change (§2.8)
+  for whoever measures that it should.
+
+  **Digestion yield decays too, by the same factor, and it is not a gene** (#244, decided by the
+  owner). Performance traits alone could not kill an animal that came to rest on a cell with food
+  and water at hand: it needed no speed and no acuity to keep eating, so it lived forever. No gene
+  sets intake magnitude. `size` is capacity and is charged for elsewhere, and the diet gene is an
+  allocation, which decay would *shift* rather than shrink. So `Feeding` scales what is assimilated
+  by `Genetics.vigour`, the decay factor itself. Only the yield decays, never the mouthful:
+  scaling both would be `vigour²`, the compounding §2.5's diet frontier already refuses. An old
+  animal still takes its share of a contested cell and returns most of it as faeces. This composes
+  multiplicatively with #102's efficiency and #178's rate/yield allocation without changing either
+  trade-off's shape.
 
   **Decay is strictly positive and never reaches zero, and the formula guarantees that rather than
   a clamp doing so:**
