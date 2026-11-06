@@ -104,7 +104,12 @@ class EntityStore:
           owns them and changes them at a bounded rate, so a body cannot reverse for free and a
           chase can therefore have an outcome (#204). No `velocity_z`: movement is surface-locked
           (§2.6), so z is read from the terrain rather than integrated.
-      energy: float32, energy units.
+      energy: float64, energy units. The one float64 column among the per-entity scalars. Every
+          unit an animal holds is also owed on `Plants.exported_nutrients`, a float64 ledger. A
+          float32 pool rounds each meal and the ledger does not, and that gap does not shrink with
+          the population: a world starving to its last body read its final unit burned as more
+          than had ever left the field, and raised instead of collapsing (#240). It costs 4 bytes
+          per row, 400 KB at 100,000 entities.
       age: int64, ticks lived — the tick is the only clock (CLAUDE.md §2.1).
       health: float32, unit-free fraction, 0 (dead) to 1 (full health).
       dehydration: float32, dimensionless in [0, 1] — how much of its water reserve an entity has
@@ -172,7 +177,7 @@ class EntityStore:
         self.z = np.zeros(capacity, dtype=np.float32)
         self.velocity_x = np.zeros(capacity, dtype=np.float32)
         self.velocity_y = np.zeros(capacity, dtype=np.float32)
-        self.energy = np.zeros(capacity, dtype=np.float32)
+        self.energy = np.zeros(capacity, dtype=np.float64)
         self.age = np.zeros(capacity, dtype=np.int64)
         self.health = np.zeros(capacity, dtype=np.float32)
         self.dehydration = np.zeros(capacity, dtype=np.float32)

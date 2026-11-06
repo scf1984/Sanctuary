@@ -60,7 +60,7 @@ class Ecology(DomainService):
         self.plants = plants
 
     def energy(self, selection: Selection) -> np.ndarray:
-        """(len(selection),) float32, energy units: the current pool, in ascending row order."""
+        """(len(selection),) float64, energy units: the current pool, in ascending row order."""
         return self.store.energy[selection.to_mask()]
 
     def upkeep(self, selection: Selection) -> np.ndarray:
@@ -122,7 +122,7 @@ class Ecology(DomainService):
         burned**, which is not the bill: the pool floors at zero, so an animal charged more than it
         holds pays what it has, and excreting the bill instead would invent nutrients.
         """
-        cost = np.asarray(cost, dtype=np.float32)
+        cost = np.asarray(cost, dtype=np.float64)
         if np.any(cost < 0.0):
             raise ValueError(
                 "spend() charges energy and cannot be negative; income belongs to #18 and #19"
@@ -152,7 +152,7 @@ class Ecology(DomainService):
         (#22) and feeding's, not the pool's — and capping the column here would silently destroy
         energy that the nutrient ledger has already recorded as leaving the field.
         """
-        energy = np.asarray(energy, dtype=np.float32)
+        energy = np.asarray(energy, dtype=np.float64)
         if np.any(energy < 0.0):
             raise ValueError(
                 "gain() credits energy and cannot be negative; a withdrawal belongs in spend()"
@@ -182,7 +182,7 @@ class Ecology(DomainService):
                 f"donor and recipient selections must have equal length: "
                 f"{len(donors)} vs {len(recipients)}"
             )
-        energy = np.asarray(energy, dtype=np.float32)
+        energy = np.asarray(energy, dtype=np.float64)
         if np.any(energy < 0.0):
             raise ValueError("transfer() moves energy and cannot be negative; see spend()")
 
@@ -217,18 +217,18 @@ class Ecology(DomainService):
         return the same nutrients twice, which is the double entry §2.5's closed loop cannot
         survive (§6).
 
-        Returns `(n,) float32, energy units` — what each row actually lost, capped at what it held,
+        Returns `(n,) float64, energy units` — what each row actually lost, capped at what it held,
         because a body cannot yield more than it is. **That cap is the kill rule and the multi-tick
         kill at once**: a strike larger than the victim's whole pool simply empties it, and a
         smaller one leaves a wounded animal to be finished later. Nothing decides "does it die" —
         `Ecology.starving` reads an empty pool and `Death` frees the row, both already in the tick.
         """
-        damage = np.asarray(damage, dtype=np.float32)
+        damage = np.asarray(damage, dtype=np.float64)
         if np.any(damage < 0.0):
             raise ValueError(
                 "kill() removes energy and cannot be negative; a wound that heals is not this"
             )
-        taken = np.minimum(self.store.energy[rows], damage).astype(np.float32)
+        taken = np.minimum(self.store.energy[rows], damage)
         self.write_at("energy", rows, self.store.energy[rows] - taken)
         return taken
 

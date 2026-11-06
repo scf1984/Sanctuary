@@ -159,7 +159,12 @@ by" hunger and no animal stands still merely because the drive that won has no m
 
 - **One global array set. No per-species storage anywhere.**
   - *Physical state* — position, energy, age, health, species id, drive scores — lives in a single
-    global array set covering all creatures.
+    global array set covering all creatures. Its per-entity floats are float32, **except `energy`,
+    which is float64**. Every unit a body holds is also owed on the float64 export ledger, and a
+    float32 pool rounds each meal while the ledger doesn't. The resulting gap doesn't shrink as a
+    population dies, so a world starving to its last body read its final unit burned as more than
+    had ever left the field, and raised instead of collapsing (#240). The cost is 400 KB at 100k
+    creatures.
   - *Genes* live in a single global `(entities × genes)` matrix over one shared gene vocabulary.
     Every creature has every gene slot.
   - *Species differ by expression mask*, not by layout. A species registry marks which genes each

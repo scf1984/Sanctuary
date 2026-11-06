@@ -351,6 +351,31 @@ class TestExportedNutrientsAreHeld:
 
         assert check(store) is not None
 
+    def test_a_leak_the_float32_tolerance_hid_now_trips(self):
+        """Two thousandths of an energy unit against 30 owed is 7e-5 relative, under the 1e-4 this
+        check needed while `energy` was float32. In float64 the allowance is rounding-sized
+        (`plants.LEDGER_ABSOLUTE_TOLERANCE`, 1e-3 energy units at this world's exchange rate), so
+        the same leak is now visible (#240)."""
+        plants, carrion, store, _ = self.make_world()
+        check = exported_nutrients_are_held(plants, carrion)
+
+        store.energy[0] += 2e-3
+
+        assert check(store) is not None
+
+    def test_a_world_owing_only_rounding_with_nothing_alive_holds(self):
+        """A world that dies out is left owing its last float64 rounding with no body to hold it.
+        #240's starving worlds ended owing 2.7e-12 energy units. A purely relative tolerance can
+        never accept that, because it is relative to zero."""
+        plants, carrion, store, ids = self.make_world()
+        check = exported_nutrients_are_held(plants, carrion)
+        rows = store.alive.nonzero()[0]
+        plants.return_nutrients(np.full(2, 5.0), np.full(2, 5.0), store.energy[rows])
+        store.release(ids)
+        plants.exported_nutrients = 2.7e-12 * plants.config.nutrient_per_biomass
+
+        assert check(store) is None
+
     def test_a_dead_row_holding_stale_energy_is_not_counted(self):
         """A released row keeps whatever its `energy` cell last held; only the living hold
         anything."""

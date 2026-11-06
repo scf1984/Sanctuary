@@ -232,10 +232,13 @@ class Predation:
         # population bled into the carrion field faster than anything could eat it (35,000 energy
         # units standing at 2,000 ticks). That cost falls on a third party, so selection cannot
         # correct it; the convex curve is what makes a half-hearted predator harmless.
+        # Left at the pool's own float64 (#240). Rounded to float32, a wound capped at `held` could
+        # round *above* it: `kill` would take only what the body holds while the carcass received
+        # the rounded-up amount, which is meat from nowhere.
         damage = np.minimum(
             self.config.strike_power * outmatched * self.diet.animal_efficiency(attacking),
             held,
-        ).astype(np.float32)
+        )
 
         # The pool is emptied and the body lands where it fell. Nothing reaches the attacker here:
         # it eats by standing on the carcass next tick, which is what makes a kill worth holding a

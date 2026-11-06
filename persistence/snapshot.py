@@ -14,7 +14,7 @@ import numpy as np
 # from a schema that never shipped would be untestable by construction. What *is* here is the
 # refusal — an unknown version raises rather than being read hopefully, which is what makes the
 # first real migration a change to this module rather than an archaeology exercise.
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 # Every array the world cannot recompute. Terrain, water, the cue field and the forage field are
 # all pure functions of the config or of the state below, so storing them would be storing a
