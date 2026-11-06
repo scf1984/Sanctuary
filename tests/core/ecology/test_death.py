@@ -28,15 +28,16 @@ from core.world.terrain import Terrain
 from tests.support.genes import gene_registry
 from tests.support.plants import plant_field
 
-GENE_NAMES = ("size", "insulation", "mutability")
-GENE_REGISTRY = gene_registry(GENE_NAMES, {"insulation": 1.0})
+GENE_NAMES = ("size", "heat_tolerance", "cold_tolerance", "mutability")
+GENE_REGISTRY = gene_registry(GENE_NAMES, {"heat_tolerance": 1.0, "cold_tolerance": 1.0})
 GENETICS_CONFIG = GeneticsConfig(mutability_gene="mutability", drift_margin=2.0)
 METABOLISM_CONFIG = MetabolismConfig(
     dehydration_penalty=0.0,
     basal_rate=1.0,
     thermoregulation_rate=0.5,
     neutral_temperature=20.0,
-    insulation_gene="insulation",
+    heat_tolerance_gene="heat_tolerance",
+    cold_tolerance_gene="cold_tolerance",
 )
 
 

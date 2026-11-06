@@ -35,7 +35,7 @@ from tests.support.genes import gene_registry
 from tests.support.plants import plant_field
 
 
-GENE_NAMES = ("size", "speed", "agility", "haste", "insulation", "mutability")
+GENE_NAMES = ("size", "speed", "agility", "haste", "heat_tolerance", "cold_tolerance", "mutability")
 
 # Every gene declares how its stored value is read (#104). These are all quantities, so all fold
 # across zero; `mutability` is in the vocabulary because inheritance's spread floor is a gene, and
@@ -49,15 +49,21 @@ GENETICS_CONFIG = GeneticsConfig(
 # benefit (§2.5, #204) — but this fixture's economy is a statement about what a ridge costs, and
 # the crossing budget below was derived against upkeep that had no agility term in it.
 GENE_REGISTRY = gene_registry(
-    GENE_NAMES, {"size": 0.5, "speed": 0.5, "agility": 0.01, "insulation": 1.0}
+    GENE_NAMES,
+    {"size": 0.5, "speed": 0.5, "agility": 0.01, "heat_tolerance": 1.0, "cold_tolerance": 1.0},
 )
 
 METABOLISM_CONFIG = MetabolismConfig(
     dehydration_penalty=0.0,
     basal_rate=0.2,
-    thermoregulation_rate=0.1,
+    # Per squared degree (#176), re-derived from the linear 0.1 per degree: the gentlest ridge
+    # below crests 15 degrees under neutral at the default lapse rate (peak 60 x 0.25), and 0.1 / 15
+    # keeps that crest's bill where the crossing budget was tuned. Higher crests now cost
+    # quadratically more, which only strengthens the barrier these tests assert.
+    thermoregulation_rate=0.1 / 15.0,
     neutral_temperature=20.0,
-    insulation_gene="insulation",
+    heat_tolerance_gene="heat_tolerance",
+    cold_tolerance_gene="cold_tolerance",
 )
 
 MOVEMENT_CONFIG = MovementConfig(

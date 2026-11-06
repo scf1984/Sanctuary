@@ -9,10 +9,18 @@ from tests.support.genes import gene_registry
 # `aversion0_0` is here to make the fixture representative rather than convenient: a real
 # vocabulary mixes quantities with cue-space directions, and the rule this module enforces is
 # about the boundary between them (#136).
-GENE_NAMES = ("size", "speed", "sight", "insulation", "aversion0_0")
+GENE_NAMES = ("size", "speed", "sight", "heat_tolerance", "cold_tolerance", "aversion0_0")
 
 GENE_REGISTRY = gene_registry(
-    GENE_NAMES, {"size": 2.0, "speed": 3.0, "sight": 0.0, "insulation": 1.0, "aversion0_0": 0.0}
+    GENE_NAMES,
+    {
+        "size": 2.0,
+        "speed": 3.0,
+        "sight": 0.0,
+        "heat_tolerance": 1.0,
+        "cold_tolerance": 1.0,
+        "aversion0_0": 0.0,
+    },
 )
 
 
@@ -25,7 +33,8 @@ def make_metabolism(registry=GENE_REGISTRY, **overrides):
         # in these assertions that this module does not read.
         dehydration_penalty=0.0,
         neutral_temperature=20.0,
-        insulation_gene="insulation",
+        heat_tolerance_gene="heat_tolerance",
+        cold_tolerance_gene="cold_tolerance",
     )
     defaults.update(overrides)
     return Metabolism(registry, MetabolismConfig(**defaults))
@@ -59,16 +68,25 @@ class TestConfigValidation:
         with pytest.raises(ValueError, match="thermoregulation_rate"):
             make_metabolism(thermoregulation_rate=-0.5)
 
-    def test_an_insulation_gene_that_costs_nothing_is_rejected(self):
-        # Insulation only ever reduces upkeep, so a free one is unbounded free benefit -- the
-        # exact runaway this issue exists to prevent.
-        free_insulation = gene_registry(GENE_NAMES, {"size": 2.0, "speed": 3.0})
-        with pytest.raises(ValueError, match="insulation"):
-            make_metabolism(registry=free_insulation)
+    @pytest.mark.parametrize("free", ["heat_tolerance", "cold_tolerance"])
+    def test_a_tolerance_gene_that_costs_nothing_is_rejected(self, free):
+        # A tolerance only ever reduces upkeep, so a free one is unbounded free benefit -- the
+        # exact runaway §2.5 forbids. Each side is checked on its own: one free side is enough.
+        costs = {"size": 2.0, "speed": 3.0, "heat_tolerance": 1.0, "cold_tolerance": 1.0}
+        costs[free] = 0.0
+        with pytest.raises(ValueError, match=free):
+            make_metabolism(registry=gene_registry(GENE_NAMES, costs))
 
-    def test_an_insulation_gene_outside_the_vocabulary_is_rejected(self):
+    @pytest.mark.parametrize("side", ["heat_tolerance_gene", "cold_tolerance_gene"])
+    def test_a_tolerance_gene_outside_the_vocabulary_is_rejected(self, side):
         with pytest.raises(KeyError):
-            make_metabolism(insulation_gene="blubber")
+            make_metabolism(**{side: "blubber"})
+
+    def test_one_gene_serving_both_sides_is_rejected(self):
+        # That is the symmetric damper #176 replaced: hot and cold would select the same build
+        # again, and nothing else would notice.
+        with pytest.raises(ValueError, match="different genes"):
+            make_metabolism(cold_tolerance_gene="heat_tolerance")
 
 
 class TestOnlyMagnitudeGenesMayCost:
@@ -101,7 +119,7 @@ class TestOnlyMagnitudeGenesMayCost:
                 GeneSpec(name, cost, ExpressionMode.MAGNITUDE, Unit.DIMENSIONLESS, f"gene {name}")
                 for name, cost in (
                     ("size", 2.0), ("speed", 3.0), ("sight", 0.0),
-                    ("insulation", 1.0), ("aversion0_0", 4.0),
+                    ("heat_tolerance", 1.0), ("cold_tolerance", 1.0), ("aversion0_0", 4.0),
                 )
             )
         )
@@ -144,7 +162,7 @@ class TestThermoregulation:
         metabolism = make_metabolism()
         assert upkeep_of(metabolism, temperature=20.0) == pytest.approx(1.0)
 
-    def test_cost_rises_with_deviation_in_either_direction(self):
+    def test_an_untolerant_body_pays_the_same_either_side(self):
         metabolism = make_metabolism()
         neutral = upkeep_of(metabolism, temperature=20.0)
         cold = upkeep_of(metabolism, temperature=0.0)
@@ -152,28 +170,80 @@ class TestThermoregulation:
 
         assert cold > neutral
         assert hot > neutral
-        # Deviation, not signed difference: equal distance either side costs the same.
+        # With no tolerance on either side, distance is all that is charged.
         assert cold == pytest.approx(hot)
 
-    def test_insulation_reduces_thermoregulation_cost(self):
+    def test_cost_is_quadratic_in_the_deviation(self):
+        # Gentle near neutral so variation in the tolerances survives, steep far out so a stranded
+        # lineage is pulled back hard (#176's second gate). Twice as far costs four times as much.
         metabolism = make_metabolism()
-        bare = upkeep_of(metabolism, temperature=0.0, insulation=0.0)
-        insulated = upkeep_of(metabolism, temperature=0.0, insulation=3.0)
+        near = upkeep_of(metabolism, temperature=25.0) - 1.0
+        far = upkeep_of(metabolism, temperature=30.0) - 1.0
+        assert near == pytest.approx(0.5 * 25.0)
+        assert far == pytest.approx(4.0 * near)
 
-        # Insulation charges its own upkeep too, so compare the thermal share directly rather
-        # than the totals: 3 units of insulation cost 3.0 J/tick and must save more than that.
-        assert insulated < bare
-        assert insulated - 3.0 < bare
-
-    def test_insulation_is_pure_cost_at_the_neutral_temperature(self):
+    def test_tolerance_damps_linearly_outside_the_square(self):
+        # The trap #176 names: damping the deviation *inside* the square would give tolerance
+        # quadratic returns, and a gene that only reduces a cost must have diminishing ones (§2.5).
+        # So (1 + tolerance) divides the squared bill: tolerance 1 halves it, 3 quarters it.
         metabolism = make_metabolism()
-        bare = upkeep_of(metabolism, temperature=20.0, insulation=0.0)
-        insulated = upkeep_of(metabolism, temperature=20.0, insulation=3.0)
+        bare = upkeep_of(metabolism, temperature=30.0) - 1.0
+        one = upkeep_of(metabolism, temperature=30.0, heat_tolerance=1.0) - 1.0 - 1.0
+        three = upkeep_of(metabolism, temperature=30.0, heat_tolerance=3.0) - 1.0 - 3.0
+        assert one == pytest.approx(bare / 2.0)
+        assert three == pytest.approx(bare / 4.0)
 
-        # This crossover is what makes climate select genetically (CLAUDE.md §2.5): the same
-        # gene that pays for itself in the cold is dead weight where there is nothing to insulate
-        # against.
-        assert insulated == pytest.approx(bare + 3.0)
+    @pytest.mark.parametrize(
+        "gene, helps_at, useless_at",
+        [("heat_tolerance", 40.0, 0.0), ("cold_tolerance", 0.0, 40.0)],
+    )
+    def test_each_tolerance_damps_only_its_own_side(self, gene, helps_at, useless_at):
+        metabolism = make_metabolism()
+        # 3 units cost 3.0 per tick. On its own side they must save more than that; on the other
+        # side they save nothing and are dead weight.
+        assert upkeep_of(metabolism, helps_at, **{gene: 3.0}) < upkeep_of(metabolism, helps_at)
+        assert upkeep_of(metabolism, useless_at, **{gene: 3.0}) == pytest.approx(
+            upkeep_of(metabolism, useless_at) + 3.0
+        )
+
+    @pytest.mark.parametrize("gene", ["heat_tolerance", "cold_tolerance"])
+    def test_tolerance_is_pure_cost_at_the_neutral_temperature(self, gene):
+        metabolism = make_metabolism()
+        bare = upkeep_of(metabolism, temperature=20.0)
+        tolerant = upkeep_of(metabolism, temperature=20.0, **{gene: 3.0})
+        assert tolerant == pytest.approx(bare + 3.0)
+
+
+class TestHotAndColdSelectDifferentBuilds:
+    """#176's evidence, inverted. Under the symmetric `insulation` damper, upkeep swept over the
+    gene at 5 and at 35 -- two cells equidistant from a neutral of 20 -- gave **identical curves**,
+    so an arctic and a desert lineage evolved toward the same animal and climate gave #16 nothing
+    to diverge on. With a tolerance per side, the cheapest build in each cell is the mirror of the
+    other: it carries the tolerance its own climate charges for, and none of the other one.
+    """
+
+    SWEEP = np.linspace(0.0, 30.0, 61, dtype=np.float32)
+
+    def cheapest_build(self, temperature):
+        metabolism = make_metabolism(thermoregulation_rate=0.1)
+        heat, cold = np.meshgrid(self.SWEEP, self.SWEEP, indexing="ij")
+        rows = np.zeros((heat.size, len(GENE_NAMES)), dtype=np.float32)
+        rows[:, GENE_NAMES.index("heat_tolerance")] = heat.ravel()
+        rows[:, GENE_NAMES.index("cold_tolerance")] = cold.ravel()
+        upkeep = metabolism.upkeep(rows, np.full(heat.size, temperature, dtype=np.float32))
+        best = int(np.argmin(upkeep))
+        return float(heat.ravel()[best]), float(cold.ravel()[best])
+
+    def test_a_hot_cell_and_a_cold_cell_favour_different_builds(self):
+        hot_heat, hot_cold = self.cheapest_build(35.0)
+        cold_heat, cold_cold = self.cheapest_build(5.0)
+
+        assert (hot_heat, hot_cold) != (cold_heat, cold_cold)
+        # Each carries only the tolerance its own side charges for.
+        assert hot_heat > 0.0 and hot_cold == 0.0
+        assert cold_cold > 0.0 and cold_heat == 0.0
+        # Equidistant and equally costed, so one build is exactly the other mirrored.
+        assert hot_heat == pytest.approx(cold_cold)
 
 
 class TestNoEnergyIsCreated:

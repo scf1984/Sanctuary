@@ -18,7 +18,7 @@ from core.world.water import Water
 from tests.support.genes import gene_registry
 
 
-GENE_NAMES = ("size", "speed", "sight", "insulation", "mutability")
+GENE_NAMES = ("size", "speed", "sight", "heat_tolerance", "cold_tolerance", "mutability")
 
 # Every gene declares how its stored value is read (#104). These are all quantities, so all fold
 # across zero; `mutability` is in the vocabulary because inheritance's spread floor is a gene, and
@@ -27,7 +27,7 @@ GENETICS_CONFIG = GeneticsConfig(
     mutability_gene="mutability",
     drift_margin=2.0,
 )
-GENE_REGISTRY = gene_registry(GENE_NAMES, {"size": 2.0, "speed": 3.0, "insulation": 1.0})
+GENE_REGISTRY = gene_registry(GENE_NAMES, {"size": 2.0, "speed": 3.0, "heat_tolerance": 1.0, "cold_tolerance": 1.0})
 
 PLANTS_CONFIG = PlantsConfig(
     solar_constant=10.0,
@@ -48,7 +48,8 @@ METABOLISM_CONFIG = MetabolismConfig(
     basal_rate=1.0,
     thermoregulation_rate=0.5,
     neutral_temperature=20.0,
-    insulation_gene="insulation",
+    heat_tolerance_gene="heat_tolerance",
+    cold_tolerance_gene="cold_tolerance",
 )
 
 
@@ -125,8 +126,8 @@ class TestUpkeepFromExpressedGenes:
         express a trait does not pay for it, and one that does pays every tick it lives.
         """
         store, _, species, genetics, ecology, _ = make_world()
-        sprinter = species.register(("size", "speed", "sight", "insulation"))
-        plodder = species.register(("size", "sight", "insulation"))
+        sprinter = species.register(("size", "speed", "sight", "heat_tolerance", "cold_tolerance"))
+        plodder = species.register(("size", "sight", "heat_tolerance", "cold_tolerance"))
         ids = store.allocate(2, species_id=np.array([sprinter, plodder], dtype=np.int32))
         selection = selection_for(store, ids)
         # Identical genotypes -- only the expression masks differ.
@@ -172,9 +173,10 @@ class TestUpkeepFromExpressedGenes:
         upkeep = ecology.upkeep(selection)
 
         # y=10 sits at 20 degC (neutral, no thermal cost); y=20 sits at 10 degC, ten degrees
-        # below neutral, so it pays 0.5 J/tick per degree on top of the same basal rate.
+        # below neutral, so it pays 0.5 J/tick per squared degree (#176) on top of the same basal
+        # rate.
         assert upkeep[0] == pytest.approx(1.0)
-        assert upkeep[1] == pytest.approx(1.0 + 0.5 * 10.0)
+        assert upkeep[1] == pytest.approx(1.0 + 0.5 * 10.0**2)
 
 
 class TestDrain:

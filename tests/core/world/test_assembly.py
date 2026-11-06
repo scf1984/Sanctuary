@@ -59,7 +59,8 @@ GENE_NAMES = (
     "speed",
     "agility",
     "haste",
-    "insulation",
+    "heat_tolerance",
+    "cold_tolerance",
     "sight",
     "scent_emission",
     "scent_acuity",
@@ -161,7 +162,8 @@ def world_config(**overrides):
             basal_rate=0.05,
             thermoregulation_rate=0.01,
             neutral_temperature=20.0,
-            insulation_gene="insulation",
+            heat_tolerance_gene="heat_tolerance",
+            cold_tolerance_gene="cold_tolerance",
         ),
         genetics=GeneticsConfig(
             mutability_gene="mutability",
@@ -239,7 +241,8 @@ def world_config(**overrides):
             # Read through `exp`, so haste founds between 1 and about 4 — the band across which
             # the gene visibly changes a pace at the drive advantages this world produces (#203).
             "haste": (0.0, 1.4),
-            "insulation": (0.0, 0.5),
+            "heat_tolerance": (0.0, 0.5),
+            "cold_tolerance": (0.0, 0.5),
             "sight": (2.0, 6.0),
             "scent_emission": (0.5, 1.5),
             "scent_acuity": (0.5, 1.5),

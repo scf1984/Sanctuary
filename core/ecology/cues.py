@@ -245,7 +245,7 @@ class CueField:
 class ScentGenes:
     """Which genes carry the scent modality (CLAUDE.md §2.5's reserved block).
 
-    Named per world rather than assumed, as `MetabolismConfig.insulation_gene` is, because the
+    Named per world rather than assumed, as `MetabolismConfig.heat_tolerance_gene` is, because the
     vocabulary is per-world.
 
     emission_gene: how loudly a creature broadcasts on the scent modality.

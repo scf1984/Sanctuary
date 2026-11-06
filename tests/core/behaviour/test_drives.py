@@ -50,7 +50,8 @@ GENE_NAMES = (
     "size",
     "speed",
     "sight",
-    "insulation",
+    "heat_tolerance",
+    "cold_tolerance",
     "scent_emission",
     "scent_acuity",
     *SIGNATURE_GENES,
@@ -67,7 +68,17 @@ GENE_NAMES = (
     "lust_weight",
     "fatigue_weight",
 )
-GENE_REGISTRY = gene_registry(GENE_NAMES, {"size": 2.0, "speed": 3.0, "sight": 1.0, "insulation": 1.0, "scent_acuity": 0.5})
+GENE_REGISTRY = gene_registry(
+    GENE_NAMES,
+    {
+        "size": 2.0,
+        "speed": 3.0,
+        "sight": 1.0,
+        "heat_tolerance": 1.0,
+        "cold_tolerance": 1.0,
+        "scent_acuity": 0.5,
+    },
+)
 HYDRATION_CONFIG = HydrationConfig(
     loss_rate=0.05,
     heat_scaling=0.0,
@@ -97,7 +108,8 @@ METABOLISM_CONFIG = MetabolismConfig(
     basal_rate=1.0,
     thermoregulation_rate=0.5,
     neutral_temperature=20.0,
-    insulation_gene="insulation",
+    heat_tolerance_gene="heat_tolerance",
+    cold_tolerance_gene="cold_tolerance",
 )
 
 PLANTS_CONFIG = PlantsConfig(
@@ -476,7 +488,7 @@ class TestHungerAppeal:
         still lets `graze` feed it where it stands.
         """
         world = World()
-        blind = world.species.register(("size", "speed", "insulation"))
+        blind = world.species.register(("size", "speed", "heat_tolerance", "cold_tolerance"))
         selection = world.spawn(
             1,
             x=np.array([4.0], dtype=np.float32),
@@ -1298,7 +1310,15 @@ class TestScentAcuity:
         """
         world = FearWorld(grid=21)
         fearless = world.species.register(
-            ("size", "speed", "sight", "insulation", "scent_emission", "scent_acuity")
+            (
+                "size",
+                "speed",
+                "sight",
+                "heat_tolerance",
+                "cold_tolerance",
+                "scent_emission",
+                "scent_acuity",
+            )
         )
         prey = world.spawn_as(fearless, 1, x=np.float32([10.0]), y=np.float32([10.0]))
         predator = world.spawn_as(0, 1, x=np.float32([10.0]), y=np.float32([10.0]))

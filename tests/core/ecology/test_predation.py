@@ -30,8 +30,8 @@ from core.world.terrain import Terrain
 from core.world.water import Water
 from tests.support.genes import gene_registry
 
-GENE_NAMES = ("size", "diet_animal_derived", "mutability", "insulation")
-GENE_REGISTRY = gene_registry(GENE_NAMES, {"insulation": 1.0})
+GENE_NAMES = ("size", "diet_animal_derived", "mutability", "heat_tolerance", "cold_tolerance")
+GENE_REGISTRY = gene_registry(GENE_NAMES, {"heat_tolerance": 1.0, "cold_tolerance": 1.0})
 PLANTS_CONFIG = PlantsConfig(
     solar_constant=10.0,
     latitude_tilt=0.0,
@@ -54,7 +54,8 @@ METABOLISM_CONFIG = MetabolismConfig(
     basal_rate=0.0,
     thermoregulation_rate=0.0,
     neutral_temperature=25.0,
-    insulation_gene="insulation",
+    heat_tolerance_gene="heat_tolerance",
+    cold_tolerance_gene="cold_tolerance",
 )
 
 

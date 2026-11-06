@@ -31,7 +31,7 @@ from tests.support.genes import gene_registry
 from tests.support.plants import plant_field
 
 
-GENE_NAMES = ("size", "speed", "sight", "insulation", "mutability")
+GENE_NAMES = ("size", "speed", "sight", "heat_tolerance", "cold_tolerance", "mutability")
 
 # Every gene declares how its stored value is read (#104). These are all quantities, so all fold
 # across zero; `mutability` is in the vocabulary because inheritance's spread floor is a gene, and
@@ -40,14 +40,20 @@ GENETICS_CONFIG = GeneticsConfig(
     mutability_gene="mutability",
     drift_margin=2.0,
 )
-GENE_REGISTRY = gene_registry(GENE_NAMES, {"size": 2.0, "speed": 3.0, "insulation": 1.0})
+GENE_REGISTRY = gene_registry(
+    GENE_NAMES, {"size": 2.0, "speed": 3.0, "heat_tolerance": 1.0, "cold_tolerance": 1.0}
+)
 
 METABOLISM_CONFIG = MetabolismConfig(
     dehydration_penalty=0.0,
     basal_rate=1.0,
-    thermoregulation_rate=0.5,
+    # Per squared degree (#176). The climate tests below put cohorts 20 degrees from neutral, and
+    # 0.5 / 20 keeps that bill at the 10 per tick the linear 0.5 charged there, so the energies and
+    # survival windows this file was tuned against still hold.
+    thermoregulation_rate=0.025,
     neutral_temperature=20.0,
-    insulation_gene="insulation",
+    heat_tolerance_gene="heat_tolerance",
+    cold_tolerance_gene="cold_tolerance",
 )
 
 STARTING_ENERGY = 100.0
@@ -153,7 +159,7 @@ class TestACostlyTraitWithoutABenefitIsSelectedAgainst:
         rng = np.random.default_rng(19)
         store, species, genetics, ecology = make_world()
         expresses_speed = species.register(GENE_NAMES)
-        ignores_speed = species.register(("size", "sight", "insulation"))
+        ignores_speed = species.register(("size", "sight", "heat_tolerance", "cold_tolerance"))
         genes = genotypes(rng, COHORT_SIZE, speed=3.0)
         charged = add_cohort(store, genetics, expresses_speed, genes)
         dormant = add_cohort(store, genetics, ignores_speed, genes.copy())
@@ -166,43 +172,41 @@ class TestACostlyTraitWithoutABenefitIsSelectedAgainst:
 
 
 class TestClimateSelectsDifferentBuilds:
-    """CLAUDE.md §2.5: thermoregulation cost differs by temperature, so a cold zone selects for
-    insulation and a temperate one selects against it -- with nobody designing that outcome. The
-    crossover is the claim; that neither build wins everywhere is the whole point.
+    """CLAUDE.md §2.5: thermoregulation cost differs by temperature, so a hot zone and a cold zone
+    select *different* builds -- with nobody designing that outcome (#176). The crossover is the
+    claim: the heat-tolerant build outlasts the cold-tolerant one in the heat and loses to it in
+    the cold, so neither wins everywhere.
+
+    Under the symmetric `insulation` damper this test could not be written. Two zones equidistant
+    from neutral charged identically, so one build won or lost in both together.
     """
 
     @pytest.mark.parametrize("seed", range(4))
-    def test_insulation_pays_for_itself_in_the_cold_and_costs_in_the_temperate_zone(self, seed):
+    def test_each_tolerance_wins_on_its_own_side_and_loses_on_the_other(self, seed):
         rng = np.random.default_rng(seed)
-        # 20 degC (neutral) at y=0, falling 1 degC per world unit: y=0 is temperate, y=20 polar.
+        # 40 degC at y=0, falling 1 degC per world unit: y=0 is 20 above neutral, y=40 is 20 below.
         store, species, genetics, ecology = make_world(
-            equator_temperature=20.0, latitude_gradient=1.0
+            equator_temperature=40.0, latitude_gradient=1.0
         )
         species_id = species.register(GENE_NAMES)
 
-        temperate_bare = add_cohort(
-            store, genetics, species_id, genotypes(rng, COHORT_SIZE, insulation=0.0), y=0.0
-        )
-        temperate_insulated = add_cohort(
-            store, genetics, species_id, genotypes(rng, COHORT_SIZE, insulation=4.0), y=0.0
-        )
-        polar_bare = add_cohort(
-            store, genetics, species_id, genotypes(rng, COHORT_SIZE, insulation=0.0), y=20.0
-        )
-        polar_insulated = add_cohort(
-            store, genetics, species_id, genotypes(rng, COHORT_SIZE, insulation=4.0), y=20.0
-        )
+        def cohort(y, **tolerance):
+            genes = genotypes(rng, COHORT_SIZE, **tolerance)
+            return add_cohort(store, genetics, species_id, genes, y=y)
+
+        hot_heat_tolerant = cohort(0.0, heat_tolerance=4.0)
+        hot_cold_tolerant = cohort(0.0, cold_tolerance=4.0)
+        cold_heat_tolerant = cohort(40.0, heat_tolerance=4.0)
+        cold_cold_tolerant = cohort(40.0, cold_tolerance=4.0)
 
         survival = mean_survival_ticks(
             store,
             ecology,
-            [temperate_bare, temperate_insulated, polar_bare, polar_insulated],
+            [hot_heat_tolerant, hot_cold_tolerant, cold_heat_tolerant, cold_cold_tolerant],
         )
-        temperate_bare_ticks, temperate_insulated_ticks = survival[0], survival[1]
-        polar_bare_ticks, polar_insulated_ticks = survival[2], survival[3]
 
-        assert temperate_insulated_ticks < temperate_bare_ticks
-        assert polar_insulated_ticks > polar_bare_ticks
+        assert survival[0] > survival[1]
+        assert survival[3] > survival[2]
 
 
 class TestTheEnergyInvariantHoldsAcrossALongRun:
@@ -220,7 +224,7 @@ class TestTheEnergyInvariantHoldsAcrossALongRun:
             store,
             genetics,
             species_id,
-            genotypes(rng, COHORT_SIZE, size=1.0, speed=1.0, insulation=1.0),
+            genotypes(rng, COHORT_SIZE, size=1.0, speed=1.0, cold_tolerance=1.0),
             y=15.0,
         )
 
