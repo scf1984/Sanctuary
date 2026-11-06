@@ -50,7 +50,7 @@ def plants(terrain=None, config=PLANTS_CONFIG):
     terrain = flat_terrain() if terrain is None else terrain
     # Equator through the middle of the grid, so every cell sits in the growth band and the field
     # is productive everywhere — the overlay is what is under test, not the climate.
-    climate = Climate(terrain, ClimateConfig(equator_y=terrain.world_height / 2.0))
+    climate = Climate(terrain, ClimateConfig(equator_y=terrain.world_height / 2.0, equator_temperature=30.0))
     return Plants(terrain, climate, Water.generate(terrain), config)
 
 

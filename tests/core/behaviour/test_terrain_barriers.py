@@ -57,7 +57,7 @@ GENE_REGISTRY = gene_registry(
 METABOLISM_CONFIG = MetabolismConfig(
     dehydration_penalty=0.0,
     basal_rate=0.2,
-    # Per squared degree (#176), re-derived from the linear 0.1 per degree: the gentlest ridge
+    # Per squared temperature unit (#176), re-derived from the linear 0.1 per unit: the gentlest ridge
     # below crests 15 degrees under neutral at the default lapse rate (peak 60 x 0.25), and 0.1 / 15
     # keeps that crest's bill where the crossing budget was tuned. Higher crests now cost
     # quadratically more, which only strengthens the barrier these tests assert.

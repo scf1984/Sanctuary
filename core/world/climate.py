@@ -16,9 +16,11 @@ import numpy as np
 
 from core.world.terrain import Terrain, bilinear_sample
 
-# Ordered (label, upper bound °C, exclusive) pairs. A cell's zone is the first bucket whose
+# Ordered (label, upper bound in temperature units, exclusive) pairs. A cell's zone is the first bucket whose
 # upper bound exceeds its temperature. Boundaries are round, illustrative values for grouping
 # a continuous field into legible bands — display and metrics only (see module docstring).
+# They sit where they do relative to the demo world's equator and neutral temperatures, not
+# at any physical landmark: in temperature units nothing freezes at 0 (#238).
 _ZONE_BANDS: tuple[tuple[str, float], ...] = (
     ("polar", -10.0),
     ("tundra", 0.0),
@@ -29,21 +31,26 @@ _ZONE_BANDS: tuple[tuple[str, float], ...] = (
 
 @dataclass(frozen=True)
 class ClimateConfig:
-    """Parameters mapping terrain position to temperature, degrees Celsius.
+    """Parameters mapping terrain position to temperature, in temperature units (#238).
 
     equator_y: world-unit y coordinate of peak (equatorial) temperature. Temperature falls off
         with distance from this line in both directions, so it models one hemisphere's worth of
         latitude band across the world's y extent rather than a full planet.
-    equator_temperature: temperature at the equator at `sea_level_elevation`.
-    latitude_gradient: degrees C lost per world unit of distance from `equator_y`.
+    equator_temperature: temperature at the equator at `sea_level_elevation`. Required, with no
+        default: it is an absolute temperature, and an absolute temperature only means something
+        against the others it is read beside — `MetabolismConfig.neutral_temperature`,
+        `HydrationConfig.neutral_temperature`, `PlantsConfig`'s growth band — all of which are
+        already required. A default on one side of that relation would let the two drift apart
+        silently. Same principle #112 applied to absolute lengths (#238).
+    latitude_gradient: temperature units lost per world unit of distance from `equator_y`.
     sea_level_elevation: elevation (world units) at which the altitude lapse rate is zero. A
         default of 0.0 is a reference point rather than a guess about scale, so unlike
         `TerrainConfig`'s elevation range it may carry one.
-    lapse_rate: degrees C lost per **world unit** of elevation above `sea_level_elevation`
+    lapse_rate: temperature units lost per **world unit** of elevation above `sea_level_elevation`
         (#112). It was denominated in a physical length unit and defaulted to Earth's tropospheric
         lapse rate, which is exactly the Earth-calibrated constant this world has no use for —
         read against elevation in world units, that default cooled a peak by hundredths of a
-        degree, and altitude stopped driving climate at all.
+        temperature unit, and altitude stopped driving climate at all.
 
         Re-derived from the world's own geometry instead: a peak should be about as cold as a
         pole, or §2.6's "climate zones are consequences of terrain" is decoration. That means
@@ -55,7 +62,7 @@ class ClimateConfig:
     """
 
     equator_y: float
-    equator_temperature: float = 30.0
+    equator_temperature: float
     latitude_gradient: float = 0.05
     sea_level_elevation: float = 0.0
     lapse_rate: float = 0.25
@@ -70,7 +77,7 @@ class ClimateConfig:
 class Climate:
     """Owns the world's temperature field, derived from terrain elevation and world position.
 
-    temperature: (height, width) float32, degrees Celsius — one value per terrain grid cell,
+    temperature: (height, width) float32, temperature units — one value per terrain grid cell,
         aligned with `terrain.heights`.
     """
 
@@ -80,7 +87,7 @@ class Climate:
         self.temperature = _temperature_field(terrain, config)
 
     def temperature_at(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
-        """Bilinearly interpolated temperature (deg C) at continuous world positions."""
+        """Bilinearly interpolated temperature (temperature units) at continuous world positions."""
         return bilinear_sample(
             self.temperature,
             x,
@@ -99,7 +106,7 @@ class Climate:
 
 
 def zone_at(temperature: np.ndarray) -> np.ndarray:
-    """Classify a temperature field (deg C) into named climate zones.
+    """Classify a temperature field (temperature units) into named climate zones.
 
     Labels only exist for display and metrics; nothing in `core/` may branch on the string this
     returns (the abstraction contract this module owns — see module docstring).

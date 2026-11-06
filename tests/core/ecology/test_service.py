@@ -148,7 +148,7 @@ class TestUpkeepFromExpressedGenes:
         vocabulary = GENE_REGISTRY
         species = SpeciesRegistry(vocabulary)
         genetics = Genetics(store, registry, species, vocabulary, GENETICS_CONFIG)
-        # A north-south gradient: 30 degC at y=0, falling 1 degC per world unit.
+        # A north-south gradient: 30 at y=0, falling 1 temperature unit per world unit.
         terrain = Terrain(np.zeros((21, 21), dtype=np.float32), cell_size=1.0)
         climate = Climate(
             terrain,
@@ -173,8 +173,8 @@ class TestUpkeepFromExpressedGenes:
 
         upkeep = ecology.upkeep(selection)
 
-        # y=10 sits at 20 degC (neutral, no thermal cost); y=20 sits at 10 degC, ten degrees
-        # below neutral, so it pays 0.5 J/tick per squared degree (#176) on top of the same basal
+        # y=10 sits at 20 (neutral, no thermal cost); y=20 sits at 10, ten temperature units
+        # below neutral, so it pays 0.5 energy units/tick per squared temperature unit (#176) on top of the same basal
         # rate.
         assert upkeep[0] == pytest.approx(1.0)
         assert upkeep[1] == pytest.approx(1.0 + 0.5 * 10.0**2)

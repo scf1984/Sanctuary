@@ -21,7 +21,7 @@ def make_terrain(**overrides):
 
 
 def make_climate_config(terrain, **overrides):
-    params = dict(equator_y=terrain.world_height / 2)
+    params = dict(equator_y=terrain.world_height / 2, equator_temperature=30.0)
     params.update(overrides)
     return ClimateConfig(**params)
 
@@ -42,17 +42,24 @@ class TestClimateConfig:
         which is precisely §2.1's warning about constants that must be tuned as a table drifting
         apart instead.
         """
-        defaults = ClimateConfig(equator_y=0.0)
+        defaults = ClimateConfig(equator_y=0.0, equator_temperature=30.0)
 
         assert defaults.lapse_rate == pytest.approx(5.0 * defaults.latitude_gradient)
 
+    def test_the_equator_temperature_has_no_default(self):
+        """An absolute temperature means something only against the others it is read beside —
+        the neutral temperatures and the growth band, all required — so a default on this one side
+        could drift from them unnoticed. Same rule #112 applied to absolute lengths (#238)."""
+        with pytest.raises(TypeError, match="equator_temperature"):
+            ClimateConfig(equator_y=0.0)  # type: ignore[call-arg]
+
     def test_rejects_negative_latitude_gradient(self):
         with pytest.raises(ValueError):
-            ClimateConfig(equator_y=0.0, latitude_gradient=-0.1)
+            ClimateConfig(equator_y=0.0, equator_temperature=30.0, latitude_gradient=-0.1)
 
     def test_rejects_negative_lapse_rate(self):
         with pytest.raises(ValueError):
-            ClimateConfig(equator_y=0.0, lapse_rate=-0.1)
+            ClimateConfig(equator_y=0.0, equator_temperature=30.0, lapse_rate=-0.1)
 
 
 class TestTemperatureField:
@@ -60,7 +67,9 @@ class TestTemperatureField:
         # Flat latitude (all rows at the equator) isolates the altitude effect.
         heights = np.array([[0.0, 1.0, 2.0]] * 3, dtype=np.float32)
         terrain = Terrain(heights, cell_size=1.0)
-        config = ClimateConfig(equator_y=terrain.world_height / 2, latitude_gradient=0.0)
+        config = ClimateConfig(
+            equator_y=terrain.world_height / 2, equator_temperature=30.0, latitude_gradient=0.0
+        )
         climate = Climate(terrain, config)
 
         row = climate.temperature[1]
@@ -70,7 +79,7 @@ class TestTemperatureField:
         # Flat terrain isolates the latitude effect.
         heights = np.zeros((5, 3), dtype=np.float32)
         terrain = Terrain(heights, cell_size=10.0)
-        config = ClimateConfig(equator_y=terrain.world_height / 2)
+        config = ClimateConfig(equator_y=terrain.world_height / 2, equator_temperature=30.0)
         climate = Climate(terrain, config)
 
         equator_row = climate.temperature.shape[0] // 2
@@ -92,7 +101,7 @@ class TestTemperatureLookup:
     def test_matches_grid_points_exactly(self):
         heights = np.zeros((3, 3), dtype=np.float32)
         terrain = Terrain(heights, cell_size=2.0)
-        config = ClimateConfig(equator_y=0.0, latitude_gradient=0.0)
+        config = ClimateConfig(equator_y=0.0, equator_temperature=30.0, latitude_gradient=0.0)
         climate = Climate(terrain, config)
 
         assert climate.temperature_at(0.0, 0.0) == pytest.approx(climate.temperature[0, 0])
