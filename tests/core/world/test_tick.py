@@ -10,6 +10,7 @@ from core.invariants import (
     no_alive_entity_has_negative_energy,
 )
 from core.world.tick import TickLoop
+from tests.support.timing import wall_clock
 
 
 def make_store(initial_capacity=4, n_drives=2, n_genes=3):
@@ -253,6 +254,7 @@ class TestDebugChecks:
         loop.advance(10)  # must not raise
         assert loop.tick_count == 10
 
+    @wall_clock
     def test_disabled_overhead_is_negligible_next_to_enabled(self):
         # Same store size and tick count on both sides; the only difference is debug_checks.
         # Disabled must stay a small fraction of enabled's cost, since enabled repeats a
