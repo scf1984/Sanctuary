@@ -106,11 +106,16 @@ class TestDeposit:
         assert five.sample(*probe)[0, 0] > one.sample(*probe)[0, 0]
 
     def test_rebuilding_forgets_the_previous_tick(self):
+        """Compared against a field that only ever held the second deposit, rather than against
+        zero: the plume has no edge (#262), so the second animal is faintly smellable everywhere."""
         _, field = make_field()
         field.rebuild(np.array([10.0]), np.array([10.0]), np.array([1.0]), signature(1, 0, 0))
         field.rebuild(np.array([2.0]), np.array([2.0]), np.array([1.0]), signature(1, 0, 0))
+        _, fresh = make_field()
+        fresh.rebuild(np.array([2.0]), np.array([2.0]), np.array([1.0]), signature(1, 0, 0))
 
-        assert field.sample(np.array([10.0]), np.array([10.0]))[0, 0] == pytest.approx(0.0)
+        probe = (np.array([10.0]), np.array([10.0]))
+        assert field.sample(*probe)[0, 0] == fresh.sample(*probe)[0, 0]
 
     def test_an_empty_population_leaves_an_empty_field(self):
         _, field = make_field()
@@ -267,9 +272,8 @@ class TestSelfExclusion:
         assert perceived[0] == pytest.approx(np.zeros(CHANNELS), abs=1e-6)
 
     def test_exclusion_is_exact_at_the_map_edge_too(self):
-        """The blur is normalized by in-world cells, so a corner cell returns more of its own
-        deposit than a central one. A single interior constant would leave residual self-scent
-        exactly where prey get cornered.
+        """The rim reflects, so a corner cell returns more of its own deposit than a central one.
+        A single interior constant would leave residual self-scent exactly where prey get cornered.
         """
         _, field = make_field()
         x, y, emission, sig = (
@@ -319,15 +323,118 @@ class TestEdges:
         assert at_corner >= at_middle
 
     def test_scent_does_not_wrap_around_the_world(self):
+        """A wrap would make the far corner the source's neighbour. The plume has no edge (#262),
+        so the far corner does read something, and it must be the faintest reading on the map."""
         _, field = make_field()
         field.rebuild(np.array([0.0]), np.array([0.0]), np.array([1.0]), signature(1, 0, 0))
 
-        assert field.sample(np.array([20.0]), np.array([20.0]))[0, 0] == pytest.approx(0.0)
+        far_corner = field.sample(np.array([20.0]), np.array([20.0]))[0, 0]
+        assert far_corner == field.concentration[0].min()
+        assert far_corner < field.concentration[0, 10, 10]
+
+    def test_the_rim_reflects_rather_than_absorbs(self):
+        """What reaches the edge stays in the world: a broadcaster in a corner leaves as much
+        scent on the map as one in the middle. An absorbing rim would make the edge read emptier
+        than it is, and prey would find it spuriously safe (#262).
+        """
+        _, corner = make_field()
+        corner.rebuild(np.array([0.0]), np.array([0.0]), np.array([1.0]), signature(1, 0, 0))
+        _, middle = make_field()
+        middle.rebuild(np.array([10.0]), np.array([10.0]), np.array([1.0]), signature(1, 0, 0))
+
+        assert corner.concentration[0].sum() == pytest.approx(1.0, rel=1e-4)
+        assert middle.concentration[0].sum() == pytest.approx(1.0, rel=1e-4)
 
     def test_a_position_outside_the_world_is_rejected(self):
         _, field = make_field()
         with pytest.raises(ValueError):
             field.sample(np.array([99.0]), np.array([0.0]))
+
+
+class TestExponentialPlume:
+    """The plume is the steady state of scent that decays while it spreads (#262).
+
+    That is what makes CLAUDE.md §2.5's "a keener nose detects from further away" true. A reading
+    that falls by the same factor every world unit crosses any threshold `λ · ln(acuity)` further
+    out as acuity grows, with no end to it. The three-pass box blur this replaced ended exactly
+    three ranges from the source, so tripling acuity bought about two units of reach at range 10.
+    """
+
+    GRID, CENTRE, RANGE = 161, 80, 10.0
+
+    def lone_plume(self):
+        """A lone broadcaster's reading along the row through it, from its own cell outwards."""
+        _, field = make_field(grid=self.GRID, diffusion_range=self.RANGE, channels=1)
+        centre = float(self.CENTRE)
+        field.rebuild(
+            np.array([centre]), np.array([centre]), np.array([1.0]),
+            np.array([[1.0]], np.float32),
+        )
+        distance = np.arange(self.GRID - self.CENTRE, dtype=np.float64)
+        reading = field.sample(centre + distance, np.full(distance.shape, centre))[:, 0]
+        return distance, reading.astype(np.float64)
+
+    def reach(self, acuity, threshold):
+        distance, reading = self.lone_plume()
+        return distance[acuity * reading >= threshold].max()
+
+    def test_a_keener_nose_detects_from_measurably_further_away(self):
+        """Tripling acuity extends the reach by `λ · ln 3`, about 11 units at range 10, and does
+        it again for the next tripling: range is what the gene buys, not volume."""
+        _, reading = self.lone_plume()
+        # A threshold a lone plume crosses about two ranges out at acuity 1.
+        threshold = reading[0] * np.exp(-2.0)
+        step = self.RANGE * np.log(3.0)
+
+        near, middle, far = (self.reach(acuity, threshold) for acuity in (1.0, 3.0, 9.0))
+
+        assert middle - near == pytest.approx(step, abs=1.0)
+        assert far - middle == pytest.approx(step, abs=1.0)
+
+    def test_the_reading_falls_by_the_same_factor_every_cell(self):
+        """An exponential, with `diffusion_range` its e-folding distance. Checked well inside the
+        grid, where what the rim reflects back is negligible."""
+        distance, reading = self.lone_plume()
+        inside = reading[:31]
+
+        ratio = inside[1:] / inside[:-1]
+
+        assert ratio == pytest.approx(np.full(30, np.exp(-1.0 / self.RANGE)), rel=1e-4)
+
+    def test_the_plume_has_no_hard_cutoff_within_the_grid(self):
+        _, field = make_field(grid=41, diffusion_range=2.0)
+        field.rebuild(np.array([0.0]), np.array([0.0]), np.array([1.0]), signature(1, 0, 0))
+
+        assert np.all(field.concentration[0] > 0.0)
+
+    def test_scent_is_reciprocal(self):
+        """What I read of you is what you read of me, at equal emission, even against the rim.
+        Otherwise a cornered animal and its neighbour would disagree about how close they are."""
+        _, field = make_field(diffusion_range=4.0, channels=1)
+        a = (np.array([0.0]), np.array([3.0]))
+        b = (np.array([5.0]), np.array([1.0]))
+
+        field.rebuild(*a, np.array([1.0]), np.array([[1.0]], np.float32))
+        b_reads_a = field.sample(*b)[0, 0]
+        field.rebuild(*b, np.array([1.0]), np.array([[1.0]], np.float32))
+        a_reads_b = field.sample(*a)[0, 0]
+
+        assert b_reads_a == pytest.approx(a_reads_b, rel=1e-5)
+
+    def test_self_exclusion_is_exact_over_the_whole_grid(self):
+        """With no cutoff every operator entry is live: a lone broadcaster by the rim must read
+        nothing of itself anywhere on the map, not just near where it stands."""
+        _, field = make_field(grid=21, diffusion_range=6.0)
+        x, y = np.array([1.0]), np.array([19.0])
+        emission, sig = np.array([3.0]), signature(1, -1, 2)
+        field.rebuild(x, y, emission, sig)
+        rows, cols = np.meshgrid(np.arange(21.0), np.arange(21.0), indexing="ij")
+
+        perceived = field.sample_excluding_source(
+            cols.reshape(1, -1), rows.reshape(1, -1), x, y, emission, sig
+        )
+
+        assert perceived == pytest.approx(np.zeros_like(perceived), abs=1e-6)
 
 
 class TestDiffusionRange:

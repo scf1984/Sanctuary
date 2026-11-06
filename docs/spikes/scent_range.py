@@ -1,4 +1,4 @@
-"""How far can a lone animal smell a mate, and what does widening the scent field cost? (#251)
+"""How far can a lone animal smell a mate, and what does widening the scent field cost? (#251, #262)
 
 Throwaway spike code (CLAUDE.md §8.3), not part of `core/` and imported by nothing. It produces the
 numbers in `docs/spikes/scent-range.md`. Run it from a repository root (or worktree) with
@@ -10,6 +10,10 @@ numbers in `docs/spikes/scent-range.md`. Run it from a repository root (or workt
     python docs/spikes/scent_range.py readers --sources <dir>
     python docs/spikes/scent_range.py pairs --sources <dir> --reps 10
     python docs/spikes/scent_range.py founders
+
+`--configs A,B` restricts any command to some of `CONFIGS`. The configs measure the exponential
+kernel #262 introduced. #251's box-blur tables came from this script at 1b57c0e, whose `CONFIGS`
+named box-blur configs, and only reproduce from that commit.
 
 **Every config is applied by swapping two knobs on a live world**: the cue field (`diffusion_range`)
 and lust's `detection_threshold`. Snapshots refuse a world whose config fingerprint differs (§2.8),
@@ -36,15 +40,18 @@ from core.world.assembly import build_world
 from core.world.terrain import Terrain
 from persistence import snapshot
 
-# (diffusion_range, lust detection_threshold). The first is the pre-#251 demo world.
+# (diffusion_range, lust detection_threshold), under #262's exponential kernel. The first is
+# #251's shipped pair of numbers carried over unchanged. A typical mate (emission 1, own-signature
+# dot 2) reads 2c² at its own cell, c = (1 − a) / (1 + a) and a = exp(−1 / range), so
+# t = 2c² · exp(−reach / range) sets the reach at acuity 1. The others hold that reach at the 27
+# units #251 validated (t3e-4), or between (t1e-4), and at range 7 the kernel's spread matches the
+# box blur's at range 10 (per-axis standard deviation √2 · 7 ≈ 9.9 against √110 ≈ 10.5).
 CONFIGS = {
-    "R3_t.05": (3.0, 0.05),
-    "R20_t.05": (20.0, 0.05),
-    "R3_t1e-4": (3.0, 1e-4),
-    "R6_t5e-5": (6.0, 5e-5),
-    "R10_t5e-5": (10.0, 5e-5),
-    "R15_t2e-5": (15.0, 2e-5),
-    "R20_t5e-5": (20.0, 5e-5),
+    "E10_t5e-5": (10.0, 5e-5),
+    "E10_t1e-4": (10.0, 1e-4),
+    "E10_t3e-4": (10.0, 3e-4),
+    "E7_t5e-5": (7.0, 5e-5),
+    "E7_t2e-4": (7.0, 2e-4),
 }
 SOURCE_SEEDS = (1, 2, 3)
 # Ticks a bottlenecked pair is followed for, about 27 founding generations.
@@ -66,20 +73,27 @@ def _drives(world) -> dict:
     return {drive.name: drive for drive in world.behaviour._drives}
 
 
-def profile() -> None:
-    """One typical mate's lust reading (emission 1, own-signature dot 2, acuity 1) by distance."""
+def _lone_mate(length: int, centre: int, diffusion_range: float) -> np.ndarray:
+    """One typical mate's lust reading (emission 1, own-signature dot 2) along an axis, acuity 1."""
+    response = _axis_operator(length, float(np.exp(-1.0 / diffusion_range)))[:, centre]
+    return 2.0 * float(response[centre]) * response.astype(np.float64)
+
+
+def profile(names: list[str]) -> None:
+    """A lone mate's reading by distance, then each config's reach by acuity."""
     length, centre = 321, 160
     distances = (0, 2, 5, 10, 15, 20, 30, 40, 50, 60)
-    print("R   " + "".join(f"{d:>10}" for d in distances) + "   support")
-    for diffusion_range in (3, 6, 10, 15, 20, 25, 30):
-        response = _axis_operator(length, diffusion_range)[:, centre].astype(np.float64)
-        reading = 2.0 * response[centre] * response
-        support = int(np.nonzero(response > 0)[0].max() - centre)
-        print(
-            f"{diffusion_range:<4}"
-            + "".join(f"{reading[centre + d]:>10.2e}" for d in distances)
-            + f"   {support}"
-        )
+    print("R   " + "".join(f"{d:>10}" for d in distances))
+    for diffusion_range in (5, 7, 10, 15, 20):
+        reading = _lone_mate(length, centre, diffusion_range)
+        print(f"{diffusion_range:<4}" + "".join(f"{reading[centre + d]:>10.2e}" for d in distances))
+    acuities = (0.5, 1.0, 1.5, 3.0)
+    print("\nreach (world units) at acuity " + ", ".join(f"{a:g}" for a in acuities))
+    for name in names:
+        diffusion_range, threshold = CONFIGS[name]
+        reading = _lone_mate(length, centre, diffusion_range)[centre:]
+        reach = [int(np.nonzero(a * reading >= threshold)[0].max()) for a in acuities]
+        print(f"{name:<10} " + "  ".join(f"{r:>4}" for r in reach))
 
 
 def cost() -> None:
@@ -109,9 +123,10 @@ def _spearman(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.corrcoef(np.argsort(np.argsort(a)), np.argsort(np.argsort(b)))[0, 1])
 
 
-def readers(sources: Path) -> None:
+def readers(sources: Path, names: list[str]) -> None:
     """What each config does to the field's other readers, on established worlds."""
-    for name, (diffusion_range, threshold) in CONFIGS.items():
+    for name in names:
+        diffusion_range, threshold = CONFIGS[name]
         rows = []
         for seed in SOURCE_SEEDS:
             world = build_demo_world(seed=seed, n_entities=200)
@@ -173,17 +188,17 @@ def _follow_pair(world, horizon: int) -> dict:
     return {"outcome": "apart", "tick": None}
 
 
-def pairs(sources: Path, reps: int, workers: int) -> None:
+def pairs(sources: Path, reps: int, workers: int, names: list[str]) -> None:
     """Established worlds knocked down to a random pair (#251's evidence), per config."""
     jobs = [
         {"name": name, "seed": seed, "rep": rep, "sources": str(sources)}
-        for name in CONFIGS
+        for name in names
         for seed in SOURCE_SEEDS
         for rep in range(reps)
     ]
     with ProcessPoolExecutor(max_workers=workers) as pool:
         results = list(pool.map(_pair, jobs))
-    _report(results)
+    _report(results, names)
 
 
 def _founder(job: dict) -> dict:
@@ -201,16 +216,16 @@ def _founder(job: dict) -> dict:
     return {"name": name, **_follow_pair(world, FOUNDER_HORIZON)}
 
 
-def founders(seeds: int, workers: int) -> None:
+def founders(seeds: int, workers: int, names: list[str]) -> None:
     """Two fresh founders `FOUNDER_SEPARATION` apart, as the regression test sets up."""
-    jobs = [{"name": name, "seed": seed} for name in CONFIGS for seed in range(seeds)]
+    jobs = [{"name": name, "seed": seed} for name in names for seed in range(seeds)]
     with ProcessPoolExecutor(max_workers=workers) as pool:
         results = list(pool.map(_founder, jobs))
-    _report(results)
+    _report(results, names)
 
 
-def _report(results: list[dict]) -> None:
-    for name in CONFIGS:
+def _report(results: list[dict], names: list[str]) -> None:
+    for name in names:
         mine = [r for r in results if r["name"] == name]
         ticks = sorted(r["tick"] for r in mine if r["outcome"] == "conceived")
         counts = {k: sum(r["outcome"] == k for r in mine) for k in ("conceived", "died", "apart")}
@@ -225,17 +240,19 @@ def main() -> None:
     parser.add_argument("--reps", type=int, default=10)
     parser.add_argument("--seeds", type=int, default=16)
     parser.add_argument("--workers", type=int, default=8)
+    parser.add_argument("--configs", default=",".join(CONFIGS))
     args = parser.parse_args()
+    names = args.configs.split(",")
     if args.command == "profile":
-        profile()
+        profile(names)
     elif args.command == "cost":
         cost()
     elif args.command == "readers":
-        readers(args.sources)
+        readers(args.sources, names)
     elif args.command == "pairs":
-        pairs(args.sources, args.reps, args.workers)
+        pairs(args.sources, args.reps, args.workers, names)
     else:
-        founders(args.seeds, args.workers)
+        founders(args.seeds, args.workers, names)
 
 
 if __name__ == "__main__":

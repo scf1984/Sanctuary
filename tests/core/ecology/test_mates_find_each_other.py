@@ -23,8 +23,9 @@ SEPARATION = 30.0
 # measured conception came by tick 420; a pair that has not met by then has usually died, because
 # these are naive founders and most of them do. Kept short because this is the slowest ecology test.
 HORIZON = 450
-# Of 16 pairs. Measured 0/16 before #251, 4/16 at a 6.0 range and 10/16 as shipped
-# (docs/spikes/scent-range.md). At the shipped rate, fewer than 5 happens about 0.3% of the time.
+# Of 16 pairs. Measured 0/16 before #251, 4/16 at a 6.0 range and 10/16 as #251 shipped, and 23/32
+# by tick 2,000 under #262's exponential kernel (docs/spikes/scent-range.md). At #251's rate, fewer
+# than 5 happens about 0.3% of the time.
 REQUIRED = 5
 
 

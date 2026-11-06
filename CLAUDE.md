@@ -738,8 +738,8 @@ by" hunger and no animal stands still merely because the drive that won has no m
 
   The operator is deliberately **not** plant-specific: `core.ecology.cues` wants exactly it, since
   scent currently diffuses through a mountain unattenuated. Converting that is filed separately,
-  because `CueField.sample_excluding_self` subtracts the *exact* diagonal of its blur and that
-  factorisation exists only because a separable blur is separable — a per-edge conductance is not.
+  because `CueField.sample_excluding_self` subtracts the *exact* diagonal of its kernel and that
+  factorisation exists only because a separable kernel is separable — a per-edge conductance is not.
 - **Heritable drive weights.** Behaviour is a fixed set of authored drives (hunger, thirst, fear,
   lust, fatigue) competing each tick by utility score — but *the weights and thresholds are genes*.
   Boldness, sociality, and parental investment therefore evolve rather than being designed.
@@ -1050,9 +1050,10 @@ by" hunger and no animal stands still merely because the drive that won has no m
   saves. Settle the vocabulary before generating starting states.
 
   **An animal does not perceive itself.** Its own deposit is subtracted from what it samples, which
-  is exact rather than approximate because a separable normalized blur's diagonal factorizes per
-  axis. Without it, any lineage whose aversion overlapped its own signature — every cannibal —
-  would be permanently terrified while standing alone in an empty world.
+  is exact rather than approximate because the scent kernel is separable, one exponential per
+  axis, so its diagonal factorizes per axis. Without it, any lineage whose aversion overlapped its
+  own signature — every cannibal — would be permanently terrified while standing alone in an empty
+  world.
 
   Reserved gene block, so that one vocabulary migration covers the mechanics that need it rather
   than three:
@@ -1176,11 +1177,24 @@ by" hunger and no animal stands still merely because the drive that won has no m
 
   **A keener nose detects from further away, it is not more frightened.** Concentration decays
   monotonically from the source and detection is a threshold on concentration, so sensitivity and
-  range are the *same* parameter for a plume — one blur, no multi-scale bands. This is why the
-  scent gene may multiply a sampled field value where a sight gene may not: for sight it would
-  make a far-seeing animal merely more afraid of the same thing, which is the wrong selection
-  pressure. The detection threshold is what gives the gene teeth; without it every animal detects
-  everything faintly and the gene only scales panic.
+  range are the *same* parameter for a plume — one kernel, no multi-scale bands.
+
+  **That holds only for a plume whose tail never ends**, which is why scent spreads by a separable
+  two-sided exponential, the steady state of scent that decays while it spreads (#262). A reading
+  falls by `e` every `diffusion_range`, so a nose `k` times keener detects the same animal
+  `diffusion_range × ln k` further away: tripling acuity buys about 11 units of reach at range 10.
+  The three-pass box blur it replaced ended exactly three ranges out, and the same tripling bought
+  2 (27 units to 29). **Any loss-free spread does that**, box or Gaussian, because its reach grows
+  only with the square root of a logarithm. So **#139's terrain-aware walk must keep a loss per
+  pass**, or acuity goes back to being nearly inert. The kernel's contours are diamonds rather than
+  circles, a grid artefact like the box's square; the true 2-D steady state does not separate, and
+  separating is what keeps self-exclusion exact. Measured in
+  [`docs/spikes/scent-range.md`](docs/spikes/scent-range.md).
+
+  This is why the scent gene may multiply a sampled field value where a sight gene may not: for
+  sight it would make a far-seeing animal merely more afraid of the same thing, which is the wrong
+  selection pressure. The detection threshold is what gives the gene teeth; without it every animal
+  detects everything faintly and the gene only scales panic.
 
   **Speciation costs fear nothing at all.** A daughter species inherits its parents' signature and
   aversion genes like any other trait, and the cue field has no per-species structure to extend, so
@@ -1225,11 +1239,11 @@ by" hunger and no animal stands still merely because the drive that won has no m
   **Measured** (§8.5): over 400 ticks with the population growing from 133 to about 1,200 outside,
   **not one animal crossed in either direction**.
 
-  **What a fence does not stop is scent.** `core.ecology.cues` blurs with a separable box kernel
-  rather than the neighbour-graph walk, because `sample_excluding_self` subtracts the exact diagonal
-  of that blur and the factorisation only holds for a separable kernel. So a fenced world's animals
-  smell each other through the wire, and converting the cue field is #139's. Worth knowing before
-  reading a fenced world's fear scores.
+  **What a fence does not stop is scent.** `core.ecology.cues` spreads scent with a separable
+  exponential kernel rather than the neighbour-graph walk, because `sample_excluding_self` subtracts
+  the exact diagonal of that kernel and the factorisation only holds for a separable kernel. So a
+  fenced world's animals smell each other through the wire, and converting the cue field is #139's.
+  Worth knowing before reading a fenced world's fear scores.
 
   **A fence does not evict.** Whoever is inside when it goes up is inside. That is what makes it an
   isolation rather than a round-up, and it is why *did I fence enough of them, with enough food and
