@@ -292,9 +292,10 @@ class Scent:
         self.field = field
         # Raise KeyError naming the vocabulary version if any gene does not exist. Broadcast
         # strength and a position in cue space are both bare numbers.
-        self._emission_index = genes.index_of(scent.emission_gene, unit=Unit.DIMENSIONLESS)
-        self._signature_indices = np.array(
-            [genes.index_of(name, unit=Unit.DIMENSIONLESS) for name in scent.signature_genes],
+        # (1 + n_channels,) int: emission, then the signature, the only genes `_broadcast` reads.
+        self._broadcast_columns = np.array(
+            [genes.index_of(scent.emission_gene, unit=Unit.DIMENSIONLESS)]
+            + [genes.index_of(name, unit=Unit.DIMENSIONLESS) for name in scent.signature_genes],
             dtype=np.int64,
         )
 
@@ -348,8 +349,8 @@ class Scent:
         Expression, not genotype, for the same reason upkeep follows it (#17): a species that does
         not express a signature gene neither carries that scent nor pays for it.
         """
-        expressed = self.genetics.expressed(selection)
-        return expressed[:, self._emission_index], expressed[:, self._signature_indices]
+        expressed = self.genetics.expressed_columns(selection, self._broadcast_columns)
+        return expressed[:, 0], expressed[:, 1:]
 
 
 # Repeated box convolution converges on a Gaussian (the central limit theorem applied to the

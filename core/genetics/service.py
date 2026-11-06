@@ -60,9 +60,10 @@ class Genetics(DomainService):
         self._senescence = config.senescence
         if self._senescence is not None:
             self._base_decay = self._senescence.base_decay
-            self._resistance_index, self._decaying_columns = _resolve_senescence(
+            resistance_index, self._decaying_columns = _resolve_senescence(
                 genes, self._senescence
             )
+            self._resistance_column = np.array([resistance_index], dtype=np.int64)
 
     def genes(self, selection: Selection) -> np.ndarray:
         """(len(selection), n_genes) float32: raw gene values, expressed or not."""
@@ -172,12 +173,22 @@ class Genetics(DomainService):
         this, so an old animal is slower, sees and smells less, and also pays less to maintain what
         has atrophied, because upkeep is charged from the expressed phenotype.
         """
-        rows = np.asarray(rows, dtype=np.int64)
-        phenotype = self.heritable_at(rows)
-        if self._senescence is not None:
-            remaining = self._decay_from(phenotype, rows)
-            phenotype[:, self._decaying_columns] *= remaining[:, None].astype(np.float32)
-        return phenotype
+        return self._phenotype(np.asarray(rows, dtype=np.int64), None, aged=True)
+
+    def expressed_columns(self, selection: Selection, columns: np.ndarray) -> np.ndarray:
+        """(len(selection), len(columns)) float32: `expressed`, building only `columns`.
+
+        Bit-identical to `expressed(selection)[:, columns]`, and the reason it exists is that most
+        readers want one to a dozen genes of sixty: a drive reading one weight used to build the
+        whole block to throw all but one column away, seventeen times per `choose()`, and that was
+        about half of what choosing cost at 100,000 animals (#258). Nothing is cached, so there is
+        no lifetime to get wrong when a gene changes mid-tick (#174's open question).
+
+        columns: (k,) int, vocabulary indices in the order the caller wants them back.
+        """
+        return self._phenotype(
+            selection.to_indices(), np.asarray(columns, dtype=np.int64), aged=True
+        )
 
     def heritable(self, selection: Selection) -> np.ndarray:
         """(len(selection), n_genes) float32: `expressed` without senescence.
@@ -191,10 +202,31 @@ class Genetics(DomainService):
 
     def heritable_at(self, rows: np.ndarray) -> np.ndarray:
         """`heritable`, for row indices in the order given."""
-        rows = np.asarray(rows, dtype=np.int64)
-        phenotype = self.expression.phenotype(self.store.genes[rows])
-        species_mask = self.species.masks_for(self.store.species_id[rows])
-        return np.where(species_mask, phenotype, 0.0).astype(np.float32)
+        return self._phenotype(np.asarray(rows, dtype=np.int64), None, aged=False)
+
+    def _phenotype(self, rows: np.ndarray, columns: np.ndarray | None, aged: bool) -> np.ndarray:
+        """The one place a phenotype is produced: mode, then mask, then (if `aged`) senescence.
+
+        `columns` None is the whole vocabulary. Every public read above is this with its own
+        columns and age, so a full block and a partial one cannot be two arithmetics drifting apart.
+        """
+        if columns is None:
+            phenotype = self.expression.phenotype(self.store.genes[rows])
+            species_mask = self.species.masks_for(self.store.species_id[rows])
+        else:
+            # Gathering (rows, columns) directly: indexing rows first would copy every gene of
+            # every animal just to discard most of them, which is the cost being avoided.
+            phenotype = self.expression.phenotype_of(
+                self.store.genes[rows[:, None], columns], columns
+            )
+            species_mask = self.species.masks_for(self.store.species_id[rows])[:, columns]
+        phenotype = np.where(species_mask, phenotype, 0.0).astype(np.float32)
+        if aged and self._senescence is not None:
+            decaying = self._decaying_columns if columns is None else self._decaying_columns[columns]
+            if decaying.any():
+                remaining = self._remaining(rows)
+                phenotype[:, decaying] *= remaining[:, None].astype(np.float32)
+        return phenotype
 
     def senescence_decay_at(self, rows: np.ndarray) -> np.ndarray:
         """(len(rows),) float64 in (0, 1]: the fraction of each performance trait still expressed.
@@ -204,8 +236,7 @@ class Genetics(DomainService):
         """
         if self._senescence is None:
             raise ValueError("this world's genetics has no senescence, so there is no decay")
-        rows = np.asarray(rows, dtype=np.int64)
-        return self._decay_from(self.heritable_at(rows), rows)
+        return self._remaining(np.asarray(rows, dtype=np.int64))
 
     def vigour(self, selection: Selection) -> np.ndarray:
         """(len(selection),) float64 in (0, 1]: how much of an age-degraded capacity remains.
@@ -219,12 +250,13 @@ class Genetics(DomainService):
         rows = selection.to_indices()
         if self._senescence is None:
             return np.ones(len(rows), dtype=np.float64)
-        return self._decay_from(self.heritable_at(rows), rows)
+        return self._remaining(rows)
 
-    def _decay_from(self, heritable: np.ndarray, rows: np.ndarray) -> np.ndarray:
+    def _remaining(self, rows: np.ndarray) -> np.ndarray:
         # The resistance is read from the masked phenotype, so a species that does not express the
         # gene has none and decays at the base rate — the same rule every other gene follows.
-        return decay(self.store.age[rows], heritable[:, self._resistance_index], self._base_decay)
+        resistance = self._phenotype(rows, self._resistance_column, aged=False)[:, 0]
+        return decay(self.store.age[rows], resistance, self._base_decay)
 
 
 def _resolve_senescence(
