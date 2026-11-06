@@ -274,14 +274,44 @@ class TestInterventionsRunBeforeTheTickTheyLandOn:
         built.loop.interventions = Interventions(balance=10.0)
 
         # Biomass out of nowhere: the naive "emergency feed", and the shape of intervention that
-        # genuinely does break the loop. Zeroing an animal's energy would *not* — the ledger counts
-        # it as exported either way, which is its own gap and filed separately.
+        # breaks the field's total. Removing an animal without returning its body is the other
+        # shape, and the next test.
         thief = Noted(name="magic feed")
         thief.apply = lambda store: built.plants.biomass.__iadd__(100.0)
         built.loop.interventions.request(thief)
 
         with pytest.raises(Exception, match="nutrients_are_conserved"):
             built.loop.advance(1)
+
+    def test_an_intervention_that_removes_animals_without_their_bodies_is_caught(self):
+        """#214's reproduction. Ten animals released with their energy unreturned leave
+        `total_nutrients()` exactly where it was — the ledger still owes it — so only the check
+        that asks *where* the owed energy is can see that nothing holds it any more."""
+        built = build_demo_world(seed=1, n_entities=60)
+        built.loop.advance(60)
+        built.loop.debug_checks = True
+        built.loop.interventions = Interventions(balance=10.0)
+
+        vanish = Noted(name="vanish")
+        vanish.apply = lambda store: store.release(store.row_ids()[store.alive][:10])
+        built.loop.interventions.request(vanish)
+
+        with pytest.raises(Exception, match="exported_nutrients_are_held"):
+            built.loop.advance(1)
+
+    def test_a_cull_returns_what_it_removes(self):
+        """The same removal done properly: `Cull.apply` hands every body back to the ground before
+        freeing its row, so the export ledger stays fully held."""
+        built = build_demo_world(seed=1, n_entities=60)
+        built.loop.advance(60)
+        built.loop.debug_checks = True
+        built.loop.interventions = Interventions(balance=100.0)
+        species = int(built.store.species_id[built.store.alive][0])
+
+        built.loop.interventions.request(
+            Cull(built.ecology, built.store, species_id=species, count=10, survivors=5)
+        )
+        built.loop.advance(5)  # must not raise
 
     def test_a_cull_lands_before_the_systems_that_read_the_population(self):
         """Applied after them, a cull would sit inert until the following tick — the world on

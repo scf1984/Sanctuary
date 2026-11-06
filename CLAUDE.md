@@ -1611,7 +1611,9 @@ Non-determinism rules out golden-output tests. Use instead:
 
 - **Invariants**, asserted every tick in debug builds: energy is never created, populations are
   never negative, no entity leaves the world bounds, no entity occupies a free-list row, total
-  nutrients are conserved across the loop, and senescence decay stays within `(0, 1]` (§2.5).
+  nutrients are conserved across the loop, every nutrient on the export ledger is held in a living
+  body or in carrion (#214: conservation alone cannot see a body that vanished still owing its
+  energy), and senescence decay stays within `(0, 1]` (§2.5).
   **Invariants are never versioned** (§2.8): they hold under every rule set, so they are also the
   line between a fix that ships in place and one that forks the rules.
   **An invariant is not confined to entities** — decided in #91. A check returns `None` when it

@@ -23,11 +23,11 @@ It also already covers the cross-domain case #21 brings: a check that must weigh
 store against nutrients in the soil closes over the field and receives the store.
 
 Only the invariants that are checkable against what exists in `core/` today are registered by
-`default_registry()`. §2.5's closed energy loop still needs an income/loss ledger for *energy*:
-#17 landed the loss half as a pure drain (`core.ecology.service.Ecology`) and #18 the income half,
-but #19 (feeding) and #21 (death and decomposition) own the transfer and return sides and are open,
-so full energy-flow conservation is left for them. The nutrient half is closed today and is
-registered whenever a world supplies a plant field.
+`default_registry()`. Nutrients are checked twice, because one identity cannot say both things.
+`nutrients_are_conserved` says the field's total never moves; `exported_nutrients_are_held` says
+every unit that total counts as grazed away is actually somewhere — in a living body or in carrion
+on the ground (#214). The first is blind to a body that vanished still owing its energy, because
+the ledger keeps summing to the same constant; the second is the check that sees it.
 """
 
 from __future__ import annotations
@@ -39,9 +39,19 @@ from typing import Callable, Optional
 import numpy as np
 
 from core.behaviour.movement import Movement
+from core.ecology.carrion import Carrion
 from core.ecology.plants import Plants
 from core.entities.store import EntityStore
 from core.selection import Selection
+
+# Measured, not guessed (§8.5, #214). On the demo world the gap between the export ledger and what
+# bodies and carrion hold is float32 rounding on the `energy` column: at most 1.7e-6 relative over
+# 2,000 ticks on seeds 1-3 (1,363-4,711 animals), and over 12,500 ticks on seed 2 it reached that
+# early and then sat near 2e-7 without growing. 1e-4 is ~60x clear of it. One average body is
+# 2e-4 to 7e-4 of the outstanding total at those populations, so a single unreturned animal trips;
+# at much larger populations one body falls under the bound, but a leak accumulates against the
+# absolute ledger and trips once it adds up.
+EXPORT_LEDGER_TOLERANCE = 1e-4
 
 
 @dataclass(frozen=True)
@@ -266,6 +276,48 @@ def nutrients_are_conserved(plants: Plants, relative_tolerance: float = 1e-9) ->
     return check
 
 
+def exported_nutrients_are_held(
+    plants: Plants, carrion: Carrion, relative_tolerance: float = EXPORT_LEDGER_TOLERANCE
+) -> Predicate:
+    """Build a predicate asserting every nutrient on the export ledger is held somewhere (#214).
+
+    `Plants.exported_nutrients` means "grazed out of the field and **not yet returned**", and
+    nothing else enforces the second half. Every path that moves energy keeps it true:
+
+    - founding (`Plants.record_founding_stock`) and grazing put a body's worth on the ledger;
+    - `Ecology.spend` burns energy and returns its nutrients through `Plants.return_nutrients`;
+    - `Ecology.transfer` moves energy between living pools, gestating young included (#20);
+    - `Ecology.kill` takes flesh off a body and `Carrion.deposit` lays the same amount on the
+      ground, where it stays owed until `Carrion.decompose` returns it;
+    - `Cull.apply` returns a body before freeing its row, and `Death.reap` frees only empty pools.
+
+    So, after any tick, ``exported / nutrient_per_biomass == Σ energy over living rows + carrion``.
+    Carrion is the only in-flight term: everything else that moves within a tick has landed by the
+    time the harness looks. A row released while still holding energy — the leak #214 measured —
+    leaves the left side unchanged and the right side short, and trips on the tick it happens.
+
+    Compared in energy units, the store's own, because that is what both sides are made of.
+    `relative_tolerance` covers float32 rounding on the `energy` column and nothing more; see
+    `EXPORT_LEDGER_TOLERANCE`. A slow leak that stays under it per tick still accumulates, because
+    the comparison is against the absolute ledger and not against last tick's gap.
+    """
+    per_biomass = plants.config.nutrient_per_biomass
+
+    def check(store: EntityStore) -> Optional[Violation]:
+        owed = plants.exported_nutrients / per_biomass
+        in_bodies = float(store.energy[store.alive].sum(dtype=np.float64))
+        on_ground = float(carrion.mass.sum())
+        held = in_bodies + on_ground
+        if math.isclose(held, owed, rel_tol=relative_tolerance):
+            return None
+        return Violation(
+            f"export ledger owes {owed!r} energy units but living bodies hold {in_bodies!r} and "
+            f"carrion {on_ground!r} (shortfall {owed - held!r})"
+        )
+
+    return check
+
+
 def default_registry(
     min_x: float,
     max_x: float,
@@ -273,6 +325,7 @@ def default_registry(
     max_y: float,
     plants: Optional[Plants] = None,
     movement: Optional[Movement] = None,
+    carrion: Optional[Carrion] = None,
 ) -> InvariantRegistry:
     """The invariants checkable against `core/` as it exists today, over a world of the given
     bounds.
@@ -285,6 +338,9 @@ def default_registry(
     movement: the world's movement service, if it has one. Supplying it adds the top-speed bound,
         which needs a phenotype and therefore a genetics stack — optional on the same terms as
         `plants`, and for the same reason.
+    carrion: the world's carrion field, if it has one. Supplying it adds the export-ledger check,
+        which needs every place an outstanding unit can lie; the field it is built over is
+        `carrion.plants`, so a world passing both gets one ledger watched, not two.
     """
     registry = InvariantRegistry()
     registry.register("no_alive_entity_occupies_a_free_row", no_alive_entity_occupies_a_free_row)
@@ -297,6 +353,10 @@ def default_registry(
     )
     if plants is not None:
         registry.register("nutrients_are_conserved", nutrients_are_conserved(plants))
+    if carrion is not None:
+        registry.register(
+            "exported_nutrients_are_held", exported_nutrients_are_held(carrion.plants, carrion)
+        )
     if movement is not None:
         registry.register(
             "no_entity_exceeds_its_top_speed", no_entity_exceeds_its_top_speed(movement)
