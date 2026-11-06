@@ -78,7 +78,14 @@ Baseline ratios — tunable, but they must be tuned *as a table*, not as constan
 | Live rate | 1 tick / real second | sim-day ≈ 24 real minutes |
 | Herbivore lifespan | ~1 sim-year | ≈ 6 real days |
 | Generation time | ~2 sim-months | ≈ 1 real day |
+| Seasonal year | **~1 lifespan, ~6 generations** | ≈ 1.5 generations per season, so an animal lives through about four of them (#159) |
 | Feeding events per lifetime | **~10²** | reality is 10³–10⁴; see below |
+
+The seasonal year is a ratio rather than a calendar because the ratio decides what seasonality
+*is*: a year much longer than a generation is something lineages adapt to genetically, much shorter
+is something only individuals can cope with, and ~1.5 generations per season sits deliberately in
+between. A world sets `SeasonsConfig.year_length` from its own generation time; the demo world reads
+it off its founders' breeding ranges, so retuning those moves the year with them.
 
 The feeding ratio is the main suspension-of-disbelief lever. Compressing the clock uniformly gives
 an animal thousands of meals per lifetime, so nothing legible happens between births. Digestion must
@@ -97,6 +104,7 @@ import order or from whatever sequence a test happened to use. Settled order, ow
 
 | # | system | why here |
 |---|---|---|
+| 0 | climate | writes the tick's weather before anything reads temperature — plant growth, drinking and upkeep all do. It is a function of the tick, not a step that integrates anything, so its position decides only *which* tick's sky the others see (#159) |
 | 1 | plant growth | consumes nutrients returned last tick; a one-tick lag is invisible on a field |
 | 2 | cue field rebuild | must precede any sensing, or animals smell **last tick's** world |
 | 3 | drive scoring / option sampling | |
@@ -1274,6 +1282,43 @@ by" hunger and no animal stands still merely because the drive that won has no m
 - World size is set by climate-zone variety and animal home range — large enough to feel vast and
   hold distinct zones, small enough that animals do not wander into irrelevance. Not all zones
   appear in every world.
+- **Weather is derived, never simulated** — decided on #159. Temperature is a pure function of
+  `(x, y, tick, seed)`: the static altitude-and-latitude field, plus a seasonal cycle, plus smooth
+  noise evaluated on a coarse lattice and upsampled. `Climate.advance_to` writes it at the top of
+  every tick (§2.1's position 0). The seed is the terrain's, so the sky is part of the generated
+  starting state, and a map has one calendar of weather.
+
+  Statelessness is the reason, not speed. Nothing is integrated, so there is nothing to snapshot
+  (§3.2) and nothing to drift: offline catch-up evaluates the field at whatever tick it lands on
+  rather than stepping through the ones it skipped (§2.4), one batch of a thousand ticks sees the
+  sky a thousand batches of one do (pinned by an exact-equality test), and a reloaded world has the
+  weather it was saved under without having stored it. An integrated pressure-and-advection model
+  was rejected because it would put weather into every save and let two restores of one snapshot
+  diverge in climate. What that forecloses is weather that *travels* — a front crossing the map —
+  beyond what the noise implies, and weather that answers back to the world (vegetation feeding
+  rainfall).
+
+  Three rules keep it honest:
+
+  - **The seasonal swing is a fraction of the latitude gradient** (`SeasonsConfig.amplitude_fraction`),
+    so it grows toward the poles, the equator has no season, and it moves with
+    `latitude_gradient` rather than beside it. #159 measured the trap this closes: a swing at or
+    past the equator-to-pole gradient makes a summer pole as hot as the tropics, and past it
+    hotter. As a fraction the crossover is exactly 1.0 and is refused, which makes the amplitude
+    the third member of the `lapse_rate`/`latitude_gradient` pinned set by construction.
+  - **The year is a ratio-table entry**, set from a world's own generation time (§2.1), never a
+    calendar constant.
+  - **Both sides of the equator share one calendar.** The world folds one hemisphere across its
+    y extent (`ClimateConfig.equator_y`), so it has one summer at a time rather than two
+    hemispheres in antiphase.
+
+  **Wind and rainfall derive from the same function and are not built yet.** Each is another term
+  of `(x, y, tick, seed)`, evaluated on the same lattice the same way: rainfall (#165) modulates
+  `Plants.moisture` and the water field instead of leaving them fixed at assembly, and wind (#97)
+  is a lattice of vectors that biases the cue field's diffusion, sequenced with #139's
+  terrain-aware diffusion so the two land deliberately rather than colliding. Neither may
+  integrate state, for the reasons above. Insolation does not follow the seasons either yet:
+  temperature is the term with teeth, and light is its own change.
 
 ### 2.7 Player and stakes
 
@@ -1633,8 +1678,10 @@ Rules:
 
 Not yet decided. Do not assume answers — ask.
 
-- Seasons and weather as drivers — migration, hibernation, breeding seasonality. Wind is a
-  consequence of this rather than a separate question, and scent-on-wind (#97) waits on it.
+- **Whether animals sense temperature and act on it.** Weather itself is settled (§2.6, #159), but
+  a seasonal field on its own produces differential mortality — range contraction — not migration.
+  Migration and hibernation need a thermal drive that reads the field, and that drive and `Thirst`
+  would read the same number (heat load), which §2.5 rules out. Open on #249.
 - **The end of a rule version's lifecycle** (§2.8). A version is current, then supported; what
   happens after is undecided — frozen and runnable forever, migrated only with the player's
   explicit consent, or read-only. This decides how long old rule sets and their pinning tests must

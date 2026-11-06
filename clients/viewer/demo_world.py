@@ -48,7 +48,7 @@ from core.genetics.senescence import SenescenceConfig
 from core.genetics.registry import ExpressionMode, GeneSpec, Unit
 from core.world.diffusion import DiffusionConfig
 from core.world.assembly import World, WorldConfig, build_world
-from core.world.climate import ClimateConfig
+from core.world.climate import ClimateConfig, SeasonsConfig
 from core.world.terrain import TerrainConfig
 from core.world.interventions import Interventions
 from metrics import MetricHistory, MetricsConfig
@@ -56,6 +56,16 @@ from metrics import MetricHistory, MetricsConfig
 _GRID = 80
 _CELL_SIZE = 1.0
 _WORLD_EXTENT = (_GRID - 1) * _CELL_SIZE
+
+# Ticks. Founders' age at first breeding and term, drawn so founders differ from generation one.
+_FOUNDER_MATURITY = (40.0, 120.0)
+_FOUNDER_GESTATION = (20.0, 60.0)
+# A founding generation: mean maturity plus mean term. The world's calendar is read off this rather
+# than set beside it, so retuning how fast animals breed moves the year with it (§2.1's table).
+_GENERATION_TICKS = sum(_FOUNDER_MATURITY) / 2.0 + sum(_FOUNDER_GESTATION) / 2.0
+# §2.1: a year is a lifespan, about six generations, so ~1.5 generations live through each season.
+_GENERATIONS_PER_YEAR = 6
+_YEAR_LENGTH = round(_GENERATIONS_PER_YEAR * _GENERATION_TICKS)
 
 # Cue space is eight-dimensional, per CLAUDE.md §2.5's settled floor. The signature genes and the
 # two aversion directions are that reserved block, named here because the vocabulary is per world.
@@ -347,7 +357,25 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
         # 30 at the equator against a neutral of 20 (below): every cell on this map sits on the hot
         # side, which is what `thermoregulation_rate`'s re-derivation reads off. In temperature
         # units, so 30 means only "ten above neutral" (#238).
-        climate=ClimateConfig(equator_y=_WORLD_EXTENT / 2.0, equator_temperature=30.0),
+        climate=ClimateConfig(
+            equator_y=_WORLD_EXTENT / 2.0,
+            equator_temperature=30.0,
+            seasons=SeasonsConfig(
+                year_length=_YEAR_LENGTH,
+                # Half the latitude gradient: a summer pole climbs halfway to the equator's warmth
+                # and a winter pole falls as far again below its mean. Safely short of the 1.0 at
+                # which summer would invert the map (#159). See docs/spikes/thermal-divergence.md
+                # for what it does to selection here.
+                amplitude_fraction=0.5,
+                # A spell's swing about the size of the map's whole latitude span, so weather is
+                # felt on top of the season rather than lost under it.
+                weather_amplitude=1.0,
+                # About five weather systems across the map, each lasting ~a month (a 24th of the
+                # year): long enough that an animal lives through a spell rather than a flicker.
+                weather_scale=_WORLD_EXTENT / 5.0,
+                weather_timescale=max(1, _YEAR_LENGTH // 24),
+            ),
+        ),
         plants=PlantsConfig(
             solar_constant=8.0,
             latitude_tilt=0.0,
@@ -611,9 +639,10 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
             "diet_animal_derived": (-1.0, 1.0),
             # Ticks. Wide, and low relative to a lifetime, so founders differ in how soon they
             # breed and selection has something to act on from the first generation.
-            "maturity_age": (40.0, 120.0),
+            # Named constants because the calendar is derived from them (`_YEAR_LENGTH`).
+            "maturity_age": _FOUNDER_MATURITY,
             # Ticks. Short against a lifetime, and drawn so founders differ from generation one.
-            "gestation_length": (20.0, 60.0),
+            "gestation_length": _FOUNDER_GESTATION,
         },
         n_founders=n_entities,
         founder_energy=180.0,

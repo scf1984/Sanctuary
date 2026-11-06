@@ -12,7 +12,7 @@ import pytest
 
 from core.ecology.plants import Plants, PlantsConfig
 from core.world.diffusion import DiffusionConfig
-from core.world.climate import Climate, ClimateConfig
+from core.world.climate import Climate, ClimateConfig, SeasonsConfig
 from core.world.terrain import Terrain
 from core.world.water import Water
 
@@ -154,6 +154,39 @@ class TestTemperatureResponse:
     def test_nothing_grows_outside_the_tolerated_range(self, temperature):
         plants = make_plants(equator_temperature=temperature)
         assert np.all(plants.potential_growth == 0.0)
+
+    def test_growth_follows_the_season(self):
+        """A cool world grows more in its summer than its winter (#159). The climate rewrites its
+        field each tick, and `grow` must read that tick's field rather than the one at assembly."""
+        heights = np.zeros((11, 11), dtype=np.float32)
+        terrain = Terrain(heights, cell_size=1.0)
+        climate = Climate(
+            terrain,
+            ClimateConfig(
+                equator_y=0.0,
+                # Below the optimum, so warmer is better and summer should out-grow winter.
+                equator_temperature=CONFIG.optimal_growth_temperature - 5.0,
+                latitude_gradient=0.5,
+                seasons=SeasonsConfig(
+                    year_length=40,
+                    amplitude_fraction=0.5,
+                    weather_amplitude=0.0,
+                    weather_scale=4.0,
+                    weather_timescale=5,
+                ),
+            ),
+            seed=1,
+        )
+        plants = Plants(terrain, climate, Water.generate(terrain), CONFIG)
+
+        climate.advance_to(10)  # summer
+        plants.grow()
+        summer = plants.potential_growth[-1].mean()
+        climate.advance_to(30)  # winter
+        plants.grow()
+        winter = plants.potential_growth[-1].mean()
+
+        assert summer > winter > 0.0
 
 
 class TestWaterResponse:

@@ -100,6 +100,7 @@ from core.world.tick import TickLoop
 from core.world.water import Water
 
 TICK_ORDER: tuple[str, ...] = (
+    "climate",
     "plant_growth",
     "cue_field_rebuild",
     "forage_field_rebuild",
@@ -258,7 +259,9 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
     """
     terrain = Terrain.generate(config.terrain)
     water = Water.generate(terrain)
-    climate = Climate(terrain, config.climate)
+    # The weather is seeded by the same seed as the land it falls on (#159): the sky is part of the
+    # starting state, generated with it, and two worlds on one map share one calendar of weather.
+    climate = Climate(terrain, config.climate, seed=config.terrain.seed)
     # Built before anything that diffuses over the grid or walks across it: a fence is state the
     # forage field, the water field and every step all consult (#27).
     barriers = Barriers(terrain)
@@ -347,7 +350,15 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
     # happen to eat — and it is the only call in the world that moves that total.
     plants.record_founding_stock(config.n_founders * config.founder_energy)
 
+    def current_tick() -> int:
+        # The loop's counter is the only clock (§2.1), so the climate reads it rather than keeping a
+        # second one that a snapshot would then have to carry. Resolved when a tick runs, by which
+        # time `loop` below exists; nothing calls this during assembly.
+        return loop.tick_count
+
     systems = _build_systems(
+        climate,
+        current_tick,
         store,
         plants,
         scent,
@@ -436,6 +447,8 @@ def _ordered(systems: Mapping[str, Callable[[], None]]) -> tuple[Callable[[], No
 
 
 def _build_systems(
+    climate: Climate,
+    current_tick: Callable[[], int],
     store: EntityStore,
     plants: Plants,
     scent: Scent,
@@ -497,6 +510,7 @@ def _build_systems(
         movement.step(population, target_x, target_y, behaviour.chosen_urge(population))
 
     return {
+        "climate": lambda: climate.advance_to(current_tick()),
         "plant_growth": plants.grow,
         "cue_field_rebuild": lambda: scent.rebuild(living()),
         "forage_field_rebuild": plants.rebuild_forage,

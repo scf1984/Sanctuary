@@ -223,10 +223,11 @@ def apply_field_overlay(
 def layer_references(world) -> dict[str, float]:
     """The value at which each layer's tint saturates, in that layer's own unit.
 
-    Computed once from the world's static physics and then held for the run, because a scale that
-    moves is a scale that hides change (see `apply_field_overlay`). Every one of these is a
-    constant for the lifetime of the world: `potential_growth` is static by construction, and the
-    rest are config values.
+    Computed once, when the viewer starts, and then held for the run, because a scale that moves is
+    a scale that hides change (see `apply_field_overlay`). The config values are constants for the
+    life of the world. `potential_growth` is not since #159 — it follows the season and the weather —
+    so the reference is the field at the tick the viewer opened on. A warmer season can read past
+    1.0 and is clipped, which is the change the fixed scale exists to show.
 
     The numbers are chosen so that **1.0 means something ecological**, not merely "the largest
     value seen so far":
@@ -248,7 +249,7 @@ def layer_references(world) -> dict[str, float]:
     - `soil_nutrients` — the per-cell pool every cell started with. Above 1.0 is ground that has
       accumulated more than its original share, below is ground that has given it up.
     - `moisture` — 1.0, since it is already a fraction.
-    - `potential_growth` — its own maximum, which is fixed because the field is.
+    - `potential_growth` — its own maximum at the tick the viewer opened on.
     """
     plants = world.plants
     light_ceiling = float(plants.potential_growth.max())

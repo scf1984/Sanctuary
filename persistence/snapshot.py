@@ -146,6 +146,9 @@ def load(world, path: Path) -> None:
     world.plants.rebuild_forage()
     world.rng.bit_generator.state = meta["rng"]
     world.loop.tick_count = meta["tick_count"]
+    # Weather is a function of the tick (#159) and was never written, so it is evaluated rather than
+    # read: the sky of the last tick the saved world ran, which is what its field held when saved.
+    world.climate.advance_to(max(world.loop.tick_count - 1, 0))
     # The loop holds a position snapshot taken before the load, and the renderer interpolates
     # between two of them (§3.3, #119). Advancing zero ticks re-reads the world without running
     # anything, so the first frame after a load draws where the animals *are* rather than streaking

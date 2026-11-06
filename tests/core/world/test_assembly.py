@@ -47,7 +47,7 @@ from core.world.assembly import (
     _ordered,
     build_world,
 )
-from core.world.climate import ClimateConfig
+from core.world.climate import ClimateConfig, SeasonsConfig
 from core.world.terrain import TerrainConfig
 
 from tests.support.genes import gene_registry
@@ -291,6 +291,24 @@ def world_config(**overrides):
     return WorldConfig(**params)
 
 
+def seasonal_world_config():
+    """`world_config` with a short, strong year and visible weather, so a few dozen ticks span
+    seasons and weather spells — what the batching and ordering tests need to exercise."""
+    return world_config(
+        climate=ClimateConfig(
+            equator_y=(GRID - 1) * CELL_SIZE / 2,
+            equator_temperature=30.0,
+            seasons=SeasonsConfig(
+                year_length=20,
+                amplitude_fraction=0.9,
+                weather_amplitude=1.0,
+                weather_scale=4.0,
+                weather_timescale=3,
+            ),
+        )
+    )
+
+
 class TestTheOrderIsDeclaredData:
     def test_the_loop_runs_the_declared_order(self):
         """The tuple sequences the loop rather than describing it (§4: a rule declared as data must
@@ -319,6 +337,32 @@ class TestTheOrderIsDeclaredData:
         """#107's placement: the tick's effort is spent and then the tick's rest is taken, so
         nothing ever reads a raw exertion value."""
         assert TICK_ORDER.index("movement") < TICK_ORDER.index("exertion_recovery")
+
+    def test_the_weather_is_set_before_anything_reads_it(self):
+        """#159: plant growth, drinking and upkeep all read temperature, so the climate writes the
+        tick's field first. Anywhere later and some system would read yesterday's sky."""
+        assert TICK_ORDER[0] == "climate"
+
+
+class TestTheWorldHasWeather:
+    def test_every_reader_sees_the_sky_of_the_tick_just_run(self):
+        world = build_world(seasonal_world_config(), seed=1)
+        world.loop.advance(13)
+        np.testing.assert_array_equal(
+            world.climate.temperature, world.climate.field_at(world.loop.tick_count - 1)
+        )
+
+    def test_the_weather_is_seeded_by_the_land(self):
+        """Same map, same sky: the weather is part of the generated starting state (#159)."""
+        a = build_world(seasonal_world_config(), seed=1)
+        b = build_world(seasonal_world_config(), seed=2)
+        np.testing.assert_array_equal(a.climate.field_at(40), b.climate.field_at(40))
+
+    def test_seasons_move_the_temperature_animals_feel(self):
+        world = build_world(seasonal_world_config(), seed=1)
+        summer = world.climate.field_at(5)
+        winter = world.climate.field_at(15)
+        assert not np.allclose(summer, winter)
 
 
 class TestABuiltWorldRuns:
@@ -519,11 +563,14 @@ class TestBatchingDoesNotChangeTheWorld:
             world.store.exertion[mask].copy(),
             world.store.drive_scores[mask].copy(),
             world.plants.total_nutrients(),
+            world.plants.biomass.copy(),
+            world.climate.temperature.copy(),
         )
 
-    def test_one_batch_of_n_equals_n_batches_of_one(self):
-        batched = build_world(world_config(), seed=11)
-        stepped = build_world(world_config(), seed=11)
+    @pytest.mark.parametrize("make_config", [world_config, seasonal_world_config])
+    def test_one_batch_of_n_equals_n_batches_of_one(self, make_config):
+        batched = build_world(make_config(), seed=11)
+        stepped = build_world(make_config(), seed=11)
 
         batched.loop.advance(30)
         for _ in range(30):
@@ -532,10 +579,26 @@ class TestBatchingDoesNotChangeTheWorld:
         for batched_column, stepped_column in zip(self._state(batched), self._state(stepped)):
             assert np.asarray(batched_column) == pytest.approx(np.asarray(stepped_column))
 
-    def test_uneven_batches_agree_too(self):
+    def test_a_thousand_ticks_of_weather_are_the_same_however_they_are_batched(self):
+        """#159's done-when: weather is evaluated, not integrated, so fifty seasons and hundreds of
+        weather spells come out identical in one batch or a thousand. Exact equality, not approx:
+        nothing here is allowed to accumulate."""
+        batched = build_world(seasonal_world_config(), seed=13)
+        stepped = build_world(seasonal_world_config(), seed=13)
+
+        batched.loop.advance(1000)
+        for _ in range(1000):
+            stepped.loop.advance(1)
+
+        assert batched.loop.tick_count == stepped.loop.tick_count
+        for batched_column, stepped_column in zip(self._state(batched), self._state(stepped)):
+            np.testing.assert_array_equal(np.asarray(batched_column), np.asarray(stepped_column))
+
+    @pytest.mark.parametrize("make_config", [world_config, seasonal_world_config])
+    def test_uneven_batches_agree_too(self, make_config):
         """A decaying wake schedule (§2.4) produces uneven batches, not uniform ones."""
-        even = build_world(world_config(), seed=12)
-        uneven = build_world(world_config(), seed=12)
+        even = build_world(make_config(), seed=12)
+        uneven = build_world(make_config(), seed=12)
 
         even.loop.advance(24)
         for batch in (1, 3, 8, 12):

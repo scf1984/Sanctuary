@@ -13,6 +13,7 @@ the frame path still reading it correctly now that entities move.
 """
 
 import numpy as np
+import pytest
 
 from clients.viewer.demo_world import build_demo_world
 from clients.viewer.render import live_positions, species_colors, world_to_screen
@@ -129,6 +130,19 @@ class TestTheShippedTuningIsNotDegenerate:
         world = build_demo_world(seed=2, n_entities=10)
 
         assert world.genes.spec("scent_emission").cost == 0.0
+
+    def test_a_year_is_about_six_founding_generations(self):
+        """§2.1's table: a year is a lifespan, ~6 generations, ~1.5 per season (#159). The year is
+        read off the founders' breeding ranges, so retuning those moves the calendar with them
+        rather than leaving a constant that silently stopped meaning one lifespan."""
+        world = build_demo_world(seed=2, n_entities=10)
+        ranges = world.config.founder_gene_ranges
+        generation = sum(ranges["maturity_age"]) / 2.0 + sum(ranges["gestation_length"]) / 2.0
+
+        year = world.config.climate.seasons.year_length
+
+        assert year / generation == pytest.approx(6.0, rel=0.01)
+        assert (year / 4) / generation == pytest.approx(1.5, rel=0.01)
 
 
 class TestFramePath:

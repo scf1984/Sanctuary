@@ -14,10 +14,16 @@ Then it asks whether animals standing on hot ground carry more heat tolerance th
 ground, and less cold tolerance. Under the symmetric `insulation` damper this could not happen by
 construction: one gene, charged identically either side, cannot differ by side.
 
+Since #159 the demo world has seasons and weather. The last argument chooses between the demo
+world's seasonal climate (`seasonal`, the default) and the same world with `seasons=None`
+(`static`, which reproduces #176's measurement). Either way "hot ground" means the *static* field
+— where an animal stands on the annual-mean map — so the two modes classify ground identically and
+differ only in what the animals live through.
+
 Throwaway spike code (CLAUDE.md §8.3), not imported by anything. Run from a repository root with
 `PYTHONPATH=.`:
 
-    python docs/spikes/thermal_divergence.py SEED [TICKS] [EVERY]
+    python docs/spikes/thermal_divergence.py SEED [TICKS] [EVERY] [seasonal|static]
 """
 
 from __future__ import annotations
@@ -39,10 +45,14 @@ N_ENTITIES = 200
 TYPICAL_BILL = 0.08
 
 
-def split_world_config(seed):
+def split_world_config(seed, seasonal=True):
     config = demo_world_config(N_ENTITIES, seed)
+    static_climate = dataclasses.replace(config.climate, seasons=None)
+    if not seasonal:
+        config = dataclasses.replace(config, climate=static_climate)
     terrain = Terrain.generate(config.terrain)
-    temperature = Climate(terrain, config.climate).temperature
+    static = Climate(terrain, static_climate)
+    temperature = static.temperature
     neutral = float(np.median(temperature))
     mean_squared_deviation = float(np.mean((temperature - neutral) ** 2))
     metabolism = dataclasses.replace(
@@ -50,15 +60,15 @@ def split_world_config(seed):
         neutral_temperature=neutral,
         thermoregulation_rate=TYPICAL_BILL / mean_squared_deviation,
     )
-    return dataclasses.replace(config, metabolism=metabolism), neutral
+    return dataclasses.replace(config, metabolism=metabolism), neutral, static
 
 
-def sample(world, neutral, names):
+def sample(world, neutral, names, static):
     living = Selection.from_mask(world.store.alive & (world.store.age >= 0))
     if not len(living):
         return None
     rows = living.to_indices()
-    temperature = world.climate.temperature_at(world.store.x[rows], world.store.y[rows])
+    temperature = static.temperature_at(world.store.x[rows], world.store.y[rows])
     hot = temperature > neutral
     phenotype = world.genetics.expressed(living)
     heat = phenotype[:, names.index("heat_tolerance")]
@@ -79,18 +89,19 @@ def main():
     seed = int(sys.argv[1])
     ticks = int(sys.argv[2]) if len(sys.argv) > 2 else 4000
     every = int(sys.argv[3]) if len(sys.argv) > 3 else 500
-    config, neutral = split_world_config(seed)
+    seasonal = (sys.argv[4] if len(sys.argv) > 4 else "seasonal") == "seasonal"
+    config, neutral, static = split_world_config(seed, seasonal)
     world = build_world(config, seed=seed)
     names = list(world.genes.vocabulary.names)
     print(
-        f"seed={seed} neutral={neutral:.3f} "
+        f"seed={seed} mode={'seasonal' if seasonal else 'static'} neutral={neutral:.3f} "
         f"rate={config.metabolism.thermoregulation_rate:.5f}",
         flush=True,
     )
     for tick in range(0, ticks + 1, every):
         if tick:
             world.loop.advance(every)
-        row = sample(world, neutral, names)
+        row = sample(world, neutral, names, static)
         if row is None:
             print(f"seed={seed} tick={tick} extinct", flush=True)
             return
