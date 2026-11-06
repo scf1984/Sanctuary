@@ -47,6 +47,15 @@ which is a free lunch on exactly the axis #102's frontier exists to price.
 **Carrion is grazed with the identical verb**, which is why scavenging needed no mechanic: whatever
 is lying on the ground is eaten by whatever is standing on it and allocated toward flesh, whether
 or not it did the killing.
+
+**An old gut extracts less** (#244). The assimilated share is scaled by `Genetics.vigour`, the same
+senescence factor the performance traits decay by (§2.5). Without it, an animal that came to rest
+on a cell with food at hand needed no decaying trait to keep eating, and lived forever. With it, the
+gain falls toward zero while the basal and capacity upkeep do not, so the animal starves in the
+end: death by starvation, not an age check. Only the *yield* decays, never the mouthful, for the
+rule above: scaling both would make the realised decline `vigour²`. An old animal therefore still
+takes its full share of a contested cell and passes most of it through as faeces. The ground keeps
+it, and conservation is unchanged.
 """
 
 from __future__ import annotations
@@ -148,9 +157,13 @@ class Feeding:
         harvested = self.plants.graze(x, y, mouthful * (1.0 - animal_share))
         scavenged = self.carrion.graze(x, y, mouthful * animal_share)
 
-        assimilated = self.config.assimilation_max * (
-            harvested * self.diet.plant_efficiency(phenotype)
-            + scavenged * self.diet.animal_efficiency(phenotype)
+        assimilated = (
+            self.config.assimilation_max
+            * self.genetics.vigour(selection)
+            * (
+                harvested * self.diet.plant_efficiency(phenotype)
+                + scavenged * self.diet.animal_efficiency(phenotype)
+            )
         )
         self.ecology.gain(selection, assimilated)
         # What no gut could use is faeces, into the ground it was eaten on — the one door the export

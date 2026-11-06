@@ -207,6 +207,20 @@ class Genetics(DomainService):
         rows = np.asarray(rows, dtype=np.int64)
         return self._decay_from(self.heritable_at(rows), rows)
 
+    def vigour(self, selection: Selection) -> np.ndarray:
+        """(len(selection),) float64 in (0, 1]: how much of an age-degraded capacity remains.
+
+        The same factor `expressed` applies to the performance traits, for a capacity that is not a
+        gene: digestion yield (#244), which `Feeding` scales by it. Exactly 1 for a world whose
+        fixture opts out of senescence, for the same reason `expressed` then applies no decay — the
+        opt-out means no age effect at all, not a different one. `senescence_decay_at` is the
+        invariant's read and refuses that case instead, because there it would check nothing.
+        """
+        rows = selection.to_indices()
+        if self._senescence is None:
+            return np.ones(len(rows), dtype=np.float64)
+        return self._decay_from(self.heritable_at(rows), rows)
+
     def _decay_from(self, heritable: np.ndarray, rows: np.ndarray) -> np.ndarray:
         # The resistance is read from the masked phenotype, so a species that does not express the
         # gene has none and decays at the base rate — the same rule every other gene follows.

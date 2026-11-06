@@ -58,3 +58,41 @@ reduction is not: it needs ~4,000 ticks at ~4,000 animals per seed (6–12 minut
 the per-seed spread overlaps the baseline's, and the effect it would pin is about to be revisited
 by the filed question. A test asserting it now would be slow and would pin a number expected to
 change.
+
+## The gut ages too (#244)
+
+The motionless immortal above is fixed by the owner's decision on #244: digestion yield decays with
+age by the same factor. No gene sets intake magnitude (`size` is capacity, and the diet gene is an
+allocation that decay would shift rather than shrink), so `Feeding` scales what is *assimilated*
+by `Genetics.vigour`, the decay factor itself. The mouthful does not shrink, because scaling both
+would compound to `vigour²` (see `core/ecology/feeding.py`). A service-level test reproduces the
+immortal and its end: a motionless animal on a regrowing cell never starves without ageing, and
+starves at tick 547 with it (839 at resistance 1.0), with no age check anywhere.
+
+Same bench, same seeds (1–5, 4,000 ticks), now with intake decay. Ranges are across seeds, then
+the mean:
+
+| `base_decay` | median age at death | 90th percentile | oldest death | share past age 1,000 | oldest alive at tick 4,000 | population at tick 4,000 |
+|---|---:|---:|---:|---:|---:|---:|
+| 0.002, before #244 (above) | 288 | — | — | 1.9% | 2,016–3,849 | 3,742–4,910 |
+| 0.002 | 241–268 (255) | 404–447 (431) | 1,276–2,710 | 0.06% (0.02–0.12%) | 580–1,395 | 2,483–3,981 (3,257) |
+| **0.001 (shipped)** | 239–360 (301) | 455–686 (571) | 1,107–1,760 | 0.30% (0.05–0.94%) | 984–2,211 | **3,106**–3,811 (3,551) |
+| 0.0005 | 240–305 (264) | 460–601 (522) | 1,346–1,810 | 0.22% (0.09–0.52%) | 1,009–1,869 | 2,292–3,728 (3,354) |
+
+**A lifespan now emerges.** No seed at any rate kept an animal past tick 2,211 of a 4,000-tick run.
+Before #244, the oldest alive reached 3,849, and a founder lived the whole run. Deaths past age
+1,000 fall from 1.9% to a fraction of a percent. The tail now ends between about 1,100 and 1,800
+at the shipped rate.
+
+**Why the rate was retuned.** The same `base_decay` now kills earlier, because it acts on income as
+well as on movement. At 0.002 the 90th percentile of age at death is ~430, well short of §2.1's
+lifespan row (~6 generations x ~113 ticks, about 680), and two seeds dropped to ~2,490 animals.
+0.001 brings the 90th percentile to ~570 and keeps every seed above 3,100. 0.0005 is within seed
+noise of 0.001 (lifespans are not monotonic across the two over 5 seeds) and dropped one seed to
+2,292, so it was not taken. Viability is lower than #245's 3,742–4,910, which is expected: animals
+that used to live forever now die and are replaced.
+
+Still not locked in by a statistical test, for the reason above: five 4,000-tick seeds take
+2–5 minutes each, and the per-seed spread overlaps between neighbouring rates. The mechanism
+(the gut's yield falls by exactly the decay factor, the mouthful does not, conservation holds, a
+motionless animal starves) is unit-tested.

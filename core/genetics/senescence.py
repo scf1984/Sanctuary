@@ -2,8 +2,10 @@
 
 **Degradation, not a timer.** There is no lifespan gene and no death clock. An old animal's
 performance traits — speed, sight and scent acuity — are read at a fraction of their genetic value,
-so it catches less, escapes less, and eventually cannot cover its own upkeep. Death then falls out
-of starvation and predation, which already exist; nothing here kills anything.
+so it catches less, escapes less, and eventually cannot cover its own upkeep. Its gut extracts less
+from each mouthful by the same factor (`Genetics.vigour`, applied in `Feeding`, #244). Without that,
+an animal resting on a cell with food at hand needed no decaying trait to eat, and never died.
+Death then falls out of starvation and predation, which already exist; nothing here kills anything.
 
 **The formula is what holds the property, not a clamp:**
 

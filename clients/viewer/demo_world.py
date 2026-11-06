@@ -466,12 +466,14 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
             drift_margin=2.0,
             senescence=SenescenceConfig(
                 resistance_gene="senescence_resistance",
-                # Per tick lived, tuned toward §2.1's lifespan row as an outcome rather than set as
-                # one (docs/spikes/senescence.md). At a typical founder's resistance an animal
-                # keeps ~20% of its speed and senses by age 1,000. Over 5 seeds x 4,000 ticks this
-                # halves the share of deaths past age 1,000 (4.6% -> 1.9%) and leaves the world as
-                # viable as before; 0.004 cut it to 1.1% but dropped one seed to 2,507 animals.
-                base_decay=0.002,
+                # Per tick lived, tuned toward §2.1's lifespan row (~680 ticks here) as an outcome
+                # rather than set as one (docs/spikes/senescence.md). Retuned from 0.002 when the
+                # gut began to age too (#244): decay now also cuts what each mouthful yields, so the
+                # same rate kills far earlier. Over 5 seeds x 4,000 ticks, 0.001 puts the 90th
+                # percentile of age at death at ~570 and keeps every seed above 3,100 animals;
+                # 0.002 cut it to ~430 and dropped two seeds to ~2,490, and 0.0005 was within noise
+                # of 0.001 but dropped one seed to 2,292.
+                base_decay=0.001,
                 # The performance traits §2.5 names. Agility and haste are left out on the
                 # narrowest reading of "speed, sight and scent acuity" (#239).
                 decaying_genes=("speed", "sight", "scent_acuity"),
