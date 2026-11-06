@@ -8,17 +8,15 @@ which is what lets a new drive be added without touching anything here.
 **What a drive may read is deliberately narrow.** Each of these scores against state that exists
 today, so none of them is a placeholder waiting to become real (§8.2). Where the ecology a drive
 will eventually read has not been built, the docstring names the issue that will supply it and the
-term the drive gains then. One is left, and it is worth stating up front because the name promises
-more than the current formulation delivers:
+term the drive gains then.
 
-- **Thirst has no hydration reservoir.** No drinking mechanic is filed, so there is no pool to
-  deplete and refill. What exists is the climate field, and heat load is the honest reading of it:
-  an animal in hot ground wants water. When a hydration column arrives this becomes the ambient
-  half of a two-term score rather than the whole of it.
-
-Fatigue was the other, scoring health deficit alone while its name promised exertion. #107 gave it
-the column that was missing (`core.behaviour.exertion`), so it now reads both, and that is the
-shape thirst takes when its own missing half arrives.
+Two drives used to promise more than they read. Thirst scored ambient heat as its whole urgency,
+with no reservoir to deplete. #156 gave it one: urgency is now the hydration deficit, and heat
+reaches it only physically, by speeding water loss in `Hydration`. **Thirst reads no temperature**,
+and `TestThirst.test_thirst_reads_no_temperature` pins that (#254). It matters because §2.5
+forbids two drives scoring one signal, and temperature belongs to #249's thermal drive. Fatigue
+scored health deficit alone while its name promised exertion. #107 gave it the missing column
+(`core.behaviour.exertion`), so it now reads both.
 
 Fear is the exception to that pattern: its shape is settled in CLAUDE.md §2.5 rather than improvised
 here, precisely so that #24 adding sight and #97 adding wind are additions rather than rewrites.

@@ -622,6 +622,37 @@ class TestThirst:
 
         assert thirst.urgency(selection) == pytest.approx([0.0, 0.5, 1.0])
 
+    def test_thirst_reads_no_temperature(self):
+        """Heat reaches thirst only physically, by drying the animal out faster in `Hydration`,
+        never as a second read of the temperature field (#254). §2.5 forbids two drives scoring one
+        signal, and #249's thermal drive is the one drive that will score temperature.
+
+        Two worlds 70 degrees apart, otherwise identical, with the same water and the same
+        dehydration: thirst's urgency and appeal must not move."""
+        readings = []
+        for temperature in (-10.0, 60.0):
+            world = World(temperature=temperature)
+            world.water.depth[:, :2] = 3.0
+            world.hydration = Hydration(
+                world.store,
+                ColumnRegistry(),
+                world.terrain,
+                world.climate,
+                world.water,
+                HYDRATION_CONFIG,
+            )
+            selection = world.spawn(3, x=np.float32([4.0] * 3), y=np.float32([4.0] * 3))
+            world.store.dehydration[selection.to_indices()] = [0.1, 0.5, 0.9]
+            thirst = Thirst(world.store, world.hydration, world.genetics, world.genes, THIRST_CONFIG)
+            readings.append(
+                (thirst.urgency(selection), thirst.appeal(selection, *options_at(world, selection)))
+            )
+
+        (cold_urgency, cold_appeal), (hot_urgency, hot_appeal) = readings
+        assert np.array_equal(cold_urgency, hot_urgency)
+        assert np.array_equal(cold_appeal, hot_appeal)
+        assert cold_appeal.max() > 0.0  # water was in view, so equality is not two empty rows
+
     def test_urgency_needs_no_satiation_constant(self):
         """Unlike hunger's pool, the column is already a fraction — how dry you are *is* how much
         you want to drink, so there is no second number deciding what "thirsty" means."""
