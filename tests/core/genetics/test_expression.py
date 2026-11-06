@@ -21,6 +21,7 @@ def config(**overrides):
     params = dict(
         mutability_gene="mutability",
         drift_margin=2.0,
+        senescence=None,
     )
     params.update(overrides)
     return GeneticsConfig(**params)

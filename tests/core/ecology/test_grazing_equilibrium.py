@@ -34,7 +34,7 @@ from tests.support.genes import gene_registry
 
 GENE_NAMES = ("size", "heat_tolerance", "cold_tolerance", "diet_animal_derived", "mutability")
 GENE_REGISTRY = gene_registry(GENE_NAMES, {"size": 0.02, "heat_tolerance": 0.01, "cold_tolerance": 0.01})
-GENETICS_CONFIG = GeneticsConfig(mutability_gene="mutability", drift_margin=2.0)
+GENETICS_CONFIG = GeneticsConfig(mutability_gene="mutability", drift_margin=2.0, senescence=None)
 
 PLANTS_CONFIG = PlantsConfig(
     solar_constant=8.0,

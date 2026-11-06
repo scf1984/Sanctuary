@@ -9,6 +9,8 @@ Nothing here asserts a population figure or an energy level. Those are ecologica
 contracts (§8.1), and several of the systems that would produce them do not exist yet.
 """
 
+import dataclasses
+
 import numpy as np
 import pytest
 
@@ -33,7 +35,9 @@ from core.ecology.predation import PredationConfig
 from core.ecology.metabolism import MetabolismConfig
 from core.ecology.plants import PlantsConfig
 from core.genetics.expression import GeneticsConfig
+from core.genetics.senescence import SenescenceConfig
 from core.world.diffusion import DiffusionConfig
+from core.invariants import no_entity_exceeds_its_top_speed
 from core.selection import Selection
 from core.world.assembly import (
     TICK_ORDER,
@@ -78,6 +82,7 @@ GENE_NAMES = (
     "lust_weight",
     "fatigue_weight",
     "gestation_length",
+    "senescence_resistance",
 )
 # Cue space is signed — a signature is a position in it, an aversion a direction through it — and
 # everything else here is a quantity that cannot go negative (#104).
@@ -103,6 +108,13 @@ GENE_REGISTRY = gene_registry(
 )
 
 GRID = 24
+
+# Every assembled world ages (#239): `build_world` refuses one that does not.
+SENESCENCE = SenescenceConfig(
+    resistance_gene="senescence_resistance",
+    base_decay=0.002,
+    decaying_genes=("speed", "sight", "scent_acuity"),
+)
 CELL_SIZE = 1.0
 # Relief a tenth of extent, the ratio TerrainConfig asks callers to choose (#112).
 RELIEF = (GRID - 1) * CELL_SIZE / 10.0
@@ -168,6 +180,7 @@ def world_config(**overrides):
         genetics=GeneticsConfig(
             mutability_gene="mutability",
             drift_margin=2.0,
+            senescence=SENESCENCE,
         ),
         movement=MovementConfig(
             speed_gene="speed",
@@ -254,6 +267,7 @@ def world_config(**overrides):
             # rather than fixed so a founder population varies in its evolvability like anything
             # else (docs/spikes/speciation-drift.md).
             "mutability": (0.01, 0.03),
+            "senescence_resistance": (0.0, 0.5),
             "choice_temperature": (-0.3, 0.3),
             "commitment": (0.05, 0.25),
             # Drive weights, drawn around 1 so founders differ in temperament from the first
@@ -458,6 +472,34 @@ class TestABuiltWorldRuns:
         assert world.ecology.energy(Selection.from_mask(world.store.alive)).sum() < before
 
 
+class TestAnAssembledWorldAges:
+    """Senescence wired end to end (#239): `Movement` reads the aged phenotype, and the top-speed
+    bound survives an animal growing slower underneath the velocity it is carrying."""
+
+    def test_an_older_animal_has_a_lower_top_speed(self):
+        world = build_world(world_config(), seed=1)
+        living = Selection.from_mask(world.store.alive)
+        before = world.movement.top_speed(living)
+        world.store.age[living.to_mask()] += 400
+
+        assert np.all(world.movement.top_speed(living) < before)
+
+    def test_ageing_under_a_full_speed_velocity_does_not_breach_the_top_speed_bound(self):
+        """`age_increment` runs after `movement` (§2.1), so an animal that moved at exactly its top
+        speed ends the tick one tick older, and its *current* top speed is then a decay step below
+        the velocity it legitimately reached. That is not the bug the bound exists to catch, and
+        it is not rare in principle: any animal at full pace does it. The bound is therefore
+        against the fastest the animal has ever been able to go, which ageing can only lower."""
+        world = build_world(world_config(), seed=1)
+        living = Selection.from_mask(world.store.alive)
+        mask = living.to_mask()
+        world.store.velocity_x[mask] = world.movement.top_speed(living).astype(np.float32)
+        world.store.velocity_y[mask] = 0.0
+        world.store.age[mask] += 1
+
+        assert no_entity_exceeds_its_top_speed(world.movement)(world.store) is None
+
+
 class TestBatchingDoesNotChangeTheWorld:
     """§2.4: the wake schedule decides when compute happens, never how fast the world moves.
 
@@ -523,6 +565,14 @@ class TestConfigRejectsWorldsThatCannotBeFounded:
     def test_a_world_with_no_founders_is_rejected(self):
         with pytest.raises(ValueError, match="founder"):
             world_config(n_founders=0)
+
+    def test_a_world_whose_animals_do_not_age_is_rejected(self):
+        """`senescence=None` is the service-fixture opt-out. In an assembled world it is the
+        immortality #239 fixed: an animal that can feed would never die."""
+        genetics = dataclasses.replace(world_config().genetics, senescence=None)
+
+        with pytest.raises(ValueError, match="must age"):
+            world_config(genetics=genetics)
 
 
 class TestFoundersAreNaive:

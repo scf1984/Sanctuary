@@ -16,6 +16,12 @@ incompatibility is exactly what this metric feeds into (speciation). Distance th
 far apart two creatures' *actual* traits have drifted, which is also why comparing across two
 species with different expression masks needs no special case: each side's own mask already zeroed
 what it doesn't express, so the same Euclidean formula applies uniformly.
+
+**Distance reads the heritable phenotype, not the aged one** (#239). Senescence degrades
+performance traits with age at expression time (§2.5), which is the animal's *condition*, not its
+genome. Over `expressed()` two identical genomes of different ages would read as genetically apart,
+and a cohort would appear to diverge simply by growing old together, so mate compatibility and
+speciation would turn on age. `Genetics.heritable()` is `expressed()` without that term.
 """
 
 from __future__ import annotations
@@ -38,8 +44,8 @@ def between(genetics: Genetics, a: np.ndarray, b: np.ndarray) -> np.ndarray:
     This is a positional pairing of two equal-length arrays, not a claim that the two entities at
     position i are otherwise related.
     """
-    phenotype_a = genetics.expressed_at(a)
-    phenotype_b = genetics.expressed_at(b)
+    phenotype_a = genetics.heritable_at(a)
+    phenotype_b = genetics.heritable_at(b)
     if phenotype_a.shape[0] != phenotype_b.shape[0]:
         raise ValueError(
             f"a and b must select the same number of rows "
@@ -61,6 +67,6 @@ def centroid_between(genetics: Genetics, a: Selection, b: Selection) -> np.float
     """
     if len(a) == 0 or len(b) == 0:
         raise ValueError("centroid_between requires both selections to be non-empty")
-    centroid_a = genetics.expressed(a).mean(axis=0)
-    centroid_b = genetics.expressed(b).mean(axis=0)
+    centroid_a = genetics.heritable(a).mean(axis=0)
+    centroid_b = genetics.heritable(b).mean(axis=0)
     return np.float32(np.linalg.norm(centroid_a - centroid_b))

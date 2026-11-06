@@ -43,6 +43,7 @@ GENE_NAMES = ("size", "speed", "agility", "haste", "heat_tolerance", "cold_toler
 GENETICS_CONFIG = GeneticsConfig(
     mutability_gene="mutability",
     drift_margin=2.0,
+    senescence=None,
 )
 # `agility` is costed nominally rather than at the rate size and speed pay. It has to charge
 # *something* — `Movement` refuses a free agility gene, since turning faster is otherwise pure

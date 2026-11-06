@@ -44,6 +44,7 @@ from core.ecology.plants import PlantsConfig
 from core.ecology.carrion import CarrionConfig
 from core.ecology.predation import PredationConfig
 from core.genetics.expression import GeneticsConfig
+from core.genetics.senescence import SenescenceConfig
 from core.genetics.registry import ExpressionMode, GeneSpec, Unit
 from core.world.diffusion import DiffusionConfig
 from core.world.assembly import World, WorldConfig, build_world
@@ -312,6 +313,18 @@ _GENES = (
             "evolvability. Free: an unfit brood is its own price (#104)."
         ),
     ),
+    GeneSpec(
+        name="senescence_resistance",
+        cost=0.01,
+        expression_mode=ExpressionMode.MAGNITUDE,
+        unit=Unit.DIMENSIONLESS,
+        description=(
+            "Damps how fast speed, sight and scent acuity degrade with age, with diminishing "
+            "returns (§2.5, #239). Must charge a positive cost: it only ever reduces degradation, "
+            "so a free one runs every lineage toward immortality. Maintenance and repair are "
+            "metabolically expensive in real bodies too."
+        ),
+    ),
 )
 _GENE_NAMES = tuple(gene.name for gene in _GENES)
 
@@ -451,6 +464,18 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
         genetics=GeneticsConfig(
             mutability_gene="mutability",
             drift_margin=2.0,
+            senescence=SenescenceConfig(
+                resistance_gene="senescence_resistance",
+                # Per tick lived, tuned toward §2.1's lifespan row as an outcome rather than set as
+                # one (docs/spikes/senescence.md). At a typical founder's resistance an animal
+                # keeps ~20% of its speed and senses by age 1,000. Over 5 seeds x 4,000 ticks this
+                # halves the share of deaths past age 1,000 (4.6% -> 1.9%) and leaves the world as
+                # viable as before; 0.004 cut it to 1.1% but dropped one seed to 2,507 animals.
+                base_decay=0.002,
+                # The performance traits §2.5 names. Agility and haste are left out on the
+                # narrowest reading of "speed, sight and scent acuity" (#239).
+                decaying_genes=("speed", "sight", "scent_acuity"),
+            ),
         ),
         movement=MovementConfig(
             speed_gene="speed",
@@ -543,6 +568,9 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
             # rather than fixed so founders vary in evolvability like anything else
             # (docs/spikes/speciation-drift.md).
             "mutability": (0.01, 0.03),
+            # Around the thermal tolerances' founding band: a magnitude damping a rate through `1 +`,
+            # so the same 0-0.5 spans "no repair" to a third slower decline.
+            "senescence_resistance": (0.0, 0.5),
             # Around the 0.15 this was as a constant, which is a band of 0.3 against drive
             # utilities that reach 1 — enough to hold a bearing through indifferent ground and not
             # enough to hold one against an appetite. Drawn rather than fixed, so founders differ

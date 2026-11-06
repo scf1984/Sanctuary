@@ -30,7 +30,7 @@ from tests.support.plants import plant_field
 
 GENE_NAMES = ("size", "heat_tolerance", "cold_tolerance", "mutability")
 GENE_REGISTRY = gene_registry(GENE_NAMES, {"heat_tolerance": 1.0, "cold_tolerance": 1.0})
-GENETICS_CONFIG = GeneticsConfig(mutability_gene="mutability", drift_margin=2.0)
+GENETICS_CONFIG = GeneticsConfig(mutability_gene="mutability", drift_margin=2.0, senescence=None)
 METABOLISM_CONFIG = MetabolismConfig(
     dehydration_penalty=0.0,
     basal_rate=1.0,

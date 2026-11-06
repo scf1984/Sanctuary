@@ -219,6 +219,16 @@ class Movement(DomainService):
         in one tick at full pace, from its expressed phenotype."""
         return self.genetics.expressed(selection)[:, self._speed_index].astype(np.float64)
 
+    def peak_speed(self, selection: Selection) -> np.ndarray:
+        """(len(selection),) float64, world units per tick: the top speed each entity had at its
+        youngest, before senescence degraded it (§2.5, #239).
+
+        Senescence only ever lowers `top_speed`, so this is the fastest the animal has ever been
+        able to go. It exists for the top-speed invariant, whose bound must survive ageing under a
+        velocity the animal legitimately reached: `age_increment` runs after `movement` (§2.1).
+        """
+        return self.genetics.heritable(selection)[:, self._speed_index].astype(np.float64)
+
     def pace(self, selection: Selection, urge: np.ndarray) -> np.ndarray:
         """(len(selection),) float64 in [walking_pace, 1]: how hard each animal pushes.
 

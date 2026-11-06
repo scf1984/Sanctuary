@@ -37,7 +37,7 @@ GENE_NAMES = ("size", "heat_tolerance", "cold_tolerance", "diet_animal_derived",
 # reduces upkeep and charges nothing is a free lunch (§2.5). These tests keep the world at the
 # neutral temperature so they never actually bite.
 GENE_REGISTRY = gene_registry(GENE_NAMES, {"heat_tolerance": 1.0, "cold_tolerance": 1.0})
-GENETICS_CONFIG = GeneticsConfig(mutability_gene="mutability", drift_margin=2.0)
+GENETICS_CONFIG = GeneticsConfig(mutability_gene="mutability", drift_margin=2.0, senescence=None)
 
 PLANTS_CONFIG = PlantsConfig(
     solar_constant=10.0,

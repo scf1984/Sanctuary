@@ -20,7 +20,8 @@ import numpy as np
 from core.entities.store import EntityStore
 from core.genetics.expression import ExpressionTable, GeneticsConfig
 from core.genetics.inheritance import inherit_genes
-from core.genetics.registry import GeneRegistry
+from core.genetics.registry import ExpressionMode, GeneRegistry, Unit
+from core.genetics.senescence import SenescenceConfig, decay
 from core.genetics.species import SpeciesRegistry
 from core.selection import Selection
 from core.services import ColumnRegistry, DomainService
@@ -56,6 +57,12 @@ class Genetics(DomainService):
         self.species = species
         self.config = config
         self.expression = ExpressionTable(genes, config)
+        self._senescence = config.senescence
+        if self._senescence is not None:
+            self._base_decay = self._senescence.base_decay
+            self._resistance_index, self._decaying_columns = _resolve_senescence(
+                genes, self._senescence
+            )
 
     def genes(self, selection: Selection) -> np.ndarray:
         """(len(selection), n_genes) float32: raw gene values, expressed or not."""
@@ -158,8 +165,72 @@ class Genetics(DomainService):
         return self.expressed_at(selection.to_indices())
 
     def expressed_at(self, rows: np.ndarray) -> np.ndarray:
-        """`expressed`, for row indices **in the order given** — see `genes_at` for why."""
+        """`expressed`, for row indices **in the order given** — see `genes_at` for why.
+
+        This is the animal as it is *now*: the heritable phenotype with its performance traits
+        degraded by age (§2.5, #239). Every consumer of a trait — movement, sensing, upkeep — reads
+        this, so an old animal is slower, sees and smells less, and also pays less to maintain what
+        has atrophied, because upkeep is charged from the expressed phenotype.
+        """
+        rows = np.asarray(rows, dtype=np.int64)
+        phenotype = self.heritable_at(rows)
+        if self._senescence is not None:
+            remaining = self._decay_from(phenotype, rows)
+            phenotype[:, self._decaying_columns] *= remaining[:, None].astype(np.float32)
+        return phenotype
+
+    def heritable(self, selection: Selection) -> np.ndarray:
+        """(len(selection), n_genes) float32: `expressed` without senescence.
+
+        What a genome expresses at any age — modes and species mask, nothing else. Genetic distance
+        and the diversity metric read this: they compare genomes, and two animals with identical
+        genes must read as identical however far apart their ages are. Over `expressed`, a cohort
+        would look like it was diverging simply by growing old together (#239).
+        """
+        return self.heritable_at(selection.to_indices())
+
+    def heritable_at(self, rows: np.ndarray) -> np.ndarray:
+        """`heritable`, for row indices in the order given."""
         rows = np.asarray(rows, dtype=np.int64)
         phenotype = self.expression.phenotype(self.store.genes[rows])
         species_mask = self.species.masks_for(self.store.species_id[rows])
         return np.where(species_mask, phenotype, 0.0).astype(np.float32)
+
+    def senescence_decay_at(self, rows: np.ndarray) -> np.ndarray:
+        """(len(rows),) float64 in (0, 1]: the fraction of each performance trait still expressed.
+
+        Exists for the invariant harness (§6), which asserts the bound the formula is meant to
+        guarantee. Raises if this world does not age, since there is then no decay to check.
+        """
+        if self._senescence is None:
+            raise ValueError("this world's genetics has no senescence, so there is no decay")
+        rows = np.asarray(rows, dtype=np.int64)
+        return self._decay_from(self.heritable_at(rows), rows)
+
+    def _decay_from(self, heritable: np.ndarray, rows: np.ndarray) -> np.ndarray:
+        # The resistance is read from the masked phenotype, so a species that does not express the
+        # gene has none and decays at the base rate — the same rule every other gene follows.
+        return decay(self.store.age[rows], heritable[:, self._resistance_index], self._base_decay)
+
+
+def _resolve_senescence(
+    genes: GeneRegistry, config: SenescenceConfig
+) -> tuple[int, np.ndarray]:
+    """The resistance column and a (n_genes,) bool mask of decaying columns, validated once.
+
+    Every named gene must exist — an unknown name raises rather than being skipped, since a typo
+    would otherwise make a trait silently immortal (§8.7). All of them must be read as magnitudes:
+    the resistance so the rate's denominator is never below 1, and the decaying traits because
+    scaling toward zero only means "less of it" for a quantity.
+    """
+    resistance_index = genes.index_of(config.resistance_gene, unit=Unit.DIMENSIONLESS)
+    decaying = np.zeros(len(genes.vocabulary), dtype=bool)
+    for name in (config.resistance_gene, *config.decaying_genes):
+        if genes.spec(name).expression_mode is not ExpressionMode.MAGNITUDE:
+            raise ValueError(
+                f"senescence gene '{name}' must be read as a magnitude, got "
+                f"{genes.spec(name).expression_mode.value}"
+            )
+    for name in config.decaying_genes:
+        decaying[genes.index_of(name)] = True
+    return resistance_index, decaying

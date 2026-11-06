@@ -19,6 +19,7 @@ GENE_NAMES = ("size", "speed", "sight", "camouflage", "mutability")
 GENETICS_CONFIG = GeneticsConfig(
     mutability_gene="mutability",
     drift_margin=2.0,
+    senescence=None,
 )
 GENE_REGISTRY = gene_registry(GENE_NAMES)
 

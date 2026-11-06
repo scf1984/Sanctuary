@@ -532,7 +532,7 @@ class FixedTopSpeed:
     def __init__(self, speed):
         self.speed = float(speed)
 
-    def top_speed(self, selection):
+    def peak_speed(self, selection):
         return np.full(len(selection), self.speed, dtype=np.float64)
 
 
