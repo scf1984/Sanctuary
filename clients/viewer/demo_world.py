@@ -19,9 +19,17 @@ watching — small enough to fill a window, warm enough that plants grow, popula
 something is always happening — is not the world a competition (#41) or a shipped starting state
 (#101) would want, and dressing it up as a shared default is how a viewing preference becomes an
 ecological constant (§2.1: coefficients are per world, never constants in `core/`).
+
+**One exception, by decision: the temperate world (#261)** is this world with another climate, and
+is derived from it here rather than written beside it. Every measurement so far runs on the demo
+world, so it stays exactly as it is; seasonal behaviour needs a map whose range straddles neutral,
+which this one does not. Deriving the second from the first is what keeps the two from drifting
+apart in anything but the sky (§2.1).
 """
 
 from __future__ import annotations
+
+import dataclasses
 
 from core.behaviour.drives import (
     FatigueConfig,
@@ -709,6 +717,38 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
         n_founders=n_entities,
         founder_energy=180.0,
     )
+
+
+# The temperate world's climate (#261), fitted over seeds 1-8 in docs/spikes/thermal-drive.md §5
+# against two conditions rather than chosen by feel.
+#
+# Both gradients ten times the demo world's, scaled together so a peak stays about as cold as a pole
+# (#112's pair). The demo map spans ~2 temperature units pole to equator, which is why a whole
+# season cannot carry it across neutral; ten times that puts ~20 between them and swings a winter
+# pole ~10 below its mean, while `amplitude_fraction` is left at the demo's 0.5 (#159's guard).
+_TEMPERATE_GRADIENT_SCALE = 10.0
+# With those gradients, the equator temperature that puts about half the map's ground-and-year on
+# each side of neutral (0.48 measured) — the comfortable band then sits mid-map on average and
+# sweeps poleward in summer (78% of ground above neutral) and back in winter (28%). It also lands
+# the mean squared deviation from neutral at 68.6 against the demo world's 66.1, so the shared
+# `thermoregulation_rate`, derived from exactly that quantity (#176), needs no re-derivation: the
+# climate moves *where* the bill falls, not how large it typically is.
+_TEMPERATE_EQUATOR_ABOVE_NEUTRAL = 18.0
+
+
+def temperate_world_config(n_entities: int, seed: int) -> WorldConfig:
+    """The demo world under a climate that straddles neutral, so seasons can move the comfortable
+    ground (#261). Everything but the climate is the demo world's, by construction."""
+    demo = demo_world_config(n_entities, seed)
+    climate = dataclasses.replace(
+        demo.climate,
+        equator_temperature=(
+            demo.metabolism.neutral_temperature + _TEMPERATE_EQUATOR_ABOVE_NEUTRAL
+        ),
+        latitude_gradient=_TEMPERATE_GRADIENT_SCALE * demo.climate.latitude_gradient,
+        lapse_rate=_TEMPERATE_GRADIENT_SCALE * demo.climate.lapse_rate,
+    )
+    return dataclasses.replace(demo, climate=climate)
 
 
 # Every 20 ticks, keeping 2,000 samples — the last 40,000 ticks, which at §2.1's rates is about
