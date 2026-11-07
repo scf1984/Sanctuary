@@ -750,10 +750,13 @@ by" hunger and no animal stands still merely because the drive that won has no m
   diffused field — and without it every animal would detect every meadow faintly, leaving sight
   range charged by the metabolic budget while buying nothing but predator avoidance.
 
-  The operator is deliberately **not** plant-specific: `core.ecology.cues` wants exactly it, since
-  scent currently diffuses through a mountain unattenuated. Converting that is filed separately,
-  because `CueField.sample_excluding_self` subtracts the *exact* diagonal of its kernel and that
-  factorisation exists only because a separable kernel is separable — a per-edge conductance is not.
+  The operator is deliberately **not** plant-specific, but scent does not use it, and still
+  diffuses through a mountain unattenuated. `CueField.sample_excluding_self` subtracts the *exact*
+  response of its kernel, and that factorisation exists only because a separable kernel is
+  separable — a per-edge conductance is not. #139 measured the exact alternatives at 40× the
+  rebuild per tick and about one spread per cell per fence edit, so terrain-aware scent was
+  declined and deferred to wind (#97), which is the physics of how scent crosses terrain anyway.
+  Fences are the half #139 did build, exactly: see the fence entry below.
 - **Heritable drive weights.** Behaviour is a fixed set of authored drives (hunger, thirst, fear,
   lust, fatigue) competing each tick by utility score — but *the weights and thresholds are genes*.
   Boldness, sociality, and parental investment therefore evolve rather than being designed.
@@ -1222,8 +1225,8 @@ by" hunger and no animal stands still merely because the drive that won has no m
   `diffusion_range × ln k` further away: tripling acuity buys about 11 units of reach at range 10.
   The three-pass box blur it replaced ended exactly three ranges out, and the same tripling bought
   2 (27 units to 29). **Any loss-free spread does that**, box or Gaussian, because its reach grows
-  only with the square root of a logarithm. So **#139's terrain-aware walk must keep a loss per
-  pass**, or acuity goes back to being nearly inert. The kernel's contours are diamonds rather than
+  only with the square root of a logarithm. So **any terrain-aware spread (deferred to #97) must
+  keep a loss per pass**, or acuity goes back to being nearly inert. The kernel's contours are diamonds rather than
   circles, a grid artefact like the box's square; the true 2-D steady state does not separate, and
   separating is what keeps self-exclusion exact. Measured in
   [`docs/spikes/scent-range.md`](docs/spikes/scent-range.md).
@@ -1323,13 +1326,24 @@ by" hunger and no animal stands still merely because the drive that won has no m
   a tendency and this is the rule. Same-seed identical in an unfenced world, **MAJOR** in a fenced
   one.
 
-  **What a fence does not stop is scent.** `core.ecology.cues` spreads scent with a separable
-  exponential kernel rather than the neighbour-graph walk, because `sample_excluding_self` subtracts
-  the exact diagonal of that kernel and the factorisation only holds for a separable kernel. So a
-  fenced world's animals smell each other through the wire, and converting the cue field is #139's.
-  Since #169 nothing *steers* by a smell across the wire, because a candidate there offers nothing;
-  but fear's urgency is read where the animal stands, so a penned animal is still frightened by
-  what it smells outside. Worth knowing before reading a fenced world's fear scores.
+  **No smell crosses a fence either: each sealed region has a scent field of its own** — settled
+  in #139 (the owner's option B). Each region's deposits are spread with #262's exponential kernel
+  over the region's bounding box, reflecting at the box's edges, and an animal reads only its own
+  region's field: where it stands (fear's urgency, `Scent.perceive`) and at its candidates
+  (`Scent.perceived_at`, which reads nothing outside the box). A box is a small world, so the two
+  properties §2.5 will not give up survive: its operator still separates per axis, so
+  **self-exclusion stays exact** region by region, and the tail stays exponential, so a keener nose
+  still detects from further away inside a pen. An unfenced world is one region whose box is the
+  world and computes exactly what it did, bit for bit. The cost, on the 256×256 bench at 100,000
+  animals: the rebuild goes from 36 ms to 41–46 ms with 1–8 pens up and the shared candidate read
+  from 113 ms to 138 ms ([`docs/spikes/fence-perception.md`](docs/spikes/fence-perception.md)).
+
+  **What it does not do, deliberately.** A region's plume covers its whole box, so a region that is
+  not a rectangle — the outside of a pen — is smelled *across* whatever lies inside its box:
+  animals outside a pen smell each other through it, though never anyone in it. And **scent stays
+  blind to terrain**: a cost-aware operator has no exact self-exclusion at an affordable price
+  (#139 measured 40× the rebuild, and about one spread per cell at every fence edit for the exact
+  response table), so a ridge is still smelled through, deferred to wind (#97).
 
   **A fence does not evict.** Whoever is inside when it goes up is inside. That is what makes it an
   isolation rather than a round-up, and it is why *did I fence enough of them, with enough food and
@@ -1437,8 +1451,8 @@ by" hunger and no animal stands still merely because the drive that won has no m
   **Wind and rainfall derive from the same function and are not built yet.** Each is another term
   of `(x, y, tick, seed)`, evaluated on the same lattice the same way: rainfall (#165) modulates
   `Plants.moisture` and the water field instead of leaving them fixed at assembly, and wind (#97)
-  is a lattice of vectors that biases the cue field's diffusion, sequenced with #139's
-  terrain-aware diffusion so the two land deliberately rather than colliding. Neither may
+  is a lattice of vectors that biases the cue field's diffusion, and terrain-aware scent, which
+  #139 declined and deferred to it, lands with it rather than colliding. Neither may
   integrate state, for the reasons above. Insolation does not follow the seasons either yet:
   temperature is the term with teeth, and light is its own change.
 

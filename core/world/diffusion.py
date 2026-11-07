@@ -47,7 +47,7 @@ field costs per tick.
 ## What this deliberately does not do yet
 
 `core.ecology.cues` wants exactly this operator — scent currently diffuses through a mountain
-unattenuated — and converting it is #139 rather than done here, because
+unattenuated — and #139 declined converting it, deferring that to wind (#97), because
 `CueField.sample_excluding_self` subtracts the *exact* diagonal of its blur, computed as an outer
 product of two 1-D diagonals. That factorisation exists only because a separable blur is separable;
 a per-edge conductance is not, and an approximate self-response would leave every cannibal lineage

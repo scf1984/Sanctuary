@@ -314,7 +314,7 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
     scent = Scent(
         store,
         genetics,
-        CueField(terrain, len(config.scent_genes.signature_genes), config.cue_field),
+        CueField(terrain, len(config.scent_genes.signature_genes), config.cue_field, barriers),
         genes,
         config.scent_genes,
     )

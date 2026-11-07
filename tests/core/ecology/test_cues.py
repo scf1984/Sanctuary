@@ -8,6 +8,7 @@ from core.genetics.service import Genetics
 from core.genetics.species import SpeciesRegistry
 from core.selection import Selection
 from core.services import ColumnRegistry
+from core.world.barriers import Barriers
 from core.world.terrain import Terrain
 
 from tests.support.genes import gene_registry
@@ -29,7 +30,9 @@ GENE_REGISTRY = gene_registry(GENE_NAMES)
 
 def make_field(grid=21, cell_size=1.0, diffusion_range=2.0, channels=CHANNELS):
     terrain = Terrain(np.zeros((grid, grid), dtype=np.float32), cell_size=cell_size)
-    return terrain, CueField(terrain, channels, CueFieldConfig(diffusion_range=diffusion_range))
+    return terrain, CueField(
+        terrain, channels, CueFieldConfig(diffusion_range=diffusion_range), Barriers(terrain)
+    )
 
 
 def signature(*values):
@@ -45,7 +48,7 @@ class TestConfig:
     def test_rejects_a_field_with_no_channels(self):
         terrain = Terrain(np.zeros((5, 5), dtype=np.float32), cell_size=1.0)
         with pytest.raises(ValueError):
-            CueField(terrain, 0, CueFieldConfig(diffusion_range=1.0))
+            CueField(terrain, 0, CueFieldConfig(diffusion_range=1.0), Barriers(terrain))
 
 
 class TestDeposit:
@@ -457,7 +460,7 @@ class TestScentBinder:
         store = EntityStore(initial_capacity=8, n_drives=1, n_genes=len(GENE_NAMES))
         genetics = Genetics(store, ColumnRegistry(), species, vocabulary, GENETICS_CONFIG)
         terrain = Terrain(np.zeros((grid, grid), dtype=np.float32), cell_size=1.0)
-        field = CueField(terrain, CHANNELS, CueFieldConfig(diffusion_range=2.0))
+        field = CueField(terrain, CHANNELS, CueFieldConfig(diffusion_range=2.0), Barriers(terrain))
         scent = Scent(store, genetics, field, vocabulary, SCENT_GENES)
         return store, species, genetics, scent
 
@@ -484,7 +487,7 @@ class TestScentBinder:
             store, ColumnRegistry(), SpeciesRegistry(vocabulary), vocabulary, GENETICS_CONFIG
         )
         terrain = Terrain(np.zeros((5, 5), dtype=np.float32), cell_size=1.0)
-        field = CueField(terrain, CHANNELS, CueFieldConfig(diffusion_range=1.0))
+        field = CueField(terrain, CHANNELS, CueFieldConfig(diffusion_range=1.0), Barriers(terrain))
 
         with pytest.raises(ValueError):
             Scent(
@@ -529,3 +532,112 @@ class TestScentBinder:
         scent.rebuild(quiet | observer)
 
         assert scent.perceive(observer)[0] == pytest.approx(np.zeros(CHANNELS), abs=1e-6)
+
+
+class TestAFenceStopsScent:
+    """One scent field per sealed region, each spread with the #262 kernel over its region's
+    bounding box with a reflecting rim there (#139, the owner's option B). Self-exclusion stays
+    exact, because each region's operator is still separable, and an unfenced world is one region
+    whose box is the world."""
+
+    PEN = (5.0, 5.0, 12.0, 12.0)  # cells 5-11 on both axes
+
+    def fenced(self, diffusion_range=2.0):
+        terrain, field = make_field(diffusion_range=diffusion_range)
+        field.barriers.enclose(*self.PEN)
+        return terrain, field
+
+    def two_animals(self, field, inside=(8.0, 8.0), outside=(14.0, 8.0), emission=(3.0, 3.0)):
+        x = np.array([inside[0], outside[0]])
+        y = np.array([inside[1], outside[1]])
+        emission = np.array(emission)
+        sig = np.tile(signature(1, 0, 0), (2, 1))
+        field.rebuild(x, y, emission, sig)
+        return x, y, emission, sig
+
+    def test_a_penned_animal_smells_nothing_of_an_outsider(self):
+        _, field = self.fenced()
+        x, y, emission, sig = self.two_animals(field)
+
+        perceived = field.sample_excluding_self(x, y, emission, sig)
+
+        assert perceived[0] == pytest.approx(np.zeros(CHANNELS), abs=1e-6)
+        assert perceived[1] == pytest.approx(np.zeros(CHANNELS), abs=1e-6)
+
+    def test_without_the_fence_they_smell_each_other(self):
+        """The control: the same two animals at the same distance, unfenced."""
+        _, field = make_field()
+        x, y, emission, sig = self.two_animals(field)
+
+        perceived = field.sample_excluding_self(x, y, emission, sig)
+
+        assert perceived[0, 0] > 1e-3 and perceived[1, 0] > 1e-3
+
+    def test_self_exclusion_is_exact_everywhere_in_a_pen(self):
+        """CLAUDE.md 2.5's exactness, per region: a lone penned animal reads nothing of itself at
+        any cell of its pen, the wire included, where the region's rim reflects its plume back."""
+        _, field = self.fenced()
+        x, y, emission, sig = np.array([5.0]), np.array([11.0]), np.array([3.0]), signature(1, 1, 1)
+        field.rebuild(x, y, emission, sig)
+        cols, rows = np.meshgrid(np.arange(5.0, 12.0), np.arange(5.0, 12.0))
+
+        perceived = field.sample_excluding_source(
+            cols.ravel()[None, :], rows.ravel()[None, :], x, y, emission, sig
+        )
+
+        assert perceived == pytest.approx(np.zeros_like(perceived), abs=1e-6)
+
+    def test_reading_at_the_source_is_reading_where_it_stands(self):
+        """The two exclusions are one operator, fenced or not."""
+        _, field = self.fenced()
+        x = np.array([8.0, 14.0, 9.0])
+        y = np.array([8.0, 8.0, 10.0])
+        emission = np.array([3.0, 2.0, 1.0])
+        sig = np.vstack([signature(1, 0, 0), signature(1, 0, 0), signature(0, 1, 0)])
+        field.rebuild(x, y, emission, sig)
+
+        here = field.sample_excluding_self(x, y, emission, sig)
+        at_source = field.sample_excluding_source(x, y, x, y, emission, sig)
+
+        assert here[0, 1] > 1e-3, "the two penned animals should smell each other"
+        assert at_source == pytest.approx(here, abs=1e-6)
+
+    def test_a_pen_is_a_small_world(self):
+        """Inside a pen the field is exactly the #262 kernel over the pen, reflecting at the wire:
+        the same as an unfenced world the pen's size with the same animal in it. So a keener nose
+        still buys range inside a pen, and the plume does not leak out of it."""
+        _, field = self.fenced()
+        field.rebuild(np.array([7.0]), np.array([9.0]), np.array([3.0]), signature(1, 0, 0))
+        small_terrain = Terrain(np.zeros((7, 7), dtype=np.float32), cell_size=1.0)
+        small = CueField(
+            small_terrain, CHANNELS, CueFieldConfig(diffusion_range=2.0), Barriers(small_terrain)
+        )
+        small.rebuild(np.array([2.0]), np.array([4.0]), np.array([3.0]), signature(1, 0, 0))
+
+        assert field.concentration[:, 5:12, 5:12] == pytest.approx(small.concentration, abs=1e-7)
+
+    def test_a_candidate_outside_the_readers_region_reads_nothing(self):
+        """An outsider's air is not a penned animal's to read, wherever the candidate falls."""
+        _, field = self.fenced()
+        x, y, emission, sig = self.two_animals(field, outside=(15.0, 8.0))
+
+        perceived = field.sample_excluding_source(
+            np.array([[13.0, 15.0]]), np.array([[8.0, 9.0]]), x[:1], y[:1], emission[:1], sig[:1]
+        )
+
+        assert perceived == pytest.approx(np.zeros_like(perceived), abs=1e-9)
+
+    def test_the_fence_is_picked_up_at_the_next_rebuild_and_taking_it_down_restores_the_air(self):
+        _, field = make_field()
+        x, y, emission, sig = self.two_animals(field)
+        open_air = field.sample_excluding_self(x, y, emission, sig)
+
+        field.barriers.enclose(*self.PEN)
+        field.rebuild(x, y, emission, sig)
+        assert field.sample_excluding_self(x, y, emission, sig)[0] == pytest.approx(
+            np.zeros(CHANNELS), abs=1e-6
+        )
+
+        field.barriers.clear()
+        field.rebuild(x, y, emission, sig)
+        assert field.sample_excluding_self(x, y, emission, sig) == pytest.approx(open_air)
