@@ -52,7 +52,7 @@ from core.genetics.registry import GeneRegistry, Unit
 from core.selection import Selection
 from core.services import ColumnRegistry, DomainService
 from core.world.barriers import Barriers
-from core.world.terrain import Terrain
+from core.world.terrain import Terrain, to_next_grid_line
 from core.world.water import Water
 
 
@@ -162,13 +162,6 @@ class MovementConfig:
                 f"drag must be non-negative, got {self.drag}; negative makes wading cheaper "
                 "per world unit than walking, which mints energy out of swimming"
             )
-
-
-# How far short of a blocked edge an animal is stopped, as a fraction of a cell. Small enough to be
-# invisible ecologically and large enough to survive the float32 the position columns are stored in:
-# a cell is 1 world unit in the shipped world, so this is a thousandth of one, against a float32
-# resolution near 20 of about 2e-6.
-_BARRIER_MARGIN = 1e-3
 
 
 class Movement(DomainService):
@@ -393,6 +386,19 @@ class Movement(DomainService):
         unit_x = np.where(moving, along_x / np.where(moving, distance, 1.0), 0.0)
         unit_y = np.where(moving, along_y / np.where(moving, distance, 1.0), 0.0)
 
+        # A fence refuses; it does not charge (#27). The step is cut where the wire stops it, a
+        # margin short of the line (`Barriers.reach`), before anything is priced: the animal pays
+        # for the ground it covers and nothing for the crossing it does not make. Priced instead, a
+        # fence would be a very steep hill, so a desperate enough animal would cross it and the one
+        # that tried would empty its pool against the wire. The same finder places the candidates
+        # an animal scores (#278), so it is never offered ground this walk would not reach.
+        if self.barriers is not None and self.barriers.any_blocked:
+            free = self.barriers.reach(x, y, unit_x, unit_y, distance)
+            stopped = free < distance
+            landing_x = np.where(stopped, x + unit_x * free, landing_x)
+            landing_y = np.where(stopped, y + unit_y * free, landing_y)
+            distance = free
+
         # The budget is in work rather than energy, because `_walk` accumulates work per unit of
         # body size (see `_work`). A species that does not express size pays nothing however far it
         # goes, so nothing bounds its walk.
@@ -574,10 +580,7 @@ class Movement(DomainService):
         # population each tick rather than fixed, per #113.
         longest = float(distance.max(initial=0.0))
         crossings_per_axis = int(np.ceil(longest / cell_size))
-        # Two axes, and — where anything is fenced — two interleaved lattices per axis, since cell
-        # edges sit half a cell off the elevation nodes. The +2 covers the partial cell at each end.
-        lattices = 4 if (self.barriers is not None and self.barriers.any_blocked) else 2
-        passes = lattices * crossings_per_axis + 2
+        passes = 2 * crossings_per_axis + 2
 
         for remaining_passes in range(passes, 0, -1):
             if not walking.any():
@@ -588,68 +591,14 @@ class Movement(DomainService):
             # Distance along the ray to the next grid line on each axis; an axis the step does not
             # move along is never crossed, and `inf` drops it out of the minimum below.
             to_boundary = np.minimum(
-                self._to_next_grid_line(at_x, unit_x, cell_size),
-                self._to_next_grid_line(at_y, unit_y, cell_size),
+                to_next_grid_line(at_x, unit_x, cell_size),
+                to_next_grid_line(at_y, unit_y, cell_size),
             )
-            if self.barriers is not None and self.barriers.any_blocked:
-                # **Two grids, offset by half a cell.** Elevation is bilinear between nodes on the
-                # integer lattice, so the profile bends there and that is where this walk samples
-                # (#113). A *cell* — which is what holds biomass, carrion and a fence — is the
-                # square centred on a node, so its edges sit on the half-integer lattice. Left to
-                # the node crossings alone, a segment steps clean over a cell edge in its middle
-                # and a fence leaks: measured at 3 of 20 penned animals lost in 100 ticks, with
-                # strangers wandering in at the same rate.
-                #
-                # Visiting both lattices costs passes, which `passes` below is sized for, and it
-                # costs no accuracy: extra samples inside one node cell lie on the same straight
-                # profile the two ends already define.
-                to_boundary = np.minimum(
-                    to_boundary,
-                    np.minimum(
-                        self._to_next_cell_edge(at_x, unit_x, cell_size),
-                        self._to_next_cell_edge(at_y, unit_y, cell_size),
-                    ),
-                )
             left = distance - travelled
             # On the final permitted pass, finish whatever is left in one segment rather than
             # stopping short. Only reachable if float slivers at a grid line consumed passes the
             # bound did not expect, and it costs accuracy within one cell rather than distance.
             step = left if remaining_passes == 1 else np.minimum(to_boundary, left)
-
-            # A fence refuses; it does not charge (#27). An animal walks up to a blocked edge and
-            # stops there, having paid for the ground it covered and nothing for the crossing it
-            # did not make. Priced instead, a fence would be a very steep hill: a desperate enough
-            # animal crosses it, so the isolation the player paid for leaks, and the one that tried
-            # empties its pool against the wire and dies there.
-            #
-            # **It stops a hair short of the line, never on it.** A cell owns the half-open span
-            # around its centre, so a position landing exactly on the boundary indexes to the cell
-            # *beyond* it — and `to_boundary` puts an animal exactly there on every ordinary pass.
-            # Stopping on the line therefore reads as already through, and the next tick walks on
-            # from the far side: the fence leaks by a rounding rule rather than by any step
-            # crossing it. Measured before the margin existed, a 39x39 pen lost 3 of 20 penned
-            # animals in 100 ticks and gained strangers at the same rate.
-            if self.barriers is not None and self.barriers.any_blocked:
-                margin = _BARRIER_MARGIN * cell_size
-                # Probed just *past* the segment's end, which is unambiguously in the cell being
-                # entered; the segment's own end sits on the boundary and is the ambiguous point.
-                probe_x, probe_y = self._landing(
-                    x, y, unit_x, unit_y, travelled + step + margin, distance, target_x, target_y
-                )
-                # Clipped into the world before asking. `at` is the raw ray position and the probe
-                # deliberately reaches past the segment's end, so either can sit a float hair
-                # outside; `Terrain.cell_indices` is strict on purpose (§8.7) and clamping *there*
-                # would hide a real out-of-world entity from every other caller. The rim already
-                # stops everything, so a clamped probe asks about the edge cell, which is the
-                # honest question.
-                width, height = self.terrain.world_width, self.terrain.world_height
-                refused = walking & self.barriers.crossing_blocked(
-                    np.clip(at_x, 0.0, width),
-                    np.clip(at_y, 0.0, height),
-                    np.clip(probe_x, 0.0, width),
-                    np.clip(probe_y, 0.0, height),
-                )
-                step = np.where(refused, np.maximum(step - margin, 0.0), step)
 
             next_x, next_y = self._landing(
                 x, y, unit_x, unit_y, travelled + step, distance, target_x, target_y
@@ -703,42 +652,8 @@ class Movement(DomainService):
             here_z = np.where(walking & ~unaffordable, next_z, here_z)
             here_depth = np.where(walking & ~unaffordable, next_depth, here_depth)
             walking = walking & ~unaffordable & (travelled < distance)
-            if self.barriers is not None and self.barriers.any_blocked:
-                walking = walking & ~refused
 
         return travelled, wading, ascent
-
-    @classmethod
-    def _to_next_cell_edge(
-        cls, position: np.ndarray, direction: np.ndarray, cell_size: float
-    ) -> np.ndarray:
-        """(n,) float64: distance along a unit ray to the next *cell* boundary on one axis.
-
-        A cell is the square centred on an elevation node (`Terrain.cell_indices` rounds to the
-        nearest), so its edges are the node lattice shifted by half a cell. Expressed as that shift
-        rather than as a second copy of the arithmetic, because the two must not drift apart —
-        which is the same reason `cell_indices` itself lives on `Terrain` (§8.3).
-        """
-        return cls._to_next_grid_line(position + 0.5 * cell_size, direction, cell_size)
-
-    @staticmethod
-    def _to_next_grid_line(
-        position: np.ndarray, direction: np.ndarray, cell_size: float
-    ) -> np.ndarray:
-        """(n,) float64: distance along a unit ray to the next cell boundary on one axis.
-
-        `inf` where the ray does not move along this axis, so a minimum against the other axis
-        picks the crossing that actually happens. A position sitting exactly on a boundary returns
-        a whole cell rather than zero, which is what stops the walk stalling on a grid line.
-        """
-        cells = position / cell_size
-        forward = direction > 0.0
-        backward = direction < 0.0
-        boundary = np.where(
-            forward, (np.floor(cells) + 1.0) * cell_size, (np.ceil(cells) - 1.0) * cell_size
-        )
-        moves = forward | backward
-        return np.where(moves, (boundary - position) / np.where(moves, direction, 1.0), np.inf)
 
     def _work(
         self, distance: np.ndarray, wading: np.ndarray, ascent: np.ndarray, pace: np.ndarray

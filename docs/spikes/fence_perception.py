@@ -82,7 +82,15 @@ def wire_run(seed: int) -> dict[str, float]:
     inner_share = inner_ring.sum() / pen.sum()
     outer_share = outer_ring.sum() / (~pen).sum()
 
-    inner, outer = [], []
+    # The same measure at the world's rim, for outsiders: the band within one world unit of the
+    # edge, which is what the inner ring is to the wire. The rim clips candidates onto itself, so
+    # this is the reference a wire that does the same should match.
+    width, height = world.terrain.world_width, world.terrain.world_height
+    rim_share = (width * height - (width - 2.0) * (height - 2.0)) / (
+        width * height - (r1 - r0) * (c1 - c0) * world.terrain.cell_size**2
+    )
+
+    inner, outer, rim = [], [], []
     for _ in range(40):
         world.loop.advance(10)
         living = world.store.alive & (world.store.age >= 0)
@@ -92,6 +100,9 @@ def wire_run(seed: int) -> dict[str, float]:
             inner.append(inner_ring[rr, cc][penned].mean() / inner_share)
         if (~penned).sum() > 0:
             outer.append(outer_ring[rr, cc][~penned].mean() / outer_share)
+            px, py = world.store.x[living][~penned], world.store.y[living][~penned]
+            at_rim = (px < 1.0) | (px > width - 1.0) | (py < 1.0) | (py > height - 1.0)
+            rim.append(at_rim.mean() / rim_share)
 
     living = world.store.alive & (world.store.age >= 0)
     rr, cc = world.terrain.cell_indices(world.store.x[living], world.store.y[living])
@@ -99,8 +110,55 @@ def wire_run(seed: int) -> dict[str, float]:
     return {
         "inside_ring_density": float(np.mean(inner)) if inner else float("nan"),
         "outside_ring_density": float(np.mean(outer)) if outer else float("nan"),
+        "rim_band_density": float(np.mean(rim)) if rim else float("nan"),
         "alive_inside": int(penned.sum()),
         "alive_outside": int((~penned).sum()),
+    }
+
+
+def indifferent_run(seed: int, n: int = 2000, ticks: int = 400) -> dict[str, float]:
+    """The wire band for a population with no drives at all, so only the commitment bonus shapes a
+    choice and any departure from 1.0 is the boundary rule's doing (`edge_candidates.py`'s method,
+    carried to a fence). Founders spread uniformly and the pen over the middle quarter. Only choice
+    and movement run, so nothing eats, ages or dies; density is averaged over the second half."""
+    rng = np.random.default_rng(seed)
+    world = build_demo_world(seed=seed, n_entities=n)
+    alive = world.store.alive
+    world.store.x[alive] = rng.uniform(0, world.terrain.world_width, alive.sum())
+    world.store.y[alive] = rng.uniform(0, world.terrain.world_height, alive.sum())
+    corners, (r0, r1, c0, c1) = pen_bounds(world)
+    world.barriers.enclose(*corners)
+    behaviour, movement = world.behaviour, world.movement
+    behaviour._drives = []
+
+    rows_n, cols_n = world.terrain.heights.shape
+    r, c = np.mgrid[0:rows_n, 0:cols_n]
+    pen = (r >= r0) & (r < r1) & (c >= c0) & (c < c1)
+    inner_ring = pen & ~((r >= r0 + 1) & (r < r1 - 1) & (c >= c0 + 1) & (c < c1 - 1))
+    inner_share = inner_ring.sum() / pen.sum()
+    # The band within one world unit of the world's edge, as the inner ring is to the wire.
+    width, height = world.terrain.world_width, world.terrain.world_height
+    rim_share = (width * height - (width - 2.0) * (height - 2.0)) / (
+        width * height - (r1 - r0) * (c1 - c0) * world.terrain.cell_size**2
+    )
+
+    inner, rim_density = [], []
+    for t in range(ticks):
+        population = Selection.from_mask(world.store.alive)
+        behaviour.choose(population, rng)
+        target_x, target_y = behaviour.chosen_target(population)
+        movement.step(population, target_x, target_y, behaviour.chosen_urge(population))
+        if t >= ticks // 2:
+            px, py = world.store.x[world.store.alive], world.store.y[world.store.alive]
+            rr, cc = world.terrain.cell_indices(px, py)
+            penned = pen[rr, cc]
+            inner.append(inner_ring[rr, cc][penned].mean() / inner_share)
+            px, py = px[~penned], py[~penned]
+            at_rim = (px < 1.0) | (px > width - 1.0) | (py < 1.0) | (py > height - 1.0)
+            rim_density.append(at_rim.mean() / rim_share)
+    return {
+        "inside_ring_density": round(float(np.mean(inner)), 3),
+        "rim_band_density": round(float(np.mean(rim_density)), 3),
     }
 
 
@@ -243,16 +301,53 @@ def choose_cost() -> None:
         f"four pens {statistics.median(whole[True]):.1f} ms"
     )
 
-    # The gate's own work, where the tree has one: marking the candidates, and one masking pass
-    # (each drive pays about one or two of these).
-    if hasattr(world.behaviour, "candidates"):
+    # The wire's own work in perception. Placing the candidates (`candidate_positions`) is where
+    # #278 clips them onto the wire, so it is timed fenced against unfenced on every tree. On
+    # #169's tree the gate also marks which candidates are reachable and masks every drive's
+    # reading with it (each drive pays about one or two masking passes).
+    headings = world.behaviour.candidate_headings(population, rng)
+    placing: dict[bool, list[float]] = {False: [], True: []}
+    for _ in range(4):
+        for up in (False, True):
+            fence(up)
+            placing[up].append(
+                timed(lambda: world.behaviour.candidate_positions(population, headings))
+            )
+    print(
+        f"placing candidates: unfenced {statistics.median(placing[False]):.1f} ms, "
+        f"four pens {statistics.median(placing[True]):.1f} ms"
+    )
+    x, y = world.behaviour.candidate_positions(population, headings)
+    candidates = world.behaviour.candidates(population, x, y)
+    if hasattr(candidates, "only_reachable"):
         fence(True)
-        headings = world.behaviour.candidate_headings(population, rng)
-        x, y = world.behaviour.candidate_positions(population, headings)
         marking = timed(lambda: world.behaviour.candidates(population, x, y))
         candidates = world.behaviour.candidates(population, x, y)
         masking = timed(lambda: candidates.only_reachable(x))
         print(f"gate, four pens: marking {marking:.1f} ms, one masking pass {masking:.1f} ms")
+
+    # `Movement.step`, which #278 moves from checking the wire inside its walk to asking
+    # `Barriers.reach` once before it. Timed from the same scored tick each time.
+    world.behaviour.choose(population, rng)
+    target_x, target_y = world.behaviour.chosen_target(population)
+    urge = world.behaviour.chosen_urge(population).astype(np.float64)
+    columns = ("x", "y", "z", "velocity_x", "velocity_y", "energy")
+    start = {name: getattr(world.store, name).copy() for name in columns}
+
+    def step() -> None:
+        for name in columns:
+            getattr(world.store, name)[:] = start[name]
+        world.movement.step(population, target_x, target_y, urge)
+
+    stepping: dict[bool, list[float]] = {False: [], True: []}
+    for _ in range(4):
+        for up in (False, True):
+            fence(up)
+            stepping[up].append(timed(step, repeats=3))
+    print(
+        f"Movement.step 100k: unfenced {statistics.median(stepping[False]):.1f} ms, "
+        f"four pens {statistics.median(stepping[True]):.1f} ms"
+    )
 
 
 if __name__ == "__main__":
@@ -260,6 +355,10 @@ if __name__ == "__main__":
         seeds = [int(s) for s in sys.argv[2:]] or [1, 2, 3]
         for seed in seeds:
             print(f"seed {seed}: {wire_run(seed)}")
+    elif sys.argv[1] == "indifferent":
+        seeds = [int(s) for s in sys.argv[2:]] or [1, 2, 3, 4]
+        for seed in seeds:
+            print(f"seed {seed}: {indifferent_run(seed)}")
     elif sys.argv[1] == "scent-cost":
         scent_cost()
     elif sys.argv[1] == "distance":

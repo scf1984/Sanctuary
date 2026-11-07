@@ -192,6 +192,28 @@ def bilinear_sample(
     return top * (1 - fy) + bottom * fy
 
 
+def to_next_grid_line(position: np.ndarray, direction: np.ndarray, cell_size: float) -> np.ndarray:
+    """(n,) float64 world units: distance along a unit ray to the next node grid line on one axis.
+
+    `inf` where the ray does not move along this axis, so a minimum against the other axis picks
+    the crossing that actually happens. A position sitting exactly on a line returns a whole cell
+    rather than zero, which is what stops a walk stalling on it.
+
+    Two walks step along a ray one crossing at a time: `Movement`'s over the node lattice, where
+    elevation bends (#113), and `Barriers.reach` over the cell edges, which are this lattice
+    shifted by half a cell (#27). It lives here, beside `cell_indices`, so the two cannot drift
+    apart.
+    """
+    cells = position / cell_size
+    forward = direction > 0.0
+    backward = direction < 0.0
+    boundary = np.where(
+        forward, (np.floor(cells) + 1.0) * cell_size, (np.ceil(cells) - 1.0) * cell_size
+    )
+    moves = forward | backward
+    return np.where(moves, (boundary - position) / np.where(moves, direction, 1.0), np.inf)
+
+
 def _slope_and_aspect(heights: np.ndarray, cell_size: float) -> tuple[np.ndarray, np.ndarray]:
     """Finite-difference gradient of the height field, converted to slope and downhill aspect."""
     dz_dy, dz_dx = np.gradient(heights.astype(np.float64), cell_size)

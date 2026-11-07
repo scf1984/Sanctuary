@@ -242,18 +242,13 @@ class Hunger:
         phenotype = self.genetics.expressed_columns(selection, self._columns)
         sight = phenotype[:, 0].astype(np.float64)
         x, y = candidates.x, candidates.y
-        grazing = candidates.only_reachable(
-            sight[:, None] * self.plants.forage_at(self.plants.forage, x, y)
-        )
+        grazing = sight[:, None] * self.plants.forage_at(self.plants.forage, x, y)
         # Summed over cue channels: how much animal lies that way, with no opinion about which.
         # Signed channels can cancel, and a cancelled blend is *less* smell rather than a negative
         # amount of it, so the sum is floored rather than allowed to invert the appeal.
-        prey = candidates.only_reachable(
-            sight[:, None]
-            * (
-                np.maximum(candidates.perceived(self.scent).sum(axis=-1), 0.0)
-                + self.plants.forage_at(self.carrion.scent, x, y)
-            )
+        prey = sight[:, None] * (
+            np.maximum(candidates.perceived(self.scent).sum(axis=-1), 0.0)
+            + self.plants.forage_at(self.carrion.scent, x, y)
         )
 
         # The allocation is the expressed column itself, which is all `Diet.animal_share` reads.
@@ -343,9 +338,7 @@ class Thirst:
         zeros** rather than a flat non-zero preference, so thirst drops out of the sum entirely and
         cannot push an animal whichever way the numerical noise leaned.
         """
-        reading = candidates.only_reachable(
-            self.hydration.reachable_at(candidates.x, candidates.y).astype(np.float64)
-        )
+        reading = self.hydration.reachable_at(candidates.x, candidates.y).astype(np.float64)
         return detected(reading, self.config.detection_threshold).astype(np.float32)
 
 
@@ -452,7 +445,7 @@ class Thermal:
         bill_here = self.metabolism.thermoregulation(tolerances, here.astype(np.float64))
         bill_there = self.metabolism.thermoregulation(tolerances, there.astype(np.float64))
         acuity = phenotype[:, 2].astype(np.float64)[:, None]
-        saving = candidates.only_reachable(acuity * (bill_here[:, None] - bill_there))
+        saving = acuity * (bill_here[:, None] - bill_there)
         return detected(saving, self.config.detection_threshold).astype(np.float32)
 
 
@@ -564,9 +557,7 @@ class Lust:
         own = candidates.broadcast(self.scent).signature.astype(np.float64)
         # Dot each candidate's cue reading against the searcher's own signature. Negative means it
         # smells like the opposite of itself, which the positive threshold discards.
-        reading = candidates.only_reachable(
-            acuity[:, None] * np.einsum("nkc,nc->nk", perceived, own)
-        )
+        reading = acuity[:, None] * np.einsum("nkc,nc->nk", perceived, own)
         return detected(reading, self.config.detection_threshold).astype(np.float32)
 
     def urgency(self, selection: Selection, candidates: Candidates) -> np.ndarray:
@@ -747,11 +738,9 @@ class Fear:
         # (docs/spikes/fear-direction.md).
         reading = acuity[:, None, None] * (perceived @ aversion.transpose(0, 2, 1))
         danger = np.where(reading >= self.config.detection_threshold, reading, 0.0).sum(axis=2)
-        # The worst option is the worst the animal can reach, and one it cannot reach offers no
-        # safety either: zero is the bottom of fear's scale, not its empty reading (#169).
-        worst = candidates.only_reachable(danger).max(axis=1, keepdims=True)
+        worst = danger.max(axis=1, keepdims=True)
         safety = 1.0 - np.divide(danger, worst, out=np.ones_like(danger), where=worst > 0.0)
-        return candidates.only_reachable(safety).astype(np.float32)
+        return safety.astype(np.float32)
 
     def urgency(self, selection: Selection, candidates: Candidates) -> np.ndarray:
         """(len(selection),) float32: weighted probability that something dangerous was detected."""
@@ -936,10 +925,7 @@ class Fatigue:
         ) * np.exp(-ascent / self.config.climb_tolerance)
         # Exactly zero, not near it: `Behaviour.candidate_positions` writes the animal's own
         # coordinates into the null column unchanged, so the comparison is on identical floats.
-        restful = np.where(np.hypot(x - here_x, y - here_y) == 0.0, 1.0, travelling)
-        # Zero is the bottom of this scale, so an option across a fence scores below any slope
-        # (#169). Staying put is always in the animal's own region.
-        return candidates.only_reachable(restful).astype(np.float32)
+        return np.where(np.hypot(x - here_x, y - here_y) == 0.0, 1.0, travelling).astype(np.float32)
 
     def urgency(self, selection: Selection, candidates: Candidates) -> np.ndarray:
         """(len(selection),) float32: weighted urgency to rest, zero for a healthy idle animal."""

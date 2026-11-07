@@ -116,7 +116,6 @@ def main() -> None:
             population,
             world.store.x[mask].astype(np.float64)[:, None],
             world.store.y[mask].astype(np.float64)[:, None],
-            None,
         )
         urgency = fear.urgency(population, here)
         frightened = urgency > 0.0

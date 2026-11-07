@@ -204,8 +204,8 @@ class World:
             Metabolism(self.genes, METABOLISM_CONFIG),
             plant_field(self.terrain, self.climate),
         )
-        # Unfenced unless a test fences it: what `Behaviour` reads to tell a candidate across the
-        # wire from one the animal can reach (#169).
+        # Unfenced unless a test fences it: what `Behaviour` reads to stop a candidate at the
+        # wire (#278).
         self.barriers = Barriers(self.terrain)
         self.behaviour = Behaviour(
             self.store,
@@ -353,7 +353,7 @@ def options_at(world, selection, reach=2.0):
 
 def candidates_at(world, selection, reach=2.0):
     """`options_at` as the one object `Behaviour` hands every drive (#258)."""
-    return Candidates(selection, *options_at(world, selection, reach), None)
+    return Candidates(selection, *options_at(world, selection, reach))
 
 
 class TestHungerAppeal:
@@ -388,7 +388,7 @@ class TestHungerAppeal:
     def _appeal(self, world, selection, reach=2.0, config=None):
         """(n, 3) appeal for an east option, a west option and the null option, at `reach` units."""
         x, y = options_at(world, selection, reach)
-        return self._hunger(world, config).appeal(selection, Candidates(selection, x, y, None))
+        return self._hunger(world, config).appeal(selection, Candidates(selection, x, y))
 
     def test_a_grazer_rates_the_option_toward_the_only_food_there_is_highest(self):
         world = World()
@@ -697,7 +697,7 @@ class TestThirst:
         )
         x, y = options_at(world, selection)
 
-        appeal = thirst.appeal(selection, Candidates(selection, x, y, None))
+        appeal = thirst.appeal(selection, Candidates(selection, x, y))
 
         assert (appeal[:, WEST] > appeal[:, EAST]).all()
 
@@ -712,7 +712,7 @@ class TestThirst:
         )
         x, y = options_at(world, selection)
 
-        appeal = thirst.appeal(selection, Candidates(selection, x, y, None))
+        appeal = thirst.appeal(selection, Candidates(selection, x, y))
 
         assert appeal == pytest.approx(np.zeros((2, 3)))
         # Parched — so the flatness is a statement about direction, not about the appetite.
@@ -828,7 +828,7 @@ class TestLust:
         world.scent.rebuild(selection)
         x, y = options_at(world, selection)
 
-        assert self.lust(world).appeal(selection, Candidates(selection, x, y, None)) == pytest.approx(np.zeros((1, 3)))
+        assert self.lust(world).appeal(selection, Candidates(selection, x, y)) == pytest.approx(np.zeros((1, 3)))
 
     def test_it_does_not_smell_itself_and_stay_put(self):
         """Lust's vector is the animal's *own* signature (§2.5), so its own plume is the strongest
@@ -843,7 +843,7 @@ class TestLust:
         x, y = options_at(world, selection)
 
         # Its own cell is among the candidates and must not be the winner — nothing is.
-        assert self.lust(world).appeal(selection, Candidates(selection, x, y, None)).max() == pytest.approx(0.0)
+        assert self.lust(world).appeal(selection, Candidates(selection, x, y)).max() == pytest.approx(0.0)
 
     def test_it_is_drawn_toward_something_that_smells_like_it(self):
         world = World(grid=17)
@@ -863,7 +863,7 @@ class TestLust:
         # Two candidates for the first animal: one step toward its partner, one step away.
         toward = np.float32([[5.0, 3.0]])
         same_y = np.float32([[8.0, 8.0]])
-        appeal = self.lust(world).appeal(seeker, Candidates(seeker, toward, same_y, None))
+        appeal = self.lust(world).appeal(seeker, Candidates(seeker, toward, same_y))
 
         assert appeal[0, 0] > appeal[0, 1]
 
@@ -885,7 +885,7 @@ class TestLust:
         seeker = Selection.from_indices(pair.to_indices()[:1], world.store.capacity)
 
         appeal = self.lust(world).appeal(
-            seeker, Candidates(seeker, np.float32([[5.0, 3.0]]), np.float32([[8.0, 8.0]]), None)
+            seeker, Candidates(seeker, np.float32([[5.0, 3.0]]), np.float32([[8.0, 8.0]]))
         )
 
         assert appeal == pytest.approx(np.zeros((1, 2)))
@@ -979,7 +979,7 @@ class TestFatigue:
         )
         x, y = options_at(world, selection)
 
-        appeal = fatigue.appeal(selection, Candidates(selection, x, y, None))
+        appeal = fatigue.appeal(selection, Candidates(selection, x, y))
 
         assert appeal[:, NULL] == pytest.approx([1.0, 1.0])
         assert appeal[:, :NULL] == pytest.approx(np.full((2, 2), 1.0 - TRAVEL_EFFORT))
@@ -2196,7 +2196,7 @@ class TestThermal:
         selection = world.spawn(3, x=np.float32([4.0] * 3), y=np.float32([4.0] * 3))
         x, y = options_ns(world, selection)
 
-        appeal = thermal(world).appeal(selection, Candidates(selection, x, y, None))
+        appeal = thermal(world).appeal(selection, Candidates(selection, x, y))
 
         assert appeal[:, NORTH] == pytest.approx(1.0)
         assert appeal[:, SOUTH] == pytest.approx(0.0)
@@ -2208,7 +2208,7 @@ class TestThermal:
         selection = world.spawn(3, x=np.float32([4.0] * 3), y=np.float32([4.0] * 3))
         x, y = options_ns(world, selection)
 
-        appeal = thermal(world).appeal(selection, Candidates(selection, x, y, None))
+        appeal = thermal(world).appeal(selection, Candidates(selection, x, y))
 
         assert appeal[:, SOUTH] == pytest.approx(1.0)
         assert appeal[:, NORTH] == pytest.approx(0.0)
@@ -2225,7 +2225,7 @@ class TestThermal:
         )
         x, y = options_ns(world, selection)
 
-        appeal = thermal(world).appeal(selection, Candidates(selection, x, y, None))
+        appeal = thermal(world).appeal(selection, Candidates(selection, x, y))
 
         assert appeal[0] == pytest.approx([0.0, 0.0, 0.0])
         assert appeal[1, NORTH] == pytest.approx(1.0)
@@ -2292,152 +2292,9 @@ class TestThermal:
             replace(THERMAL_CONFIG, **changes)
 
 
-def wire_between_columns_6_and_7(world):
-    """A wire down the whole map, so cells in columns 0-6 and 7+ are two sealed regions."""
-    world.barriers.blocked_west[:, 7] = True
-    world.barriers.revision += 1
-
-
-class TestACandidateAcrossTheWireOffersNothing:
-    """The sealed-region gate (#169, decision E). A candidate in another region than its animal
-    offers nothing to any drive: the animal cannot get there, and before the gate it read the far
-    side's field, walked into the wire, was refused, and did it again the next tick.
-
-    Each test runs the same scene twice, without the wire and with it, so it measures the gate
-    rather than a candidate that was never attractive. The animal stands at x = 5, so its east
-    option (x = 7) is across the wire, its west option (x = 3) and its null option are not.
-    """
-
-    def scene(self, world, selection, appeal_of):
-        x, y = options_at(world, selection)
-        open_field = appeal_of(world.behaviour.candidates(selection, x, y))
-        wire_between_columns_6_and_7(world)
-        wired = appeal_of(world.behaviour.candidates(selection, x, y))
-        return open_field, wired
-
-    def test_food_across_the_wire_is_not_food(self):
-        world = World(grid=17)
-        selection = world.spawn(1, x=np.float32([5.0]), y=np.float32([8.0]))
-        world.genetics.set_genes(selection, gene_rows({"sight": 3.0}))
-        world.plants.biomass[:] = 0.0
-        world.plants.biomass[8, 7] = 50.0
-        world.plants.biomass[8, 3] = 5.0
-        world.plants.rebuild_forage()
-        hunger = Hunger(
-            world.store, world.ecology, world.genetics, world.plants, world.carrion, world.scent,
-            world.diet, world.genes, HUNGER_CONFIG,
-        )
-
-        open_field, wired = self.scene(
-            world, selection, lambda candidates: hunger.appeal(selection, candidates)
-        )
-
-        assert open_field[0, EAST] == pytest.approx(1.0)
-        assert wired[0, EAST] == 0.0
-        # Normalised over what it can reach, so its best option on its own side now scores 1.
-        assert wired[0].max() == pytest.approx(1.0)
-
-    def test_water_across_the_wire_is_not_water(self):
-        world = World(grid=17)
-        world.water.depth[:, 8:] = 3.0
-        world.hydration = Hydration(
-            world.store, ColumnRegistry(), world.terrain, world.climate, world.water,
-            HYDRATION_CONFIG,
-        )
-        selection = world.spawn(1, x=np.float32([5.0]), y=np.float32([8.0]))
-        thirst = Thirst(world.store, world.hydration, world.genetics, world.genes, THIRST_CONFIG)
-
-        open_field, wired = self.scene(
-            world, selection, lambda candidates: thirst.appeal(selection, candidates)
-        )
-
-        assert open_field[0, EAST] == pytest.approx(1.0)
-        assert wired[0, EAST] == 0.0
-
-    def test_a_mate_across_the_wire_is_no_draw(self):
-        world = World(grid=17)
-        genes = {"scent_emission": 4.0, "signature_0": 1.0, "scent_acuity": 1.0}
-        pair = world.spawn(
-            2,
-            x=np.float32([5.0, 9.0]),
-            y=np.float32([8.0, 8.0]),
-            energy=np.float32([70.0, 70.0]),
-            genes=gene_rows(genes, genes),
-        )
-        world.store.age[pair.to_indices()] = 200
-        world.scent.rebuild(pair)
-        seeker = Selection.from_indices(pair.to_indices()[:1], world.store.capacity)
-        lust = TestLust().lust(world)
-
-        open_field, wired = self.scene(
-            world, seeker, lambda candidates: lust.appeal(seeker, candidates)
-        )
-
-        assert open_field[0, EAST] == pytest.approx(1.0)
-        assert wired[0, EAST] == 0.0
-
-    def test_a_frightened_animal_does_not_flee_into_the_wire(self):
-        """Fear is the drive where *reading nothing* and *offering nothing* part company. Nothing
-        detected across the wire would read as perfectly safe, so every frightened penned animal
-        would run at the fence, which is the defect the gate exists to remove. So the gate is on
-        what an option offers: no safety it cannot reach."""
-        world = FearWorld(grid=17)
-        prey = world.spawn_as(0, 1, x=np.float32([5.0]), y=np.float32([8.0]))
-        predator = world.spawn_as(0, 1, x=np.float32([2.0]), y=np.float32([8.0]))
-        world.genetics.set_genes(prey, gene_rows(timid()))
-        world.genetics.set_genes(predator, gene_rows(dangerous()))
-        world.scent.rebuild(prey | predator)
-        fear = world.fear()
-
-        open_field, wired = self.scene(
-            world, prey, lambda candidates: fear.appeal(prey, candidates)
-        )
-
-        assert open_field[0, EAST] > open_field[0, NULL] > open_field[0, WEST], (
-            "the wire was not the safest way, so the test would pass vacuously"
-        )
-        assert wired[0, EAST] == 0.0
-        assert wired[0, NULL] > 0.0
-
-    def test_a_tired_animal_does_not_rest_against_the_wire(self):
-        world = World(grid=17)
-        selection = world.spawn(1, x=np.float32([5.0]), y=np.float32([8.0]))
-        fatigue = Fatigue(
-            world.store, world.exertion, world.genetics, world.terrain, world.genes,
-            FatigueConfig(
-                weight_gene="fatigue_weight",
-                exertion_saturation=1.0,
-                travel_effort=TRAVEL_EFFORT,
-                climb_tolerance=CLIMB_TOLERANCE,
-            ),
-        )
-
-        open_field, wired = self.scene(
-            world, selection, lambda candidates: fatigue.appeal(selection, candidates)
-        )
-
-        assert open_field[0, EAST] == pytest.approx(1.0 - TRAVEL_EFFORT)
-        assert wired[0] == pytest.approx([0.0, 1.0 - TRAVEL_EFFORT, 1.0])
-
-    def test_warmth_across_the_wire_is_not_warmth(self):
-        world = graded_world(equator_temperature=15.0)
-        selection = world.spawn(1, x=np.float32([4.0]), y=np.float32([4.0]))
-        x, y = options_ns(world, selection)
-        drive = thermal(world)
-        open_field = drive.appeal(selection, world.behaviour.candidates(selection, x, y))
-        # The north option (y = 2) lies across a wire between rows 2 and 3.
-        world.barriers.blocked_north[3, :] = True
-        world.barriers.revision += 1
-
-        wired = drive.appeal(selection, world.behaviour.candidates(selection, x, y))
-
-        assert open_field[0, NORTH] == pytest.approx(1.0)
-        assert wired[0] == pytest.approx([0.0, 0.0, 0.0])
-
-
 class TestAPenKeepsOutWhatItSmellsOf:
-    """#139: fear's urgency is read where the animal stands, so #169's gate on candidates cannot
-    reach it. With one scent field per sealed region, an outsider frightens nobody in a pen."""
+    """#139: fear's urgency is read where the animal stands, so placing candidates on the near side
+    of the wire (#278) cannot reach it. With one scent field per sealed region, an outsider frightens nobody in a pen."""
 
     def frightened(self, fenced):
         world = FearWorld(grid=21)
