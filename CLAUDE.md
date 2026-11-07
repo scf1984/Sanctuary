@@ -782,7 +782,8 @@ by" hunger and no animal stands still merely because the drive that won has no m
 
   - **Rest needs no mode, flag or state column.** It is the null option winning, and an animal that
     picks it proposes no displacement, pays no transport cost, and therefore recovers (#107).
-  - **Fear needs no flee-target machinery.** It is appeal with the sign flipped.
+  - **Fear needs no flee-target machinery.** It is appeal with the sign flipped, which is how #265
+    built it (relative safety; see the fear section below).
   - **Explainability improves rather than surviving.** `breakdown()` reports each drive's
     contribution *to the option actually taken* — "62% of that heading was hunger" — which says
     strictly more than a winner's name, and is only definable once an option is chosen. Two animals
@@ -1068,6 +1069,28 @@ by" hunger and no animal stands still merely because the drive that won has no m
   axis, so its diagonal factorizes per axis. Without it, any lineage whose aversion overlapped its
   own signature — every cannibal — would be permanently terrified while standing alone in an empty
   world.
+
+  **Fear steers by relative safety** (#265, decided by the user). Until #265 `Fear.appeal` was flat,
+  so a frightened animal never moved away from anything. Now danger at each candidate is read the
+  way urgency reads it where the animal stands: acuity × each aversion direction · the
+  self-excluded air (`Scent.perceived_at`), with negative and sub-threshold readings dropped, summed
+  over directions. Appeal is `1 − danger / max danger over the options`. It is **all zeros when
+  nothing is detected**, so fear drops out of the sum (`detected`'s rule). It is **not read through
+  the saturating curve**, because that curve goes flat beside a pack, exactly when flight matters
+  most. Urgency carries *how much* danger there is, and appeal says only *which way* is safer, so no
+  new constant has to stay in step with the threshold and saturation. Two alternatives were
+  rejected on #265: `1 − p(candidate)` on urgency's curve, which is flat at close range, and a soft
+  `exp(−danger / scale)`, which needs that extra constant.
+
+  **Measured, and on the demo world it is nearly inert** (`docs/spikes/fear-direction.md`). Fear
+  fires there on the herd's own smell, for up to 70% of animals late in a run. But the readings sit
+  just above the threshold, so a frightened animal's urgency is 0.04–0.20, and fear's spread across
+  options comes to about 0.01 against hunger's 0.2. It decides 0.02–0.23% of choices. Viability is
+  unchanged within noise. The appeal itself is well shaped: among the frightened it spans 0.28–0.35
+  of its range. What keeps fear quiet is the demo world's calibration, not the encoding, and that
+  stays open with #179's predators. It costs `choose()` about 210 ms per tick at 100,000 animals
+  (+24%), mostly a second `perceived_at` read alongside lust's. Sharing that read is #258's and
+  #174's question. **MAJOR** under §2.8: it moves what animals do.
 
   Reserved gene block, so that one vocabulary migration covers the mechanics that need it rather
   than three:

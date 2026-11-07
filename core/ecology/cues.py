@@ -201,8 +201,8 @@ class CueField:
         returns              (n, ..., n_channels).
 
         **This is what lets a drive steer by smell.** `sample_excluding_self` answers only at the
-        sampler's own cell, so a drive could know it was frightened but not which way was safer —
-        `Fear.appeal` and `Lust.appeal` both return flat scores because of it. Lust needs it most:
+        sampler's own cell, so a drive could know it was frightened but not which way was safer.
+        `Lust.appeal` (#188) and `Fear.appeal` (#265) both read it at candidates. Lust needs it most:
         its vector is the animal's *own* signature (CLAUDE.md §2.5), so its own plume is the
         strongest match to it anywhere in the world, and without exclusion at candidates every
         animal is maximally attracted to the cell it already occupies — a rule that says never move.

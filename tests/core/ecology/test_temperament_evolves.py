@@ -8,10 +8,11 @@ Directions and distributions only, never values (§2.2).
 
 **A weight is only under selection if its drive has a direction.** `Behaviour.choose` scores
 `utility(option) = Σ urgency × appeal(option)`, so a drive whose appeal is flat adds the *same*
-number to every option and cannot change which one wins. Hunger steers by the forage field and lust
-by the cue field (#188); fatigue steers toward the null option; thirst and fear are still flat, and
-their weights are therefore very nearly neutral genes. That is a fact about what is built, not about
-temperament.
+number to every option and cannot change which one wins. Hunger steers by the forage field, lust
+by the cue field (#188) and thirst by the water field (#156); fatigue steers toward the null option.
+Fear has had a direction since #265, but on the demo world it detects so little that its weight is
+still very nearly a neutral gene (docs/spikes/fear-direction.md). That is a fact about this world,
+not about temperament.
 """
 
 import numpy as np
@@ -110,9 +111,15 @@ class TestOnlyASteeringDriveCanChangeTheChoice:
         world.behaviour.choose(population, np.random.default_rng(seed))
         return world.store.choice_heading[population.to_mask()].copy()
 
-    def test_a_flat_drives_weight_cannot_change_the_decision(self):
-        """Ten times the weight, identical headings. Fear is still flat, because flight has never
-        existed (#24), so scaling it moves nothing.
+    def test_a_drive_that_detects_almost_nothing_cannot_change_the_decision(self):
+        """Ten times the weight, identical headings.
+
+        **Fear is here because of this world, no longer because of its encoding.** It was flat by
+        construction until #265 gave it relative safety. Now it has a direction, but at tick 120 on
+        the demo world almost no animal detects anything, and those that do read barely above the
+        threshold, so even ten times the weight moves no heading in any of five seeds
+        (docs/spikes/fear-direction.md). If this fails, fear has started steering here: it belongs
+        in the control group below, and the spike's finding is out of date.
 
         **Thirst used to be in this list and is not any more** — #156 gave it a hydration deficit
         to score and a diffused water field to steer by, so it crossed from neutral to selected.

@@ -105,8 +105,10 @@ def detected(reading: np.ndarray, threshold: float) -> np.ndarray:
     Sampling and acuity stay with the caller on purpose. Each field is read differently (a
     diffused grid, a self-excluded cue blend dotted against a signature), and thirst has no acuity
     gene at all. A parameter only one caller needed would be §8.2's speculative generality.
-    `Fear` does not use this: it turns danger into a detection *probability* that saturates, and
-    is not normalised, because its appeal is aversion rather than attraction (§2.5).
+    `Fear` applies the same gate but not this function (#265): its appeal is *aversion*, scaled so
+    the worst option scores 0 rather than the best scoring 1, and it sums the gated readings of
+    several aversion directions before scaling. It keeps this rule's other half, all zeros when
+    nothing is detected.
     """
     found = np.where(reading >= threshold, reading, 0.0)
     best = found.max(axis=1, keepdims=True)
@@ -697,19 +699,46 @@ class Fear:
         self._aversion_positions = 1 + np.arange(aversion.size).reshape(aversion.shape)
 
     def appeal(self, selection: Selection, x: np.ndarray, y: np.ndarray) -> np.ndarray:
-        """(n, n_options) float32: flat — fear knows it is frightened, not which way is safer.
+        """(n, n_options) float32 in [0, 1]: how much safer each option is than the worst (#265).
 
-        The noisy-OR below reads the cue field at the animal's **own** position, and reading it at a
-        candidate needs `Scent.sample_excluding_self` generalised to arbitrary points: the
-        self-response it subtracts is a per-cell quantity, so sampling elsewhere must subtract that
-        cell's value rather than the animal's. That is a real change to #22's scent surface and is
-        filed separately rather than smuggled in here (§7.2).
+        Danger at a candidate is what urgency reads where the animal stands, read there instead:
+        acuity times each aversion direction dotted against the self-excluded air
+        (`Scent.perceived_at`, #188), with readings below `detection_threshold` and negative ones
+        discarded by the same gate urgency uses, then summed over directions. Appeal is
+        ``1 − danger / max danger over the options``, so the most dangerous option scores 0 and one
+        where nothing is detected scores 1. That is **relative safety**, chosen on #265.
 
-        Until then fear is urgency without a direction, exactly as it was before #114 — flight has
-        never existed. What #114 changes is that fear can no longer *freeze* an animal by winning:
-        it contributes to every option equally and the other drives decide (#126).
+        **Not read through the saturating curve.** Urgency saturates, so a direction taken from it
+        would go flat exactly when the threat is closest: every candidate beside a pack reads as
+        certain danger, and flight would vanish at point-blank range. How *much* danger there is
+        stays with urgency. Appeal only says which way is safer, which is why it is scaled to the
+        animal's own worst option and adds no constant that would have to stay in step with the
+        threshold and saturation (§2.1).
+
+        **All zeros when nothing is detected anywhere**, so fear drops out of the sum and the other
+        drives decide. That is the rule `detected` states for every other drive, and fear takes it
+        here rather than voting equally for every option.
+
+        The known risk, recorded on #265: because the scale is relative, a faint detection spreads
+        appeal across the options as widely as a strong one, and only its small urgency keeps it
+        quiet. How often that spread decides a choice is measured in
+        docs/spikes/fear-direction.md (the #207 question).
         """
-        return np.ones_like(x, dtype=np.float32)
+        expressed = self.genetics.expressed_columns(selection, self._columns).astype(np.float64)
+        perceived = self.scent.perceived_at(selection, x, y).astype(np.float64)
+        acuity = expressed[:, 0]
+        # (n, n_directions, n_channels): each animal's aversion directions, in cue-channel order.
+        aversion = expressed[:, self._aversion_positions]
+        # How strongly each candidate's air points along each aversion direction, scaled by how
+        # keen the nose is: (n, n_options, n_directions), the per-candidate form of `_channels`.
+        # A batched matmul rather than the equivalent einsum, which takes NumPy's unblocked path
+        # here: 133 ms against 25 ms at 100,000 animals and nine options
+        # (docs/spikes/fear-direction.md).
+        reading = acuity[:, None, None] * (perceived @ aversion.transpose(0, 2, 1))
+        danger = np.where(reading >= self.config.detection_threshold, reading, 0.0).sum(axis=2)
+        worst = danger.max(axis=1, keepdims=True)
+        safety = 1.0 - np.divide(danger, worst, out=np.ones_like(danger), where=worst > 0.0)
+        return safety.astype(np.float32)
 
     def urgency(self, selection: Selection) -> np.ndarray:
         """(len(selection),) float32: weighted probability that something dangerous was detected."""
