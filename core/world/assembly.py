@@ -268,7 +268,11 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
     # Built before anything that diffuses over the grid or walks across it: a fence is state the
     # forage field, the water field and every step all consult (#27).
     barriers = Barriers(terrain)
-    plants = Plants(terrain, climate, water, config.plants, barriers)
+    # What water adds to the price of hauling across each node, `drag × depth` (#143). Computed once
+    # from the walk's own coefficient and handed to every field an animal steers by, so perception
+    # and locomotion read one price for a lake and cannot drift apart (§2.1).
+    wading = config.movement.drag * water.depth
+    plants = Plants(terrain, climate, water, config.plants, barriers, wading)
 
     genes = GeneRegistry(config.genes)
     # The store's two column blocks are sized from what is actually registered below, so a drive
@@ -295,7 +299,7 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
     diet = Diet(genes, config.diet)
     carrion = Carrion(terrain, plants, config.carrion)
     hydration = Hydration(
-        store, columns, terrain, climate, water, config.hydration, barriers
+        store, columns, terrain, climate, water, config.hydration, barriers, wading
     )
     feeding = Feeding(store, plants, carrion, genetics, ecology, diet, genes, config.feeding)
     predation = Predation(
@@ -305,7 +309,16 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
     conception = Conception(store, ecology, genetics, genes, config.conception)
     exertion = Exertion(store, columns, config.exertion)
     movement = Movement(
-        store, columns, ecology, exertion, genetics, terrain, genes, config.movement, barriers
+        store,
+        columns,
+        ecology,
+        exertion,
+        genetics,
+        terrain,
+        genes,
+        config.movement,
+        barriers,
+        water,
     )
     behaviour = Behaviour(
         store, columns, genetics, genes, terrain, config.behaviour, barriers

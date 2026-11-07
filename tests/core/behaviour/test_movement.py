@@ -8,6 +8,8 @@ tuning — so nothing below asserts an energy figure. Every assertion is either 
 world unit than walking).
 """
 
+import dataclasses
+
 import numpy as np
 import pytest
 
@@ -24,9 +26,11 @@ from core.services import ColumnRegistry, ColumnOwnershipError
 from core.world.climate import Climate, ClimateConfig
 from core.world.barriers import Barriers
 from core.world.terrain import Terrain
+from core.world.water import Water
 
 from tests.support.genes import gene_registry
 from tests.support.plants import plant_field
+from tests.support.water import standing_water
 
 
 GENE_NAMES = ("size", "speed", "agility", "haste", "heat_tolerance", "cold_tolerance", "mutability")
@@ -66,6 +70,9 @@ MOVEMENT_CONFIG = MovementConfig(
     exertion_premium=2.0,
     climb_cost=0.5,
     walking_pace=0.4,
+    # Non-zero although most worlds below are dry, so every dry-ground assertion in this file is
+    # also evidence that drag charges nothing where there is no water (#143).
+    drag=2.0,
 )
 
 GRID = 41
@@ -107,13 +114,14 @@ def ridge_heights(height, crest_x, width):
 class World:
     """A store plus the services movement needs, wired the way a real world would wire them."""
 
-    def __init__(self, heights, movement_config=MOVEMENT_CONFIG, capacity=256):
+    def __init__(self, heights, movement_config=MOVEMENT_CONFIG, capacity=256, depth=None):
         self.store = EntityStore(initial_capacity=capacity, n_drives=1, n_genes=len(GENE_NAMES))
         self.registry = ColumnRegistry()
         self.genes = GENE_REGISTRY
         self.species = SpeciesRegistry(self.genes.vocabulary)
         self.genetics = Genetics(self.store, self.registry, self.species, self.genes, GENETICS_CONFIG)
         self.terrain = Terrain(heights, cell_size=CELL_SIZE)
+        self.water = standing_water(self.terrain, depth)
         self.climate = Climate(
             self.terrain,
             ClimateConfig(equator_y=0.0, equator_temperature=20.0, latitude_gradient=0.0),
@@ -139,6 +147,7 @@ class World:
             self.genes,
             movement_config,
             Barriers(self.terrain),
+            self.water,
         )
         self.species_id = self.species.register(GENE_NAMES)
 
@@ -224,6 +233,7 @@ class TestConfigRejectsValuesThatWouldBreakTheEnergyBudget:
                 exertion_premium=2.0,
                 climb_cost=0.5,
                 walking_pace=0.4,
+                drag=2.0,
             )
 
     def test_a_negative_exertion_premium_is_rejected(self):
@@ -238,6 +248,7 @@ class TestConfigRejectsValuesThatWouldBreakTheEnergyBudget:
                 exertion_premium=-0.1,
                 climb_cost=0.5,
                 walking_pace=0.4,
+                drag=2.0,
             )
 
     def test_a_negative_climb_cost_is_rejected(self):
@@ -253,6 +264,7 @@ class TestConfigRejectsValuesThatWouldBreakTheEnergyBudget:
                 exertion_premium=2.0,
                 climb_cost=-1.0,
                 walking_pace=0.4,
+                drag=2.0,
             )
 
     @pytest.mark.parametrize("pace", [0.0, 1.0, 1.5])
@@ -267,7 +279,15 @@ class TestConfigRejectsValuesThatWouldBreakTheEnergyBudget:
                 exertion_premium=2.0,
                 climb_cost=0.5,
                 walking_pace=pace,
+                drag=2.0,
             )
+
+
+    def test_a_negative_drag_is_rejected(self):
+        """Negative drag makes wading cheaper than walking, so a lake would be a shortcut that pays
+        an animal for every world unit it swims — energy out of nothing (#143)."""
+        with pytest.raises(ValueError, match="drag"):
+            dataclasses.replace(MOVEMENT_CONFIG, drag=-0.5)
 
 
 class TestAStepGoesWhereItWasAimed:
@@ -679,6 +699,187 @@ class TestAStepIsPricedAlongItsWholePath:
         assert (world.energy(walkers) >= 0.0).all()
 
 
+def round_lake(peak, centre_x, centre_y, radius):
+    """Depth falling linearly from `peak` at the centre to nothing at `radius`: a crossing meets a
+    shallow margin, the deep middle and a shallow margin again, like every lake a basin fills."""
+    rows, cols = np.mgrid[0:GRID, 0:GRID] * CELL_SIZE
+    reach = np.hypot(cols - centre_x, rows - centre_y)
+    return (peak * np.clip(1.0 - reach / radius, 0.0, 1.0)).astype(np.float32)
+
+
+def uneven_water(seed=7):
+    """Depth that varies along both axes inside every cell, so along a diagonal the bilinear
+    profile is a genuine quadratic rather than the straight line it is along a grid line. A
+    trapezoid over the walk's crossings is exact on the latter and wrong on the former, so only
+    this field can tell an exact integral from an approximate one."""
+    return np.random.default_rng(seed).uniform(0.0, 2.0, (GRID, GRID)).astype(np.float32)
+
+
+def bowl_heights(depth, centre_x, centre_y, radius):
+    """A closed basin. Unlike `ravine_heights` it does not drain off the map, so `Water.generate`
+    fills it and the lake is the one hydrology would put there, standing over the bed animals
+    walk on."""
+    rows, cols = np.mgrid[0:GRID, 0:GRID] * CELL_SIZE
+    reach = np.hypot(cols - centre_x, rows - centre_y)
+    return (-depth * np.clip(1.0 - reach / radius, 0.0, 1.0)).astype(np.float32)
+
+
+class TestWaterIsPricedByDepth:
+    """Issue #143: hauling a body through standing water costs `1 + drag × depth` times hauling it
+    over dry ground, integrated along the path exactly as climb is (#113).
+
+    The animal still walks the lake *bed* — `Terrain.heights` — so a basin already charges the
+    climb out of it. Drag is the medium on top of that, and it multiplies the haul alone.
+    """
+
+    def _cost_of_one_step(self, world, walker, target_x, target_y, pace=1.0):
+        before = world.energy(walker).copy()
+        world.step_toward(walker, target_x, target_y, pace)
+        return float(before[0] - world.energy(walker)[0])
+
+    def _haul(self, distance, pace=1.0):
+        return MOVEMENT_CONFIG.transport_cost * distance * (
+            1.0 + MOVEMENT_CONFIG.exertion_premium * pace
+        )
+
+    def test_dry_ground_beside_a_lake_costs_exactly_what_it_did(self):
+        """Zero depth must cost exactly today's price: a lake changes nothing about the ground
+        around it, and every world's dry paths would otherwise have been repriced by a term that
+        was supposed to concern water."""
+        world = World(flat_heights(), depth=round_lake(1.5, 30.0, 30.0, 6.0))
+        walker = world.place(10.0, 10.0, speed=7.0)
+
+        cost = self._cost_of_one_step(world, walker, 17.0, 10.0)
+
+        assert cost == pytest.approx(self._haul(7.0), rel=1e-9)
+
+    def test_wading_costs_more_than_walking_the_same_ground_dry(self):
+        wet = World(flat_heights(), depth=round_lake(1.5, 20.0, 20.0, 6.0))
+        dry = World(flat_heights())
+        wader = wet.place(12.0, 20.0, speed=16.0)
+        walker = dry.place(12.0, 20.0, speed=16.0)
+
+        assert self._cost_of_one_step(wet, wader, 28.0, 20.0) > self._cost_of_one_step(
+            dry, walker, 28.0, 20.0
+        )
+
+    def test_deeper_water_costs_more(self):
+        """Graded, not binary: a margin an animal stands in to drink is cheap, and the middle of a
+        deep lake is dear. A per-cell medium flag would price a puddle like a lake."""
+        shallow = World(flat_heights(), depth=round_lake(0.5, 20.0, 20.0, 6.0))
+        deep = World(flat_heights(), depth=round_lake(1.5, 20.0, 20.0, 6.0))
+        paddler = shallow.place(12.0, 20.0, speed=16.0)
+        swimmer = deep.place(12.0, 20.0, speed=16.0)
+
+        assert self._cost_of_one_step(deep, swimmer, 28.0, 20.0) > self._cost_of_one_step(
+            shallow, paddler, 28.0, 20.0
+        )
+
+    def test_drag_multiplies_the_haul_and_leaves_the_climb_alone(self):
+        """Uniform depth on a ramp, so both terms are closed-form. Drag is a property of moving
+        *through* a medium; lifting a body against gravity costs what it costs wet or dry."""
+        depth = 0.75
+        world = World(
+            ramp_heights(gain_per_unit=2.0), depth=np.full((GRID, GRID), depth, np.float32)
+        )
+        walker = world.place(10.0, 10.0, speed=7.0)
+
+        cost = self._cost_of_one_step(world, walker, 17.0, 10.0)
+
+        expected = (
+            self._haul(7.0) * (1.0 + MOVEMENT_CONFIG.drag * depth)
+            + MOVEMENT_CONFIG.climb_cost * 2.0 * 7.0
+        )
+        assert cost == pytest.approx(expected, rel=1e-6)
+
+    def test_depth_is_integrated_along_the_path_exactly(self):
+        """Depth is bilinear, so along a diagonal it is a quadratic inside each cell and the walk's
+        Simpson rule is exact rather than approximate. Checked against a brute-force quadrature
+        of `Water.depth_at` along the same line — the definition, not a second implementation."""
+        world = World(flat_heights(), depth=uneven_water())
+        start_x, start_y, target_x, target_y = 10.3, 11.7, 19.1, 17.2
+        # The position columns are float32, so measure the line from where the animal really is.
+        start_x, start_y = float(np.float32(start_x)), float(np.float32(start_y))
+        length = float(np.hypot(target_x - start_x, target_y - start_y))
+        walker = world.place(start_x, start_y, speed=length)
+
+        cost = self._cost_of_one_step(world, walker, target_x, target_y)
+
+        samples = 200_000
+        fraction = (np.arange(samples) + 0.5) / samples
+        mean_depth = float(
+            world.water.depth_at(
+                start_x + fraction * (target_x - start_x), start_y + fraction * (target_y - start_y)
+            ).mean()
+        )
+        expected = self._haul(length) * (1.0 + MOVEMENT_CONFIG.drag * mean_depth)
+        assert cost == pytest.approx(expected, rel=1e-7)
+
+    def test_a_wet_step_costs_what_the_same_water_covered_in_pieces_costs(self):
+        """#113's additivity, extended to the medium: one stride through water costs what the same
+        journey costs in pieces, because it is the same journey. The pieces here end mid-cell on a
+        diagonal, where the depth profile is curved — so sampling only the walk's own crossings,
+        or integrating between them by trapezoid, would make the stride and the pieces disagree."""
+        depth = uneven_water()
+        start, target, pieces = (10.3, 11.7), (19.1, 17.2), 7
+        length = float(np.hypot(target[0] - start[0], target[1] - start[1]))
+
+        one_world = World(flat_heights(), depth=depth)
+        strider = one_world.place(*start, speed=length)
+        one_world.step_toward(strider, *target, pace=1.0)
+        stride = float(1e6 - one_world.energy(strider)[0])
+
+        many_world = World(flat_heights(), depth=depth)
+        walker = many_world.place(*start, speed=length / pieces)
+        for _ in range(pieces):
+            many_world.step_toward(walker, *target, pace=1.0)
+        in_pieces = float(1e6 - many_world.energy(walker)[0])
+
+        assert stride == pytest.approx(in_pieces, rel=1e-6)
+
+    def test_crossing_a_real_lake_in_one_stride_costs_what_it_costs_in_pieces(self):
+        """The same property over a basin `Water.generate` actually fills: dry rim, shallow margin,
+        deep middle and back, walked on the bed, so the climb out and the drag are both on the
+        bill and both have to add up."""
+        heights = bowl_heights(depth=3.0, centre_x=20.0, centre_y=20.0, radius=7.0)
+        lake = Water.generate(Terrain(heights, cell_size=CELL_SIZE)).depth
+        start_x, target_x, row = 11.4, 28.4, 20.5
+
+        one_world = World(heights, depth=lake)
+        assert one_world.water.depth_at(np.array([20.0]), np.array([row]))[0] > 1.0
+        strider = one_world.place(start_x, row, speed=target_x - start_x)
+        one_world.step_toward(strider, target_x, row, pace=1.0)
+        stride = float(1e6 - one_world.energy(strider)[0])
+
+        many_world = World(heights, depth=lake)
+        walker = many_world.place(start_x, row, speed=1.0)
+        for _ in range(int(round(target_x - start_x))):
+            many_world.step_toward(walker, target_x, row, pace=1.0)
+        in_pieces = float(1e6 - many_world.energy(walker)[0])
+
+        bed_world = World(heights)
+        bed_walker = bed_world.place(start_x, row, speed=target_x - start_x)
+        bed_world.step_toward(bed_walker, target_x, row, pace=1.0)
+        bed_only = float(1e6 - bed_world.energy(bed_walker)[0])
+
+        assert stride == pytest.approx(in_pieces, rel=1e-6)
+        assert stride > bed_only
+
+    def test_an_animal_that_cannot_pay_for_the_water_gets_less_far(self):
+        """The pool gates a step through water exactly as it gates a climb: with enough for most
+        of the distance dry, an animal facing a lake runs out sooner."""
+        wet = World(flat_heights(), depth=round_lake(1.5, 20.0, 20.0, 6.0))
+        dry = World(flat_heights())
+        budget = 0.8 * self._haul(16.0)
+        wader = wet.place(12.0, 20.0, speed=16.0, energy=budget)
+        walker = dry.place(12.0, 20.0, speed=16.0, energy=budget)
+
+        wet.step_toward(wader, 28.0, 20.0, pace=1.0)
+        dry.step_toward(walker, 28.0, 20.0, pace=1.0)
+
+        assert float(wet.position(wader)[0][0]) < float(dry.position(walker)[0][0])
+
+
 class TestPaceIsBoughtWithUrge:
     """Issue #203: how much an animal wants something is what decides how fast it goes.
 
@@ -927,4 +1128,5 @@ class TestAgilityMustBePaidFor:
                 gene_registry(GENE_NAMES, {"heat_tolerance": 1.0, "cold_tolerance": 1.0}),
                 MOVEMENT_CONFIG,
                 Barriers(world.terrain),
+                world.water,
             )

@@ -53,6 +53,7 @@ from core.selection import Selection
 from core.services import ColumnRegistry, DomainService
 from core.world.barriers import Barriers
 from core.world.terrain import Terrain
+from core.world.water import Water
 
 
 @dataclass(frozen=True)
@@ -105,6 +106,24 @@ class MovementConfig:
         drifting apart. Must be in (0, 1): zero would mean an animal that never travels, and one
         would leave nothing for haste to buy, so the premium would multiply a constant again —
         which is the whole of #203.
+    drag: how much dearer hauling a body through standing water is than over dry ground, **per
+        world unit of depth** (#143). A world unit travelled at depth ``d`` costs the haul times
+        ``1 + drag × d``, so the climb is untouched — lifting a body costs what it costs wet or
+        dry — and the margin an animal stands in to drink costs almost nothing. The animal walks
+        the lake *bed* (`Terrain.heights`), so the climb out of a basin was already charged before
+        this existed; drag is the medium on top of it.
+
+        **No default.** It reads against depth, and depth only means something against the relief
+        a world chose (§2.6): the same number is a puddle's toll on one map and a moat on another.
+        That is the line §2.6 draws between an absolute quantity and a normalisation, and
+        ``drag × depth`` being unit-free does not move it, any more than ``climb_cost`` is
+        defaulted for being a price per unit of a length the caller chose.
+
+        Zero is legal and is the world as it was before #143: water costs what dry ground costs.
+        Must be non-negative — negative would make a lake cheaper per world unit than a meadow, so
+        swimming would mint energy out of every world unit swum, which §2.5's closed loop forbids.
+        It is also what perception reads (`core.world.diffusion`), so the field an animal steers
+        by prices a lake exactly as the walk will.
     """
 
     speed_gene: str
@@ -115,6 +134,7 @@ class MovementConfig:
     exertion_premium: float
     climb_cost: float
     walking_pace: float
+    drag: float
 
     def __post_init__(self) -> None:
         if self.transport_cost <= 0:
@@ -136,6 +156,11 @@ class MovementConfig:
             raise ValueError(
                 f"walking_pace must be in (0, 1), got {self.walking_pace}; at 1 every animal is "
                 "already flat out and `exertion_premium` multiplies a constant again (#203)"
+            )
+        if self.drag < 0:
+            raise ValueError(
+                f"drag must be non-negative, got {self.drag}; negative makes wading cheaper "
+                "per world unit than walking, which mints energy out of swimming"
             )
 
 
@@ -167,6 +192,10 @@ class Movement(DomainService):
         exactly as it does not pay for speed.
     terrain: the height field, sampled at every cell crossing along a step to price the climb
         (#113), and the rectangle a landing point is clipped into.
+    water: standing-water depth, integrated along every step to price the haul through it (#143).
+        Required rather than optional: a dry world is a `Water` whose depth is zero everywhere,
+        which prices exactly what no water would, and a mover that silently ignored lakes is the
+        defect this parameter exists to end.
     """
 
     owns = ("x", "y", "z", "velocity_x", "velocity_y")
@@ -186,6 +215,7 @@ class Movement(DomainService):
         genes: GeneRegistry,
         config: MovementConfig,
         barriers: Barriers,
+        water: Water,
     ) -> None:
         super().__init__(store, registry)
         self.ecology = ecology
@@ -193,6 +223,7 @@ class Movement(DomainService):
         self.genetics = genetics
         self.terrain = terrain
         self.barriers = barriers
+        self.water = water
         self.config = config
         # Raise KeyError naming the vocabulary version if a gene does not exist, and ValueError if
         # one is declared in a dimension this module would misread (#111). Top speed is world units
@@ -364,7 +395,7 @@ class Movement(DomainService):
         budget = np.where(
             weightless, np.inf, self.ecology.energy(selection) / np.where(weightless, 1.0, size)
         )
-        travelled, ascent = self._walk(
+        travelled, wading, ascent = self._walk(
             x, y, unit_x, unit_y, distance, landing_x, landing_y, budget, pace
         )
 
@@ -388,7 +419,7 @@ class Movement(DomainService):
         # The bill and the record of effort are the same quantity read two ways: `Ecology` is
         # charged the size-scaled cost, `Exertion` accumulates the per-size work, so a sprint up a
         # ridge is both expensive and tiring while a stroll over the same ground is neither (#107).
-        work = self._work(travelled, ascent, pace)
+        work = self._work(travelled, wading, ascent, pace)
         self.ecology.spend(selection, (size * work).astype(np.float32))
         self.exertion.accumulate(selection, work)
 
@@ -485,8 +516,9 @@ class Movement(DomainService):
         target_y: np.ndarray,
         budget: np.ndarray,
         pace: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """(travelled, ascent): how far each entity got, and how much it climbed getting there.
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """(travelled, wading, ascent): how far each entity got, the depth it waded integrated
+        over that distance (world units squared), and how much it climbed getting there.
 
         **Every cell the step crosses is visited** (#113). Sampling only the two ends nets a
         descent against a climb, so a step that dropped into a ravine and hauled itself out read as
@@ -510,14 +542,25 @@ class Movement(DomainService):
         well-defined question: an animal with barely enough energy stops at the foot of a wall
         rather than partway up it in proportion to some flat average. Within the final cell the
         remaining budget is spent linearly, since one cell is the resolution of everything here.
+
+        **Water is integrated exactly, and on the same passes** (#143). Depth is bilinear on the
+        elevation's own node lattice, so inside one node cell it is a product of two linear
+        functions of the distance along a straight line — a quadratic — and Simpson's rule over
+        a segment is exact rather than approximate. Every segment here already ends at a crossing
+        of that lattice, so pricing the medium needs one extra sample per pass (the midpoint) and
+        no extra passes. Exactness is what keeps #113's additivity: a trapezoid over the same
+        segments is exact only along a grid line, and on a diagonal one long stride and the same
+        ground in pieces would disagree.
         """
         cell_size = self.terrain.cell_size
         haul_rate = self.config.transport_cost * (1.0 + self.config.exertion_premium * pace)
 
         travelled = np.zeros_like(distance)
+        wading = np.zeros_like(distance)
         ascent = np.zeros_like(distance)
         spent = np.zeros_like(distance)
         here_z = self.terrain.elevation_at(x, y)
+        here_depth = self.water.depth_at(x, y)
         # Nothing moving has anything to walk, and an exhausted animal has nothing to spend.
         walking = (distance > 0.0) & (budget > 0.0)
 
@@ -610,7 +653,21 @@ class Movement(DomainService):
             # Only the gain: descent is braking rather than lifting (see `_work`), and summing the
             # gains rather than the net difference is the whole of this issue.
             segment_ascent = np.maximum(next_z - here_z, 0.0)
-            segment_work = haul_rate * step + self.config.climb_cost * segment_ascent
+            # Depth integrated along the segment, world units squared: Simpson's rule, exact
+            # because depth is a quadratic along a line inside one node cell (see above).
+            mid_x, mid_y = self._landing(
+                x, y, unit_x, unit_y, travelled + 0.5 * step, distance, target_x, target_y
+            )
+            next_depth = self.water.depth_at(next_x, next_y)
+            segment_wading = (
+                step * (here_depth + 4.0 * self.water.depth_at(mid_x, mid_y) + next_depth) / 6.0
+            )
+            # Drag multiplies the haul and not the climb: hauling through a medium is what water
+            # makes harder, and an animal climbing out of a lake lifts the same body it would dry.
+            segment_work = (
+                haul_rate * (step + self.config.drag * segment_wading)
+                + self.config.climb_cost * segment_ascent
+            )
 
             affordable = budget - spent
             unaffordable = walking & (segment_work > affordable)
@@ -622,6 +679,11 @@ class Movement(DomainService):
 
             advanced = np.where(unaffordable, step * fraction, step)
             travelled = np.where(walking, travelled + advanced, travelled)
+            wading = np.where(
+                walking,
+                wading + np.where(unaffordable, segment_wading * fraction, segment_wading),
+                wading,
+            )
             ascent = np.where(
                 walking,
                 ascent + np.where(unaffordable, segment_ascent * fraction, segment_ascent),
@@ -634,11 +696,12 @@ class Movement(DomainService):
             # enter starts from that elevation. One that ran out mid-cell is done and never reads
             # `here_z` again.
             here_z = np.where(walking & ~unaffordable, next_z, here_z)
+            here_depth = np.where(walking & ~unaffordable, next_depth, here_depth)
             walking = walking & ~unaffordable & (travelled < distance)
             if self.barriers is not None and self.barriers.any_blocked:
                 walking = walking & ~refused
 
-        return travelled, ascent
+        return travelled, wading, ascent
 
     @classmethod
     def _to_next_cell_edge(
@@ -672,9 +735,15 @@ class Movement(DomainService):
         moves = forward | backward
         return np.where(moves, (boundary - position) / np.where(moves, direction, 1.0), np.inf)
 
-    def _work(self, distance: np.ndarray, ascent: np.ndarray, pace: np.ndarray) -> np.ndarray:
+    def _work(
+        self, distance: np.ndarray, wading: np.ndarray, ascent: np.ndarray, pace: np.ndarray
+    ) -> np.ndarray:
         """(n,) float64: what covering `distance` while climbing `ascent` takes, per unit of body
         size.
+
+        wading: (n,) world units squared — depth integrated over the path (`_walk`). Each world
+        unit at depth ``d`` hauls at ``1 + drag × d`` times the dry rate, so the haul is the
+        distance plus ``drag`` times this integral (#143).
 
         Hauling the body over the ground, plus raising it against gravity. `ascent` is the total
         climbed along the path (`_walk`), never the net difference between the ends: descent is
@@ -689,5 +758,9 @@ class Movement(DomainService):
         left as it is it is the exertion an animal feels — a heavier animal pays more fuel for the
         same ground but is not thereby more tired, and #107 needs both readings of one quantity.
         """
-        haul = self.config.transport_cost * distance * (1.0 + self.config.exertion_premium * pace)
+        haul = (
+            self.config.transport_cost
+            * (distance + self.config.drag * wading)
+            * (1.0 + self.config.exertion_premium * pace)
+        )
         return haul + self.config.climb_cost * ascent

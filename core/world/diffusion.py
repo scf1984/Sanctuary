@@ -19,6 +19,9 @@ slope above it less readily than one on the rim perceives the valley floor — w
 asymmetry that makes a ridge a barrier and a valley a corridor, arriving in perception rather than
 being asserted separately.
 
+**Standing water impedes too** (#143), at exactly the price the walk charges for hauling through it,
+so a lake's far shore reads as far as the pool will find it (`_conductance`).
+
 **The signal routes around obstacles rather than being attenuated through them.** Because spreading
 is a walk over the neighbour graph, what arrives behind a wall is whatever came round the end of it,
 so a barrier with a gap is a detour and one without is a wall. That is what makes a fence (#27) an
@@ -128,14 +131,24 @@ class CostAwareDiffusion:
     passes: how many relaxation passes one `spread` costs. Derived from `range` and the cell size
         rather than configured, because it is a numerical property of the kernel and not an
         ecological choice.
+    wading: ``(height, width)``, unit-free, or None — ``drag × depth`` at each node: the fraction by
+        which hauling a body across it costs more than across dry ground (#143). Taken already
+        multiplied so this operator knows nothing about water or about `MovementConfig`, only what
+        the walk charges; the assembly hands in the one product both read. None is a world with
+        no water to price, which is what a test of terrain alone wants.
     """
 
     def __init__(
-        self, terrain: Terrain, config: DiffusionConfig, barriers: Barriers | None = None
+        self,
+        terrain: Terrain,
+        config: DiffusionConfig,
+        barriers: Barriers | None = None,
+        wading: np.ndarray | None = None,
     ) -> None:
         self.terrain = terrain
         self.config = config
         self.barriers = barriers
+        self.wading = wading
         self.passes = _passes_for(config.range, terrain.cell_size)
         self._built_for_revision = -1
         self._rebuild()
@@ -148,7 +161,9 @@ class CostAwareDiffusion:
         remember to set is one that is eventually not set — and the failure would be silent (§8.7):
         the field would keep routing food straight through a fence that is standing.
         """
-        self.conductance = _conductance(self.terrain, self.config.climb_penalty, self.barriers)
+        self.conductance = _conductance(
+            self.terrain, self.config.climb_penalty, self.barriers, self.wading
+        )
         self._built_for_revision = -1 if self.barriers is None else self.barriers.revision
 
     def spread(self, source: np.ndarray) -> np.ndarray:
@@ -255,7 +270,10 @@ def _neighbours(field: np.ndarray) -> np.ndarray:
 
 
 def _conductance(
-    terrain: Terrain, climb_penalty: float, barriers: "Barriers | None" = None
+    terrain: Terrain,
+    climb_penalty: float,
+    barriers: "Barriers | None" = None,
+    wading: np.ndarray | None = None,
 ) -> np.ndarray:
     """``(4, height, width)`` float32: normalised passability from each cell to each neighbour.
 
@@ -315,6 +333,24 @@ def _conductance(
         ):
             passable[0] += np.where(blocked, passable[plane], 0.0)
             passable[plane] = np.where(blocked, 0.0, passable[plane])
+
+    if wading is not None:
+        # **An edge through water conducts in inverse proportion to what hauling across it costs**
+        # (#143). Along a grid edge bilinear depth is linear, so the walk charges crossing it
+        # `1 + drag × depth` times the dry haul at the mean of its two ends — exactly. A path's
+        # haul is then the sum of its edges' prices, as a chain's resistance is the sum of its
+        # resistors', so dividing each edge's conductance by its price is what makes perception
+        # see a lake as dear as the pool will find it. One coefficient read by both, so the two
+        # cannot drift apart (§2.1); the weight an edge loses stays on the cell, and a walk lingers
+        # in water rather than crossing it.
+        #
+        # Applied after the rim and the fences, so it touches only edges that exist: `_neighbours`
+        # wraps, and a refused edge's weight has already gone home as the dry weight it would
+        # have carried. Pricing it first would charge a rim cell for water on the far side of the
+        # map.
+        excess = np.asarray(wading, dtype=np.float32)
+        edge_price = 1.0 + 0.5 * (excess + _neighbours(excess)[1:])
+        passable[1:] = passable[1:] / edge_price
 
     # Every cell conducts to itself, so the total is never zero and no guard is needed here.
     return passable / passable.sum(axis=0)

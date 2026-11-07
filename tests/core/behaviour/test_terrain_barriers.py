@@ -33,6 +33,7 @@ from core.world.tick import TickLoop
 
 from tests.support.genes import gene_registry
 from tests.support.plants import plant_field
+from tests.support.water import standing_water
 
 
 GENE_NAMES = ("size", "speed", "agility", "haste", "heat_tolerance", "cold_tolerance", "mutability")
@@ -76,6 +77,8 @@ MOVEMENT_CONFIG = MovementConfig(
     exertion_premium=2.0,
     climb_cost=0.5,
     walking_pace=0.4,
+    # Every world here is dry, so drag prices nothing (#143).
+    drag=1.0,
 )
 
 GRID = 41
@@ -142,6 +145,7 @@ class World:
             self.genes,
             MOVEMENT_CONFIG,
             Barriers(self.terrain),
+            standing_water(self.terrain),
         )
         self.species_id = self.species.register(GENE_NAMES)
 
