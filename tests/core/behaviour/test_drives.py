@@ -225,7 +225,7 @@ class World:
         # the drive contest, so nothing below moves; test_exertion.py covers the other term.
         self.exertion = Exertion(self.store, self.columns, ExertionConfig(recovery_rate=0.5))
         self.cue_field = CueField(
-            self.terrain, CHANNELS, CueFieldConfig(diffusion_range=diffusion_range)
+            self.terrain, CHANNELS, CueFieldConfig(diffusion_range=diffusion_range), self.barriers
         )
         self.scent = Scent(
             self.store, self.genetics, self.cue_field, self.genes, SCENT_GENES
@@ -2374,3 +2374,24 @@ class TestACandidateAcrossTheWireOffersNothing:
 
         assert open_field[0, NORTH] == pytest.approx(1.0)
         assert wired[0] == pytest.approx([0.0, 0.0, 0.0])
+
+
+class TestAPenKeepsOutWhatItSmellsOf:
+    """#139: fear's urgency is read where the animal stands, so #169's gate on candidates cannot
+    reach it. With one scent field per sealed region, an outsider frightens nobody in a pen."""
+
+    def frightened(self, fenced):
+        world = FearWorld(grid=21)
+        prey = world.spawn_as(0, 1, x=np.float32([8.0]), y=np.float32([10.0]))
+        predator = world.spawn_as(0, 1, x=np.float32([11.0]), y=np.float32([10.0]))
+        world.genetics.set_genes(prey, gene_rows(timid()))
+        world.genetics.set_genes(predator, gene_rows(dangerous()))
+        if fenced:
+            # A pen over columns 0-9, so the predator three units east is outside it.
+            world.barriers.enclose(0.0, 0.0, 9.6, 20.0)
+        world.scent.rebuild(prey | predator)
+        return world.fear().urgency(prey)[0]
+
+    def test_an_outsider_frightens_nobody_in_the_pen(self):
+        assert self.frightened(fenced=False) > 0.1, "the control would pass vacuously"
+        assert self.frightened(fenced=True) == 0.0

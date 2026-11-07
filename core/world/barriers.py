@@ -53,7 +53,8 @@ ask it:
 
 - a candidate heading across the wire offers nothing to any drive (#169), since the animal cannot
   get there;
-- two animals on opposite sides of the wire cannot touch, so cannot mate or strike (#276).
+- two animals on opposite sides of the wire cannot touch, so cannot mate or strike (#276);
+- each region carries its own scent field, spread over its bounding box (`region_boxes`, #139).
 
 Connectivity is through the **four** edge neighbours, which is what `Movement` walks (#113): it
 crosses one edge at a time, so a diagonal through a fence corner is two crossings and is refused
@@ -62,13 +63,10 @@ behaves exactly as if it were not there — which is right, because an animal ca
 
 ## What a fence does not stop
 
-**Scent.** `core.ecology.cues` blurs with a separable box kernel rather than the neighbour-graph
-walk, precisely because `sample_excluding_self` subtracts the exact diagonal of that blur and the
-factorisation only works for a separable kernel. So an animal smells its neighbours through a fence,
-and converting the cue field to a cost-aware operator is filed separately (#139). Nothing steers
-by a smell across the wire, since a candidate there offers nothing (#169), but fear's urgency is
-read where the animal stands and still smells through it. Worth knowing before reading a fenced
-world's fear scores.
+**Terrain-shaped scent.** Since #139 no smell crosses a fence, because each sealed region carries
+its own field. But a region's field is spread over its bounding box, not over its own cells, so an
+irregular region's plume shortcuts across the area of another: animals outside a pen still smell
+each other *across* it, though nobody in it. Scent stays blind to terrain, deferred to wind (#97).
 """
 
 from __future__ import annotations
@@ -105,6 +103,7 @@ class Barriers:
         self.revision = 0
         self._regions = np.zeros(terrain.heights.shape, dtype=np.int32)
         self._n_regions = 1
+        self._boxes = _bounding_boxes(self._regions, 1)
         self._regions_revision = self.revision
 
     @property
@@ -134,9 +133,21 @@ class Barriers:
         self._refresh_regions()
         return self._n_regions
 
+    @property
+    def region_boxes(self) -> np.ndarray:
+        """`(n_regions, 4) int64`: each region's bounding box in cells, by label.
+
+        Each row is `[row_low, row_high, col_low, col_high]`, half-open, so `regions[r0:r1, c0:c1]`
+        is the box. A sealed rectangle's box is the rectangle itself; an unfenced world's one box
+        is the whole grid. Read-only, as `regions` is.
+        """
+        self._refresh_regions()
+        return self._boxes
+
     def _refresh_regions(self) -> None:
         if self._regions_revision != self.revision:
             self._regions, self._n_regions = _label_regions(self.blocked_north, self.blocked_west)
+            self._boxes = _bounding_boxes(self._regions, self._n_regions)
             self._regions.flags.writeable = False
             self._regions_revision = self.revision
 
@@ -234,6 +245,27 @@ class Barriers:
             self.blocked_west[from_row, edge_col] | self.blocked_west[to_row, edge_col]
         )
         return np.asarray(crossed_north | crossed_west, dtype=np.bool_)
+
+
+def _bounding_boxes(regions: np.ndarray, count: int) -> np.ndarray:
+    """`(count, 4) int64`, read-only: `[row_low, row_high, col_low, col_high)` of each label."""
+    rows, cols = regions.shape
+    labels = regions.ravel()
+    row_of = np.repeat(np.arange(rows, dtype=np.int64), cols)
+    col_of = np.tile(np.arange(cols, dtype=np.int64), rows)
+    boxes = np.empty((count, 4), dtype=np.int64)
+    boxes[:, 0] = rows
+    boxes[:, 1] = -1
+    boxes[:, 2] = cols
+    boxes[:, 3] = -1
+    np.minimum.at(boxes[:, 0], labels, row_of)
+    np.maximum.at(boxes[:, 1], labels, row_of)
+    np.minimum.at(boxes[:, 2], labels, col_of)
+    np.maximum.at(boxes[:, 3], labels, col_of)
+    boxes[:, 1] += 1
+    boxes[:, 3] += 1
+    boxes.flags.writeable = False
+    return boxes
 
 
 def _label_regions(blocked_north: np.ndarray, blocked_west: np.ndarray) -> tuple[np.ndarray, int]:

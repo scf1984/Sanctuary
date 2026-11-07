@@ -37,6 +37,7 @@ from clients.viewer.demo_world import build_demo_world, demo_world_config
 from core.ecology.cues import CueField, CueFieldConfig, _axis_operator
 from core.selection import Selection
 from core.world.assembly import build_world
+from core.world.barriers import Barriers
 from core.world.terrain import Terrain
 from persistence import snapshot
 
@@ -63,7 +64,10 @@ FOUNDER_HORIZON = 2_000
 
 def retune(world, diffusion_range: float, threshold: float) -> None:
     world.scent.field = CueField(
-        world.terrain, world.scent.field.n_channels, CueFieldConfig(diffusion_range=diffusion_range)
+        world.terrain,
+        world.scent.field.n_channels,
+        CueFieldConfig(diffusion_range=diffusion_range),
+        world.barriers,
     )
     lust = _drives(world)["lust"]
     lust.config = dataclasses.replace(lust.config, detection_threshold=threshold)
@@ -108,7 +112,9 @@ def cost() -> None:
         cy = np.clip(y[:, None] + rng.uniform(-3, 3, (n, 9)), 0, grid - 1)
         row = []
         for diffusion_range in (3.0, 6.0, 10.0, 15.0, 20.0, 25.0):
-            field = CueField(terrain, 8, CueFieldConfig(diffusion_range=diffusion_range))
+            field = CueField(
+                terrain, 8, CueFieldConfig(diffusion_range=diffusion_range), Barriers(terrain)
+            )
             times = []
             for _ in range(15):
                 start = time.perf_counter()

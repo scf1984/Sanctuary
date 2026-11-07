@@ -1,4 +1,4 @@
-"""What a fence does to where penned animals stand, and what the region gate costs (#169).
+"""What sealed regions do to drives, contact and scent, and what they cost (#169, #276, #139).
 
 Throwaway spike code (CLAUDE.md §8.3), not imported by anything. Run from a worktree root with
 `PYTHONPATH=.`; it uses only what master already had before #169 (`build_demo_world`, `Fence`), so
@@ -19,10 +19,22 @@ the same file measures the tree before the gate and after it.
    membership is computed from the rectangle rather than from `Barriers.regions`, so it runs on
    trees that have no regions.
 
+4. **Scent cost with k pens** (#139). On the 256 x 256 bench grid at 100,000 animals, the cue
+   field rebuild (`Scent.rebuild`, once per tick) and the shared candidate read
+   (`Scent.perceived_at` over the (n, 9) option block, once per `choose`), with 0, 1, 2, 4 and 8
+   pens up. Median of 7.
+
+5. **Genetic distance between pen and outside** (#139). #27's fenced run carried on for 1,000
+   ticks after the fence, reporting the distance between the two populations' mean heritable
+   phenotypes (`core.genetics.distance.centroid_between`) and the same over the cue signature
+   genes alone, which carry no cost and drift neutrally, so they are the clean clock.
+
 Usage:
     python docs/spikes/fence_perception.py wire [seeds...]
     python docs/spikes/fence_perception.py choose
     python docs/spikes/fence_perception.py contact [seeds...]
+    python docs/spikes/fence_perception.py scent-cost
+    python docs/spikes/fence_perception.py distance [seeds...]
 """
 
 from __future__ import annotations
@@ -37,6 +49,9 @@ import numpy as np
 from clients.viewer.demo_world import build_demo_world, demo_world_config
 from core.ecology import conception as conception_module
 from core.ecology import predation as predation_module
+from core.genetics.distance import centroid_between
+from core.genetics.registry import Unit
+from core.selection import Selection
 from core.world.assembly import build_world
 from core.world.fence import Fence
 
@@ -126,6 +141,67 @@ def contact_run(seed: int) -> dict[str, tuple[int, int]]:
     return {verb: (tally[0], tally[1]) for verb, tally in counts.items()}
 
 
+def scent_cost() -> None:
+    config = demo_world_config(n_entities=100_000, seed=0)
+    config = replace(config, terrain=replace(config.terrain, width=256, height=256))
+    world = build_world(config, seed=0)
+    population = world.founders
+    rng = np.random.default_rng(1)
+    headings = world.behaviour.candidate_headings(population, rng)
+    x, y = world.behaviour.candidate_positions(population, headings)
+    for pens in (0, 1, 2, 4, 8):
+        world.barriers.clear()
+        # Pens of 40 x 40 cells on a lattice over the middle of the map.
+        for i in range(pens):
+            low_x, low_y = 20.0 + 56.0 * (i % 4), 60.0 + 70.0 * (i // 4)
+            world.barriers.enclose(low_x, low_y, low_x + 40.0, low_y + 40.0)
+        rebuild = timed(lambda: world.scent.rebuild(population))
+        read = timed(lambda: world.scent.perceived_at(population, x, y))
+        print(f"{pens} pens: rebuild {rebuild:.1f} ms, candidate read {read:.1f} ms")
+
+
+def distance_run(seed: int, ticks: int = 1000) -> dict[str, float]:
+    world = build_demo_world(seed=seed, n_entities=300)
+    world.loop.advance(200)
+    corners, (r0, r1, c0, c1) = pen_bounds(world)
+    world.loop.interventions.balance = 1.0e6
+    world.loop.interventions.request(Fence(world.barriers, *corners))
+    world.loop.advance(1)
+
+    def split():
+        living = world.store.alive & (world.store.age >= 0)
+        rows, cols = world.terrain.cell_indices(world.store.x, world.store.y)
+        penned = (rows >= r0) & (rows < r1) & (cols >= c0) & (cols < c1)
+        return Selection.from_mask(living & penned), Selection.from_mask(living & ~penned)
+
+    signature_columns = np.array(
+        [
+            world.genes.index_of(name, unit=Unit.DIMENSIONLESS)
+            for name in world.config.scent_genes.signature_genes
+        ]
+    )
+
+    def distances():
+        inside, outside = split()
+        if len(inside) == 0 or len(outside) == 0:
+            return float("nan"), float("nan"), len(inside), len(outside)
+        whole = float(centroid_between(world.genetics, inside, outside))
+        a = world.genetics.heritable(inside)[:, signature_columns].mean(axis=0)
+        b = world.genetics.heritable(outside)[:, signature_columns].mean(axis=0)
+        return whole, float(np.linalg.norm(a - b)), len(inside), len(outside)
+
+    start = distances()
+    world.loop.advance(ticks)
+    end = distances()
+    return {
+        "whole_at_fence": round(start[0], 3),
+        "whole_after": round(end[0], 3),
+        "signature_at_fence": round(start[1], 4),
+        "signature_after": round(end[1], 4),
+        "alive_in_out_after": (end[2], end[3]),
+    }
+
+
 def timed(fn, repeats: int = 7) -> float:
     fn()
     samples = []
@@ -182,6 +258,12 @@ if __name__ == "__main__":
         seeds = [int(s) for s in sys.argv[2:]] or [1, 2, 3]
         for seed in seeds:
             print(f"seed {seed}: {wire_run(seed)}")
+    elif sys.argv[1] == "scent-cost":
+        scent_cost()
+    elif sys.argv[1] == "distance":
+        seeds = [int(s) for s in sys.argv[2:]] or [1, 2, 3]
+        for seed in seeds:
+            print(f"seed {seed}: {distance_run(seed)}")
     elif sys.argv[1] == "contact":
         seeds = [int(s) for s in sys.argv[2:]] or [1, 2, 3]
         for seed in seeds:
