@@ -394,8 +394,9 @@ class Thermal:
     physically, through `Hydration`'s water loss (#156, #254).
 
     What this cannot do yet: the field is read where the animal can look, one `look_ahead` away, so
-    an animal follows the local gradient and has no memory of where it was comfortable. Whether
-    that yields seasonal range shifts is measured, not assumed (docs/spikes/thermal-divergence.md).
+    an animal follows the local gradient and has no memory of where it was comfortable. That is
+    enough for seasonal migration on a map whose climate straddles neutral, and not on one too hot
+    everywhere for any ground to be comfortable (docs/spikes/thermal-drive.md §2 and §5).
     """
 
     name = "thermal"
