@@ -111,6 +111,132 @@ class TestCrossingQuery:
         assert barriers.crossing_blocked(*at((5.4, 5.4)), *at((5.6, 5.6)))[0]
 
 
+def flood_fill_regions(blocked_north, blocked_west):
+    """The obvious labelling, one cell at a time: what `Barriers.regions` must agree with."""
+    rows, cols = blocked_north.shape
+    labels = np.full((rows, cols), -1, dtype=np.int64)
+    count = 0
+    for start in range(rows * cols):
+        if labels.flat[start] >= 0:
+            continue
+        stack = [divmod(start, cols)]
+        labels.flat[start] = count
+        while stack:
+            r, c = stack.pop()
+            steps = (
+                (r - 1, c, r > 0 and not blocked_north[r, c]),
+                (r + 1, c, r + 1 < rows and not blocked_north[r + 1, c]),
+                (r, c - 1, c > 0 and not blocked_west[r, c]),
+                (r, c + 1, c + 1 < cols and not blocked_west[r, c + 1]),
+            )
+            for nr, nc, open_edge in steps:
+                if open_edge and labels[nr, nc] < 0:
+                    labels[nr, nc] = count
+                    stack.append((nr, nc))
+        count += 1
+    return labels, count
+
+
+class TestSealedRegions:
+    """A fence seals what it surrounds, so the grid falls into regions nothing crosses between
+    (#169). Every drive reads the labels, through which candidates an animal can reach."""
+
+    def test_an_unfenced_world_is_one_region(self):
+        barriers = Barriers(flat())
+
+        assert barriers.n_regions == 1
+        assert not barriers.regions.any()
+
+    def test_a_pen_is_its_own_region(self):
+        barriers = Barriers(flat())
+
+        barriers.enclose(5.0, 5.0, 10.0, 10.0)
+
+        regions = barriers.regions
+        assert barriers.n_regions == 2
+        # The rectangle covers cells [5, 10) on both axes (`enclose`'s half-open rule).
+        assert len(np.unique(regions[5:10, 5:10])) == 1
+        assert regions[7, 7] != regions[7, 4]
+        assert regions[7, 7] != regions[4, 7]
+        assert regions[7, 4] == regions[15, 15] == regions[0, 0] == 0
+
+    def test_two_pens_are_two_regions_and_the_outside_a_third(self):
+        barriers = Barriers(flat())
+
+        barriers.enclose(2.0, 2.0, 6.0, 6.0)
+        barriers.enclose(12.0, 12.0, 18.0, 18.0)
+
+        assert barriers.n_regions == 3
+        assert barriers.regions[3, 3] != barriers.regions[14, 14]
+
+    def test_a_fence_with_a_gap_does_not_divide_anything(self):
+        """An animal can walk round the end of it, so both sides are one place."""
+        barriers = Barriers(flat())
+
+        barriers.blocked_west[:15, 9] = True
+        barriers.revision += 1
+
+        assert barriers.n_regions == 1
+
+    def test_corners_do_not_leak(self):
+        """Two pens meeting only at a corner stay apart: connectivity is through edges, as
+        `Movement` crosses them one at a time."""
+        barriers = Barriers(flat())
+
+        barriers.enclose(2.0, 2.0, 6.0, 6.0)
+        barriers.enclose(6.0, 6.0, 10.0, 10.0)
+
+        assert barriers.n_regions == 3
+        assert barriers.regions[5, 5] != barriers.regions[6, 6]
+
+    def test_the_labels_follow_every_edit(self):
+        """Recomputed on `revision`, so a fence taken down rejoins the world."""
+        barriers = Barriers(flat())
+        barriers.enclose(5.0, 5.0, 10.0, 10.0)
+        assert barriers.n_regions == 2
+
+        barriers.clear()
+
+        assert barriers.n_regions == 1
+        assert not barriers.regions.any()
+
+    def test_the_labels_are_read_only(self):
+        """Every reader shares one array until the next fence edit."""
+        barriers = Barriers(flat())
+        barriers.enclose(5.0, 5.0, 10.0, 10.0)
+
+        with pytest.raises(ValueError):
+            barriers.regions[0, 0] = 1
+
+    @pytest.mark.parametrize("seed", range(6))
+    def test_the_labels_agree_with_a_flood_fill(self, seed):
+        """Arbitrary walls, not only rectangles, so the sweeps are checked against the definition
+        rather than against the one shape `enclose` draws."""
+        rng = np.random.default_rng(seed)
+        barriers = Barriers(flat(17))
+        barriers.blocked_north[...] = rng.random((17, 17)) < 0.35
+        barriers.blocked_west[...] = rng.random((17, 17)) < 0.35
+        barriers.blocked_north[0, :] = False
+        barriers.blocked_west[:, 0] = False
+        barriers.revision += 1
+
+        expected, count = flood_fill_regions(barriers.blocked_north, barriers.blocked_west)
+
+        assert barriers.n_regions == count
+        assert np.array_equal(barriers.regions, expected)
+
+    def test_same_region_compares_the_cells_two_points_lie_in(self):
+        barriers = Barriers(flat())
+        barriers.enclose(5.0, 5.0, 10.0, 10.0)
+
+        inside, outside, also_inside = (7.0, 7.0), (3.0, 7.0), (9.4, 5.0)
+
+        assert barriers.same_region(*at(inside, inside), *at(also_inside, outside)).tolist() == [
+            True,
+            False,
+        ]
+
+
 class TestPerceptionRoutesAround:
     """Why a fence is an intervention rather than a multiplier (§2.5). The operator is a walk over
     the neighbour graph, so what arrives behind a barrier is only what came round the end of it —

@@ -308,7 +308,7 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
         store, columns, ecology, exertion, genetics, terrain, genes, config.movement, barriers
     )
     behaviour = Behaviour(
-        store, columns, genetics, genes, terrain, config.behaviour
+        store, columns, genetics, genes, terrain, config.behaviour, barriers
     )
     aging = Aging(store, columns)
     scent = Scent(

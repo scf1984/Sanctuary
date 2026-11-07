@@ -1276,11 +1276,48 @@ by" hunger and no animal stands still merely because the drive that won has no m
   **Measured** (§8.5): over 400 ticks with the population growing from 133 to about 1,200 outside,
   **not one animal crossed in either direction**.
 
+  **A fence seals, so the grid falls into regions, and a candidate in another region offers
+  nothing** — settled in #169 (the owner's option E). `enclose` always draws a closed rectangle, so
+  `Barriers.regions` labels each cell with the sealed region it lies in, recomputed only when
+  `revision` moves (6 ms on 256×256 with four pens). `Behaviour` marks each candidate reachable or
+  not on the one `Candidates` object every drive reads (#258), and **every drive** — hunger,
+  thirst, lust, fear, fatigue and thermal — scores an unreachable candidate at zero. An unfenced
+  world is one region and computes exactly what it did before, bit for bit, and pays nothing; a
+  fenced one pays about 40 ms a tick at 100,000 animals for marking and masking the candidates.
+
+  The defect it removes is a standing pull toward the wire. A fence has no width, so no
+  `look_ahead` is short enough to stay inside it: in a 20×20 pen 24% of candidates end beyond it,
+  and each read the far side's field, so the animal turned toward food, water or a mate it could
+  never reach, walked into the wire, was refused, and chose the same way the next tick. In #27's
+  fenced run, penned animals stood in the ring of cells just inside the wire at **3.1–4.0×** that
+  ring's share of the pen; with the gate, **0.5–0.7×**
+  ([`docs/spikes/fence-perception.md`](docs/spikes/fence-perception.md)). The gate overshoots
+  into a mild repulsion, because an option worth nothing loses to any option worth something;
+  the world edge avoids that by clipping a candidate onto the rim rather than discarding it, and
+  doing the same at a fence is #278.
+
+  **Zero is what an option offers, not always what it reads.** For a drive that perceives an
+  amount (food, water, company, a thermal saving) the two coincide, and the reading is zeroed
+  before `detected` normalises, so the best option the animal *can* reach still scores 1. Fear and
+  fatigue score the other way round, so they zero the appeal: read literally, "nothing detected
+  across the wire" is *perfectly safe*, and every frightened penned animal would run at the fence.
+
+  **Ridges stay unpriced in perception**, and that is a decision with its measurement rather than
+  an oversight (#169). A candidate is read where it lands, not along the way, so it does not see a
+  ridge it would have to climb. On the shipped 80×80 heightmap the climb an endpoint hides is
+  mean 0.05, p90 0.15 and at most 0.66 world units over 20,000 random 4-unit rays — about 1.3 world
+  units of flat walking at the shipped `climb_cost / transport_cost`. Walking every candidate with
+  #113's walk would see it, and costs 2.7 s per tick at 100,000 animals unfenced and 7.6 s fenced,
+  several times §2.1's whole tick. Revisit only if terrain becomes sharp at the `look_ahead` scale,
+  or #143 prices water strongly enough that crossing it becomes the next unpriced sample.
+
   **What a fence does not stop is scent.** `core.ecology.cues` spreads scent with a separable
   exponential kernel rather than the neighbour-graph walk, because `sample_excluding_self` subtracts
   the exact diagonal of that kernel and the factorisation only holds for a separable kernel. So a
   fenced world's animals smell each other through the wire, and converting the cue field is #139's.
-  Worth knowing before reading a fenced world's fear scores.
+  Since #169 nothing *steers* by a smell across the wire, because a candidate there offers nothing;
+  but fear's urgency is read where the animal stands, so a penned animal is still frightened by
+  what it smells outside. Worth knowing before reading a fenced world's fear scores.
 
   **A fence does not evict.** Whoever is inside when it goes up is inside. That is what makes it an
   isolation rather than a round-up, and it is why *did I fence enough of them, with enough food and

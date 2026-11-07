@@ -43,14 +43,31 @@ So `Movement` stops an animal *at* a blocked edge without charging it for the cr
 make, and the walk it already does per cell crossing (#113) is where that lands — a fence needs no
 second pass, because the code that would have to know about it is already visiting every edge.
 
+## A sealed fence partitions the grid into regions
+
+`enclose` always draws a closed rectangle, so every fence that exists seals what it surrounds, and
+the grid falls into **regions**: sets of cells joined by open edges. Nothing in one region can reach
+another, so "are these two places on the same side of every fence" is one integer comparison
+instead of a walk (#169). `regions` labels them, recomputed only when `revision` moves, and these
+ask it:
+
+- a candidate heading across the wire offers nothing to any drive (#169), since the animal cannot
+  get there.
+
+Connectivity is through the **four** edge neighbours, which is what `Movement` walks (#113): it
+crosses one edge at a time, so a diagonal through a fence corner is two crossings and is refused
+if either is. A fence with a gap in it would leave its two sides one region, and every reader then
+behaves exactly as if it were not there — which is right, because an animal can walk round.
+
 ## What a fence does not stop
 
 **Scent.** `core.ecology.cues` blurs with a separable box kernel rather than the neighbour-graph
 walk, precisely because `sample_excluding_self` subtracts the exact diagonal of that blur and the
 factorisation only works for a separable kernel. So an animal smells its neighbours through a fence,
-and converting the cue field to a cost-aware operator is filed separately (#139). Worth knowing
-before reading a fenced world's fear scores: the barrier is real for food, water and movement, and
-not yet for smell.
+and converting the cue field to a cost-aware operator is filed separately (#139). Nothing steers
+by a smell across the wire, since a candidate there offers nothing (#169), but fear's urgency is
+read where the animal stands and still smells through it. Worth knowing before reading a fenced
+world's fear scores.
 """
 
 from __future__ import annotations
@@ -85,11 +102,55 @@ class Barriers:
         # eventually not set, and the failure is silent (§8.7): the field simply keeps routing
         # through a fence that is standing.
         self.revision = 0
+        self._regions = np.zeros(terrain.heights.shape, dtype=np.int32)
+        self._n_regions = 1
+        self._regions_revision = self.revision
 
     @property
     def any_blocked(self) -> bool:
         """Whether anything is fenced at all, so an unfenced world pays for nothing."""
         return bool(self.blocked_north.any() or self.blocked_west.any())
+
+    @property
+    def regions(self) -> np.ndarray:
+        """`(h, w) int32`: the sealed region each cell lies in, numbered from 0 (module docstring).
+
+        Two cells share a label exactly when a path of open edges joins them. Numbered in order of
+        each region's first cell in row-major order, so an unfenced world is all 0 and the region
+        holding cell `(0, 0)` is always 0. Recomputed when `revision` has moved since the last
+        call, and otherwise returned from the cache: every reader asks once per tick and fences go
+        up far less often than that.
+
+        Read-only, because a reader that wrote into it would change every other reader's answer
+        until the next fence edit.
+        """
+        self._refresh_regions()
+        return self._regions
+
+    @property
+    def n_regions(self) -> int:
+        """How many sealed regions the grid holds; 1 for an unfenced world."""
+        self._refresh_regions()
+        return self._n_regions
+
+    def _refresh_regions(self) -> None:
+        if self._regions_revision != self.revision:
+            self._regions, self._n_regions = _label_regions(self.blocked_north, self.blocked_west)
+            self._regions.flags.writeable = False
+            self._regions_revision = self.revision
+
+    def same_region(
+        self, from_x: np.ndarray, from_y: np.ndarray, to_x: np.ndarray, to_y: np.ndarray
+    ) -> np.ndarray:
+        """`bool`, broadcast over the arguments: whether each `(from)` and `(to)` share a region.
+
+        World units. A position is in the region of the cell containing it, and `Movement` stops
+        an animal short of the wire (#27), so an animal is always in the region it was penned in.
+        """
+        regions = self.regions
+        from_row, from_col = self.terrain.cell_indices(from_x, from_y)
+        to_row, to_col = self.terrain.cell_indices(to_x, to_y)
+        return np.asarray(regions[from_row, from_col] == regions[to_row, to_col], dtype=np.bool_)
 
     def enclose(self, min_x: float, min_y: float, max_x: float, max_y: float) -> int:
         """Fence the perimeter of the world-unit rectangle; return how many edges that blocked.
@@ -167,3 +228,48 @@ class Barriers:
             self.blocked_west[from_row, edge_col] | self.blocked_west[to_row, edge_col]
         )
         return np.asarray(crossed_north | crossed_west, dtype=np.bool_)
+
+
+def _label_regions(blocked_north: np.ndarray, blocked_west: np.ndarray) -> tuple[np.ndarray, int]:
+    """`(h, w) int32` region labels and their count: the connected components of the open edges.
+
+    Every cell starts labelled by its own flat index, and labels are then lowered to the smallest
+    one reachable, alternating two sweeps until nothing changes: each **run** of a row between
+    blocked west edges takes its minimum, then each run of a column between blocked north edges
+    does. A run is open along its whole length, so it is one region and its minimum is a label the
+    whole run can reach. Every path is a sequence of row moves and column moves, so the sweeps
+    converge on each region's smallest index, in as many rounds as the path that needs most turns —
+    two or three for a rectangle, where a flood fill one cell per pass would need the region's
+    diameter.
+
+    Vectorised throughout (§2.3): one `minimum.reduceat` per sweep over the flattened grid, since
+    the runs of a row-major array are contiguous, and the transpose for the column runs.
+    """
+    rows, cols = blocked_north.shape
+    if not (blocked_north.any() or blocked_west.any()):
+        return np.zeros((rows, cols), dtype=np.int32), 1
+
+    # A run starts at the first cell of every line and at every blocked edge along it.
+    row_starts = blocked_west.copy()
+    row_starts[:, 0] = True
+    col_starts = blocked_north.T.copy()
+    col_starts[:, 0] = True
+    row_first = np.flatnonzero(row_starts)
+    col_first = np.flatnonzero(col_starts)
+    # Which run each cell belongs to, so a run's minimum is gathered back onto its cells.
+    row_run = np.cumsum(row_starts.ravel()) - 1
+    col_run = np.cumsum(col_starts.ravel()) - 1
+
+    labels = np.arange(rows * cols, dtype=np.int64)
+    while True:
+        lowered = np.minimum.reduceat(labels, row_first)[row_run]
+        across = np.ascontiguousarray(lowered.reshape(rows, cols).T).ravel()
+        across = np.minimum.reduceat(across, col_first)[col_run]
+        lowered = np.ascontiguousarray(across.reshape(cols, rows).T).ravel()
+        if np.array_equal(lowered, labels):
+            break
+        labels = lowered
+
+    # Renumber 0..k-1 in order of each region's smallest index, which is its first cell.
+    unique, compact = np.unique(labels, return_inverse=True)
+    return compact.reshape(rows, cols).astype(np.int32), int(unique.size)

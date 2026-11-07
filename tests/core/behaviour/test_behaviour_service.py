@@ -8,6 +8,7 @@ from core.genetics.service import Genetics
 from core.genetics.species import SpeciesRegistry
 from core.selection import Selection
 from core.services import ColumnOwnershipError, ColumnRegistry
+from core.world.barriers import Barriers
 from core.world.terrain import Terrain
 
 from tests.support.genes import gene_registry
@@ -48,6 +49,7 @@ class World:
             self.store, self.columns, self.species, self.genes, GENETICS_CONFIG
         )
         self.terrain = Terrain(np.zeros((grid, grid), dtype=np.float32), cell_size=1.0)
+        self.barriers = Barriers(self.terrain)
         self.behaviour = Behaviour(
             self.store,
             self.columns,
@@ -60,6 +62,7 @@ class World:
                 commitment_gene="commitment",
                 choice_temperature_gene="choice_temperature",
             ),
+            self.barriers,
         )
 
     def spawn(self, n, temperature=DECISIVE, commitment=0.0, **columns):
@@ -154,6 +157,7 @@ class TestColumnOwnership:
                 world.genes,
                 world.terrain,
                 world.behaviour.config,
+                world.barriers,
             )
 
     def test_behaviour_cannot_write_a_column_it_does_not_own(self):
@@ -419,6 +423,39 @@ class TestUtilities:
 
         assert total[0, 0] == pytest.approx(1.0)
         assert total[1, 0] == pytest.approx(0.1)
+
+
+class TestReachableCandidates:
+    """Which options lie on the animal's own side of every fence (#169), asked once per choice and
+    handed to every drive on the one `Candidates` object."""
+
+    def options(self, world, selection):
+        headings = world.behaviour.candidate_headings(selection, np.random.default_rng(0))
+        return world.behaviour.candidate_positions(selection, headings)
+
+    def test_an_unfenced_world_marks_nothing(self):
+        """One region, so nothing is computed and every drive reads what it read before fences
+        could seal anything."""
+        world = World()
+        selection = world.spawn(3)
+
+        assert world.behaviour.candidates(selection, *self.options(world, selection)).reachable is None
+
+    def test_a_candidate_across_the_wire_is_unreachable_and_staying_put_never_is(self):
+        world = World()
+        selection = world.spawn(1, x=np.float32([4.0]), y=np.float32([4.0]))
+        # A wire between columns 4 and 5 (x = 4.5), half a cell east of the animal.
+        world.barriers.blocked_west[:, 5] = True
+        world.barriers.revision += 1
+        x, y = self.options(world, selection)
+
+        reachable = world.behaviour.candidates(selection, x, y).reachable
+
+        assert reachable is not None
+        assert reachable[0, NULL]
+        expected = world.terrain.cell_indices(x[0], y[0])[1] < 5
+        assert reachable[0].tolist() == expected.tolist()
+        assert not expected.all() and expected.sum() > 1, "the wire divides nothing here"
 
 
 class TestChoosing:
@@ -738,19 +775,22 @@ class TestCommitment:
         columns = ColumnRegistry()
         species = SpeciesRegistry(registry.vocabulary)
 
+        terrain = Terrain(np.zeros((9, 9), dtype=np.float32), cell_size=1.0)
+
         with pytest.raises(ValueError, match="signature_0"):
             Behaviour(
                 store,
                 columns,
                 Genetics(store, columns, species, registry, GENETICS_CONFIG),
                 registry,
-                Terrain(np.zeros((9, 9), dtype=np.float32), cell_size=1.0),
+                terrain,
                 BehaviourConfig(
                     n_candidates=8,
                     look_ahead=1.0,
                     commitment_gene="signature_0",
                     choice_temperature_gene="choice_temperature",
                 ),
+                Barriers(terrain),
             )
 
 

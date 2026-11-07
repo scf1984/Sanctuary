@@ -54,6 +54,7 @@ from core.genetics.registry import GeneRegistry, Unit
 from core.genetics.service import Genetics
 from core.selection import Selection
 from core.services import ColumnRegistry, DomainService
+from core.world.barriers import Barriers
 from core.world.terrain import Terrain
 
 
@@ -154,11 +155,15 @@ class Behaviour(DomainService):
         genes: GeneRegistry,
         terrain: Terrain,
         config: BehaviourConfig,
+        barriers: Barriers,
     ) -> None:
         super().__init__(store, registry)
         self.genetics = genetics
         self.terrain = terrain
         self.config = config
+        # Read for which side of every fence each candidate lies on (#169): a candidate the animal
+        # cannot reach offers nothing to any drive.
+        self.barriers = barriers
         self._drives: list[Drive] = []
         # A temperature is a bare scale on a utility, so it carries no dimension of its own; so is
         # a bonus added to one.
@@ -323,6 +328,22 @@ class Behaviour(DomainService):
             ),
         )
 
+    def candidates(self, selection: Selection, x: np.ndarray, y: np.ndarray) -> Candidates:
+        """The one object every drive scores this call's options through (#258).
+
+        x, y: (len(selection), n_options) float64, as `candidate_positions` returns them.
+
+        Marks which candidates lie in the animal's own sealed region (#169). Asked once here and
+        not per drive, because it is the same answer for every one of them. An unfenced world is
+        one region, so nothing is computed and the drives read exactly what they did before.
+        """
+        if self.barriers.n_regions == 1:
+            return Candidates(selection, x, y, None)
+        mask = selection.to_mask()
+        here_x = self.store.x[mask].astype(np.float64)[:, None]
+        here_y = self.store.y[mask].astype(np.float64)[:, None]
+        return Candidates(selection, x, y, self.barriers.same_region(here_x, here_y, x, y))
+
     def utilities(
         self,
         selection: Selection,
@@ -351,7 +372,7 @@ class Behaviour(DomainService):
         contributions: dict[str, np.ndarray] = {}
         # Built here and dropped on return, so a reading one drive leaves on it for the next can
         # never be read against a later tick's world (#258).
-        candidates = Candidates(selection, x, y)
+        candidates = self.candidates(selection, x, y)
         for drive in self._drives:
             urgency = np.asarray(drive.urgency(selection), dtype=np.float64)
             if urgency.shape != (n,):
