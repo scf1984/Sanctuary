@@ -36,6 +36,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from core.behaviour.candidates import Candidates
 from core.behaviour.exertion import Exertion
 from core.ecology.carrion import Carrion
 from core.ecology.cues import Scent
@@ -200,7 +201,7 @@ class Hunger:
         deficit = 1.0 - self.ecology.energy(selection) / self.config.satiation_energy
         return (self._weight.of(selection) * np.clip(deficit, 0.0, 1.0)).astype(np.float32)
 
-    def appeal(self, selection: Selection, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    def appeal(self, selection: Selection, candidates: Candidates) -> np.ndarray:
         """(n, n_options) float32 in [0, 1]: how much *food* each option leads toward.
 
         **Food is whatever this animal's diet is allocated toward**, so one drive points a herbivore
@@ -240,12 +241,13 @@ class Hunger:
         """
         phenotype = self.genetics.expressed_columns(selection, self._columns)
         sight = phenotype[:, 0].astype(np.float64)
+        x, y = candidates.x, candidates.y
         grazing = sight[:, None] * self.plants.forage_at(self.plants.forage, x, y)
         # Summed over cue channels: how much animal lies that way, with no opinion about which.
         # Signed channels can cancel, and a cancelled blend is *less* smell rather than a negative
         # amount of it, so the sum is floored rather than allowed to invert the appeal.
         prey = sight[:, None] * (
-            np.maximum(self.scent.perceived_at(selection, x, y).sum(axis=-1), 0.0)
+            np.maximum(candidates.perceived(self.scent).sum(axis=-1), 0.0)
             + self.plants.forage_at(self.carrion.scent, x, y)
         )
 
@@ -324,7 +326,7 @@ class Thirst:
         """
         return (self._weight.of(selection) * self.hydration.deficit(selection)).astype(np.float32)
 
-    def appeal(self, selection: Selection, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    def appeal(self, selection: Selection, candidates: Candidates) -> np.ndarray:
         """(n, n_options) float32 in [0, 1]: how much water each option leads toward.
 
         The diffused reachable-water field sampled at each candidate and gated by
@@ -336,7 +338,7 @@ class Thirst:
         zeros** rather than a flat non-zero preference, so thirst drops out of the sum entirely and
         cannot push an animal whichever way the numerical noise leaned.
         """
-        reading = self.hydration.reachable_at(x, y).astype(np.float64)
+        reading = self.hydration.reachable_at(candidates.x, candidates.y).astype(np.float64)
         return detected(reading, self.config.detection_threshold).astype(np.float32)
 
 
@@ -433,13 +435,13 @@ class Thermal:
         shape = np.clip(bill / self.config.saturation_upkeep, 0.0, 1.0)
         return (self._weight.of(selection) * shape).astype(np.float32)
 
-    def appeal(self, selection: Selection, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    def appeal(self, selection: Selection, candidates: Candidates) -> np.ndarray:
         """(n, n_options) float32 in [0, 1]: how much of the climate's bill each option would save."""
         mask = selection.to_mask()
         phenotype = self.genetics.expressed_columns(selection, self._columns)
         tolerances = phenotype[:, :2]
         here = self.climate.temperature_at(self.store.x[mask], self.store.y[mask])
-        there = self.climate.temperature_at(x, y)
+        there = self.climate.temperature_at(candidates.x, candidates.y)
         bill_here = self.metabolism.thermoregulation(tolerances, here.astype(np.float64))
         bill_there = self.metabolism.thermoregulation(tolerances, there.astype(np.float64))
         acuity = phenotype[:, 2].astype(np.float64)[:, None]
@@ -527,7 +529,7 @@ class Lust:
         )
         self._weight = DriveWeight(genetics, genes, config.weight_gene)
 
-    def appeal(self, selection: Selection, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    def appeal(self, selection: Selection, candidates: Candidates) -> np.ndarray:
         """(n, n_options) float32 in [0, 1]: how much company-like-me each option leads toward.
 
         **The vector is the animal's own signature** (CLAUDE.md §2.5), and that is the whole of
@@ -551,7 +553,7 @@ class Lust:
         acuity = self.genetics.expressed_columns(selection, self._acuity_column)[:, 0].astype(
             np.float64
         )
-        perceived = self.scent.perceived_at(selection, x, y)
+        perceived = candidates.perceived(self.scent)
         own = self.scent.signature_of(selection).astype(np.float64)
         # Dot each candidate's cue reading against the searcher's own signature. Negative means it
         # smells like the opposite of itself, which the positive threshold discards.
@@ -698,7 +700,7 @@ class Fear:
         # every direction is one matrix product rather than a loop over genes.
         self._aversion_positions = 1 + np.arange(aversion.size).reshape(aversion.shape)
 
-    def appeal(self, selection: Selection, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    def appeal(self, selection: Selection, candidates: Candidates) -> np.ndarray:
         """(n, n_options) float32 in [0, 1]: how much safer each option is than the worst (#265).
 
         Danger at a candidate is what urgency reads where the animal stands, read there instead:
@@ -725,7 +727,7 @@ class Fear:
         docs/spikes/fear-direction.md (the #207 question).
         """
         expressed = self.genetics.expressed_columns(selection, self._columns).astype(np.float64)
-        perceived = self.scent.perceived_at(selection, x, y).astype(np.float64)
+        perceived = candidates.perceived(self.scent).astype(np.float64)
         acuity = expressed[:, 0]
         # (n, n_directions, n_channels): each animal's aversion directions, in cue-channel order.
         aversion = expressed[:, self._aversion_positions]
@@ -872,7 +874,7 @@ class Fatigue:
         self.config = config
         self._weight = DriveWeight(genetics, genes, config.weight_gene)
 
-    def appeal(self, selection: Selection, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    def appeal(self, selection: Selection, candidates: Candidates) -> np.ndarray:
         """(n, n_options) float32: how restful each option looks, 1 for staying put.
 
         ```
@@ -910,6 +912,7 @@ class Fatigue:
         this is a *perception* and not a bill: an animal looks at a slope and judges it, it does
         not survey the path first. The walk is what the pool is charged against, and it still is.
         """
+        x, y = candidates.x, candidates.y
         mask = selection.to_mask()
         here_x = self.store.x[mask].astype(np.float64)[:, None]
         here_y = self.store.y[mask].astype(np.float64)[:, None]
