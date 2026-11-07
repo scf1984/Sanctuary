@@ -36,8 +36,8 @@ def sample(world):
     living = living_of(world)
     if not len(living):
         return 0, float("nan"), float("nan"), float("nan")
-    phenotype = world.genetics.expressed(living)
-    share = world.feeding.diet.animal_share(phenotype)
+    diet_column = np.array([world.feeding.diet.animal_derived_index])
+    share = world.genetics.expressed_columns(living, diet_column)[:, 0]
     return (
         len(living),
         float(np.mean(share)),

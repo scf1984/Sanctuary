@@ -31,7 +31,7 @@ class Ecology(DomainService):
     """Charges every entity's expressed phenotype against its energy pool, once per tick.
 
     genetics: consulted for expressed phenotype only — this service never writes a gene. Read
-        across the boundary through `Genetics.expressed`, so the species expression mask is
+        across the boundary through `Genetics.expressed_columns`, so the species expression mask is
         applied by the service that owns it (CLAUDE.md §2.3).
     climate: the temperature field thermoregulation cost is sampled from, at each entity's own
         position. Queried as a continuous field, never as a zone label (`core.world.climate`).
@@ -72,7 +72,10 @@ class Ecology(DomainService):
         """
         mask = selection.to_mask()
         temperature = self.climate.temperature_at(self.store.x[mask], self.store.y[mask])
-        base = self.metabolism.upkeep(self.genetics.expressed(selection), temperature)
+        base = self.metabolism.upkeep(
+            self.genetics.expressed_columns(selection, self.metabolism.upkeep_columns),
+            temperature,
+        )
         # A dry animal costs more to run, and that is the whole of how dehydration kills (#156):
         # it empties the pool faster, `starving` reads the empty pool and `Death` frees the row,
         # both unchanged. A `dehydration >= 1 -> dead` branch would be a second mortality path no

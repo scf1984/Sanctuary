@@ -397,6 +397,28 @@ class ScentGenes:
             raise ValueError("signature_genes must name at least one gene")
 
 
+@dataclass(frozen=True)
+class Broadcast:
+    """What a selection of creatures puts into the air: where each stands, how loudly, and as what.
+
+    Built by `Scent.broadcast` and handed back to the same `Scent` to smell with, so the deposit and
+    the self-exclusion are still read from one place (see `Scent`). It is a value rather than
+    something each read recomputes because one `Behaviour.choose` needs it three times — lust's own
+    signature, fear's sniff where the animal stands, and the air at every candidate — and nothing in
+    it changes within the call (#174). `Candidates.broadcast` is where that sharing happens.
+
+    x, y: (n,) float32 world units, each creature's position.
+    emission: (n,) float32, its expressed broadcast strength.
+    signature: (n, n_channels) float32, its expressed position in cue space; also the vector
+        mate-finding reads the field with (§2.5).
+    """
+
+    x: np.ndarray
+    y: np.ndarray
+    emission: np.ndarray
+    signature: np.ndarray
+
+
 class Scent:
     """The scent modality: the gene matrix on one side, the cue field on the other.
 
@@ -429,7 +451,7 @@ class Scent:
         self.field = field
         # Raise KeyError naming the vocabulary version if any gene does not exist. Broadcast
         # strength and a position in cue space are both bare numbers.
-        # (1 + n_channels,) int: emission, then the signature, the only genes `_broadcast` reads.
+        # (1 + n_channels,) int: emission, then the signature, the only genes `broadcast` reads.
         self._broadcast_columns = np.array(
             [genes.index_of(scent.emission_gene, unit=Unit.DIMENSIONLESS)]
             + [genes.index_of(name, unit=Unit.DIMENSIONLESS) for name in scent.signature_genes],
@@ -438,56 +460,41 @@ class Scent:
 
     def rebuild(self, population: Selection) -> None:
         """Deposit every living creature's scent and diffuse it. Once per tick, before any read."""
-        mask = population.to_mask()
-        emission, signature = self._broadcast(population)
-        self.field.rebuild(self.store.x[mask], self.store.y[mask], emission, signature)
+        broadcast = self.broadcast(population)
+        self.field.rebuild(broadcast.x, broadcast.y, broadcast.emission, broadcast.signature)
 
-    def perceive(self, selection: Selection) -> np.ndarray:
-        """(len(selection), n_channels) float32: cue concentration each creature can smell.
-
-        Excludes the creature's own scent — see `CueField.sample_excluding_self` for why that is
-        not optional.
-        """
-        mask = selection.to_mask()
-        emission, signature = self._broadcast(selection)
-        return self.field.sample_excluding_self(
-            self.store.x[mask], self.store.y[mask], emission, signature
-        )
-
-    def perceived_at(
-        self, selection: Selection, x: np.ndarray, y: np.ndarray
-    ) -> np.ndarray:
-        """Cue concentration at arbitrary points, minus each sampler's own plume.
-
-        x, y: (n, ...) world units, one leading entry per entity in `selection`. A whole
-        (n_entities, n_options) block of candidates costs one call (#114).
-
-        `perceived` answers where the animal already stands; this answers anywhere, which is what a
-        drive needs in order to *steer* rather than merely to be alarmed (#188).
-        """
-        mask = selection.to_mask()
-        emission, signature = self._broadcast(selection)
-        return self.field.sample_excluding_source(
-            x, y, self.store.x[mask], self.store.y[mask], emission, signature
-        )
-
-    def signature_of(self, selection: Selection) -> np.ndarray:
-        """(len(selection), n_channels) float32: each creature's own expressed cue signature.
-
-        Exposed because §2.5 settles that mate-finding is this field read with the searcher's *own*
-        signature as the vector, and a caller that resolved the signature genes itself would be the
-        second place they are named — which is the disagreement this class exists to prevent.
-        """
-        return self._broadcast(selection)[1]
-
-    def _broadcast(self, selection: Selection) -> tuple[np.ndarray, np.ndarray]:
-        """Each creature's (emission, signature) from its *expressed* phenotype.
+    def broadcast(self, selection: Selection) -> Broadcast:
+        """What each creature in `selection` puts into the air, from its *expressed* phenotype.
 
         Expression, not genotype, for the same reason upkeep follows it (#17): a species that does
         not express a signature gene neither carries that scent nor pays for it.
         """
+        mask = selection.to_mask()
         expressed = self.genetics.expressed_columns(selection, self._broadcast_columns)
-        return expressed[:, 0], expressed[:, 1:]
+        return Broadcast(self.store.x[mask], self.store.y[mask], expressed[:, 0], expressed[:, 1:])
+
+    def perceive(self, broadcast: Broadcast) -> np.ndarray:
+        """(n, n_channels) float32: cue concentration each broadcaster can smell where it stands.
+
+        Excludes the creature's own scent — see `CueField.sample_excluding_self` for why that is
+        not optional.
+        """
+        return self.field.sample_excluding_self(
+            broadcast.x, broadcast.y, broadcast.emission, broadcast.signature
+        )
+
+    def perceived_at(self, broadcast: Broadcast, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+        """Cue concentration at arbitrary points, minus each sampler's own plume.
+
+        x, y: (n, ...) world units, one leading entry per creature in `broadcast`. A whole
+        (n_entities, n_options) block of candidates costs one call (#114).
+
+        `perceive` answers where the animal already stands; this answers anywhere, which is what a
+        drive needs in order to *steer* rather than merely to be alarmed (#188).
+        """
+        return self.field.sample_excluding_source(
+            x, y, broadcast.x, broadcast.y, broadcast.emission, broadcast.signature
+        )
 
 
 # **Why an exponential (#262).** It is the steady state of scent that decays while it spreads: in

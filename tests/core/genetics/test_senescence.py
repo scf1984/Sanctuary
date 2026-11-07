@@ -248,3 +248,20 @@ class TestReadingSomeColumns:
         some = genetics.expressed_columns(selection, np.array(columns))
         assert some.dtype == np.float32
         np.testing.assert_array_equal(some, full[:, columns])
+
+    @pytest.mark.parametrize(
+        "columns",
+        [[1], [2, 4], [6, 7, 8, 9], [9, 0, 3], list(range(10))],
+        ids=["one decaying", "decaying and resistance", "every other mode", "out of order", "all"],
+    )
+    def test_the_row_form_equals_the_same_columns_of_the_full_row_block_exactly(self, columns):
+        """`expressed_columns_at` is to `expressed_at` what `expressed_columns` is to `expressed`:
+        rows in the caller's order, repeats allowed, which is how a pairing addresses them (#20).
+        Predation reads two genes of each side of every touching pair (#174)."""
+        genetics, selection = self.population()
+        rows = np.random.default_rng(5).permutation(selection.to_indices())
+        rows = np.concatenate([rows, rows[:7]])
+        full = genetics.expressed_at(rows)
+        some = genetics.expressed_columns_at(rows, np.array(columns))
+        assert some.dtype == np.float32
+        np.testing.assert_array_equal(some, full[:, columns])

@@ -219,3 +219,78 @@ python docs/spikes/tick_budget.py systems   --n 10000 --grid 256 --warmup 150 --
 python docs/spikes/tick_budget.py profile   --n 100000 --grid 256 --ticks 4    # §2
 python docs/spikes/tick_budget.py phenotype --n 100000 --grid 256          # §3
 ```
+
+## 6. After removing the repetition (#174, decision of 2026-11-07)
+
+The owner's decision was to remove the repetition first: no per-tick block and no cache. Each
+reader builds only the columns it reads, and a reading two readers in one `choose()` take is built
+once, on that call's `Candidates`:
+
+- `Movement.step` reads 4 columns, `Feeding.feed` 2, `Conception.willing` 1, and
+  `Predation._wound` 2 of the attacker and 1 of the victim (`Genetics.expressed_columns_at`, new).
+- `Ecology.upkeep` reads the 9 costed genes (`Metabolism.upkeep_columns`). Those columns are put
+  back into a zeroed full-width block before the matrix product, because a 9-column product rounds
+  the last bit differently (up to 1.5e-8 on the demo world). Dropping that step would be a rule
+  change, not an optimisation.
+- `Scent.broadcast` (was `_broadcast`) returns a `Broadcast` value, and `Candidates.broadcast`
+  builds it once per call for lust's signature, fear's sniff and the candidate reading.
+  `Candidates.expressed` builds fear's 17 columns once for both `urgency` and `appeal`. That needed
+  `Drive.urgency` to take the call's `Candidates` as `appeal` already does.
+
+**Tier 1 (§2.8):** the demo world at seeds 1 and 2 with 200 founders for 400 ticks, and seed 1 with
+2,000 founders for 300 ticks. All 65 arrays the two revisions share are bit-identical, along with
+the world generator's state. That covers every store column, plants, carrion, the cue field, climate
+and water. Strikes and births both ran. The branch has 7 more arrays, all constant column-index
+tables.
+
+Measured alternately against `80bd7f3` on the same machine. Another benchmark was running
+alongside, so both columns are slower than §1: base was 1,710–1,770 ms where §1 measured 1,403.
+
+**Phenotype census (`phenotype` mode, 100k on 256², 2 runs each, ms per tick):**
+
+| system | base | branch |
+|---|---:|---:|
+| cue_field_rebuild | 14.4 / 14.3 | 13.8 / 13.4 |
+| drive_scoring | 176.4 / 174.4 | 118.9 / 118.4 |
+| movement | 50.1 / 48.2 | 14.8 / 15.1 |
+| feeding (incl. `vigour`) | 57.4 / 50.6 | 14.1 / 13.3 |
+| predation | 68.4 / 66.6 | 9.6 / 8.7 |
+| metabolic_upkeep | 50.1 / 47.7 | 21.2 / 20.7 |
+| conception | 47.8 / 46.1 | 4.3 / 4.0 |
+| **total** | **464.5 / 447.9** | **196.8 / 193.5** |
+
+That is 26 reads per tick before and 21 after. In `choose()`, `Scent._broadcast`'s 3 calls became
+1, and fear's 2 became 1.
+
+**Per system (`systems` mode, 3 worlds × 8 ticks, median ms, 2 runs each):**
+
+| system | base | branch |
+|---|---:|---:|
+| cue_field_rebuild | 42.6 / 41.0 | 38.1 / 36.2 |
+| drive_scoring | 1,105.6 / 1,050.9 | 986.8 / 888.3 |
+| movement | 258.5 / 249.9 | 207.3 / 186.8 |
+| feeding | 80.8 / 77.5 | 25.2 / 24.0 |
+| predation | 102.8 / 99.7 | 27.9 / 26.6 |
+| metabolic_upkeep | 68.5 / 71.4 | 42.9 / 40.3 |
+| conception | 55.4 / 57.9 | 4.9 / 4.8 |
+| **whole `advance(1)`** | **1,770.7 / 1,710.5** | **1,391.9 / 1,286.5** |
+
+The census accounts for about 260 ms of the change. The systems table shows about 400 ms, and the
+difference is mostly in `drive_scoring` and `movement`, where the concurrent load was heaviest
+(base p90 values are 100–250 ms above the median). Take **about 260 ms per tick at 100k**, roughly
+15–19% of the tick, as the measured saving. The rest is not attributed.
+
+**What a once-per-tick block would still save.** 195 ms of reads remain. All of them except
+conception's 4 ms fall inside the window of positions 2–12, where §4 found genes, species, ages and
+the living set constant. One block over the living set costs 43–51 ms to build (this run). Slicing
+it the way the remaining readers do (about 40 distinct columns, 21 reads, and predation's row
+gathers) adds about 15–20 ms, and `vigour` stays separate at about 5 ms. **So a block would save
+roughly 120 ms per tick at 100k**, about 9% of the tick now, against about 190 ms of reads it would
+replace. That is less than half the 300–350 ms §3 estimated, because the column narrowing has
+already taken most of that.
+
+Two smaller repeats remain that need no cache:
+
+- `DriveWeight.of` is 6 one-column reads (25 ms). One 6-column read is about 8 ms, but it would
+  have to be shared across drives.
+- `Thermal.urgency` and `Thermal.appeal` both build the two tolerance columns (about 7 ms).

@@ -234,6 +234,11 @@ class Movement(DomainService):
         self._size_index = genes.index_of(config.size_gene, unit=Unit.DIMENSIONLESS)
         self._agility_index = genes.index_of(config.agility_gene, unit=Unit.LENGTH)
         self._haste_index = genes.index_of(config.haste_gene, unit=Unit.DIMENSIONLESS)
+        # (4,) int: size, haste, speed, agility — the only genes `step` reads, in that order.
+        self._step_columns = np.array(
+            [self._size_index, self._haste_index, self._speed_index, self._agility_index],
+            dtype=np.int64,
+        )
         # A gene that only ever buys performance and charges nothing runs away in every world —
         # §2.5's rule for the tolerance genes and senescence resistance, and agility is the same
         # shape: there is no world in which turning faster is worse. Refused at construction rather than
@@ -300,9 +305,8 @@ class Movement(DomainService):
     def _pace(self, haste: np.ndarray, urge: np.ndarray) -> np.ndarray:
         """`pace` from an already-expressed haste column, so `step` needs only one phenotype read.
 
-        `Genetics.expressed` rebuilds the whole `(n, n_genes)` block per call, and a second call
-        inside one tick is a block nobody needed — the same argument #114 makes for sampling
-        candidate positions once and sharing them across drives.
+        A second read inside one tick would rebuild a column already in hand — the same argument
+        #114 makes for sampling candidate positions once and sharing them across drives.
         """
         wanted = np.maximum(np.asarray(urge, dtype=np.float64), 0.0)
         headroom = 1.0 - self.config.walking_pace
@@ -361,9 +365,10 @@ class Movement(DomainService):
                 f"got {target_x.shape}, {target_y.shape} and {urge.shape}"
             )
 
-        expressed = self.genetics.expressed(selection)
-        size = expressed[:, self._size_index].astype(np.float64)
-        pace = self._pace(expressed[:, self._haste_index].astype(np.float64), urge)
+        size, haste, speed, agility = (
+            self.genetics.expressed_columns(selection, self._step_columns).astype(np.float64).T
+        )
+        pace = self._pace(haste, urge)
 
         velocity_x, velocity_y = self._accelerate(
             selection,
@@ -371,8 +376,8 @@ class Movement(DomainService):
             y,
             target_x,
             target_y,
-            expressed[:, self._speed_index].astype(np.float64) * pace,
-            expressed[:, self._agility_index].astype(np.float64),
+            speed * pace,
+            agility,
             size,
         )
 

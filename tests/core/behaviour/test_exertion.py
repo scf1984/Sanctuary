@@ -8,6 +8,7 @@ two cohorts at equal health scored identically no matter what either had been do
 import numpy as np
 import pytest
 
+from core.behaviour.candidates import Candidates
 from core.behaviour.drives import Fatigue, FatigueConfig
 from core.behaviour.exertion import Exertion, ExertionConfig
 from core.behaviour.movement import Movement, MovementConfig
@@ -324,6 +325,15 @@ class TestRecovery:
         assert world.exertion.exerted(both).max() == pytest.approx(0.5 * exerted, rel=1e-5)
 
 
+def urgency(world, selection):
+    """`Fatigue.urgency` as `Behaviour` calls it: with the call's `Candidates`, which fatigue's
+    urgency does not read, so one option standing where each animal stands is enough."""
+    mask = selection.to_mask()
+    here_x = world.store.x[mask].astype(np.float64)[:, None]
+    here_y = world.store.y[mask].astype(np.float64)[:, None]
+    return world.fatigue.urgency(selection, Candidates(selection, here_x, here_y, None))
+
+
 class TestFatigueReadsBoth:
     def test_a_sprinting_cohort_outscores_a_resting_one_at_equal_health(self):
         """The test #107 was filed for. At equal health the pre-#107 score was identical for both
@@ -343,7 +353,7 @@ class TestFatigueReadsBoth:
             world.exertion.recover(sprinter)
             world.exertion.recover(rester)
 
-        assert world.fatigue.urgency(sprinter)[0] > world.fatigue.urgency(rester)[0]
+        assert urgency(world, sprinter)[0] > urgency(world, rester)[0]
 
     def test_a_healthy_idle_animal_wants_nothing(self):
         """A drive scoring zero cannot win (`Behaviour.winning_drive`), so a fresh healthy animal
@@ -351,7 +361,7 @@ class TestFatigueReadsBoth:
         world = World()
         cohort = world.place([5.0], 5.0, health=1.0)
 
-        assert world.fatigue.urgency(cohort) == pytest.approx([0.0])
+        assert urgency(world, cohort) == pytest.approx([0.0])
 
     def test_injury_alone_still_scores(self):
         """The term that existed before #107 is unchanged in isolation: an animal that has not
@@ -359,7 +369,7 @@ class TestFatigueReadsBoth:
         world = World()
         cohort = world.place([5.0], 5.0, health=0.25)
 
-        assert world.fatigue.urgency(cohort) == pytest.approx([0.75])
+        assert urgency(world, cohort) == pytest.approx([0.75])
 
     def test_hurt_and_spent_exceeds_either_alone(self):
         """Noisy-OR, per §2.5: independent reasons to do one thing compound rather than replacing
@@ -374,9 +384,9 @@ class TestFatigueReadsBoth:
         for cohort in (spent, both):
             world.step_toward(cohort, 9.0, float(world.store.y[cohort.to_mask()][0]), pace=1.0)
 
-        score_hurt = world.fatigue.urgency(hurt)[0]
-        score_spent = world.fatigue.urgency(spent)[0]
-        score_both = world.fatigue.urgency(both)[0]
+        score_hurt = urgency(world, hurt)[0]
+        score_spent = urgency(world, spent)[0]
+        score_both = urgency(world, both)[0]
         assert score_both > score_hurt
         assert score_both > score_spent
 
@@ -387,7 +397,7 @@ class TestFatigueReadsBoth:
         cohort = world.place([5.0], 5.0, health=0.0)
         world.step_toward(cohort, 20.0, 5.0, pace=1.0)
 
-        assert world.fatigue.urgency(cohort)[0] == pytest.approx(1.0)
+        assert urgency(world, cohort)[0] == pytest.approx(1.0)
 
 
 class TestOwnership:

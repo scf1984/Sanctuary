@@ -507,7 +507,7 @@ class TestScentBinder:
         genetics.set_genes(other, self.genes_row(scent_emission=1.0, signature_1=1.0))
         scent.rebuild(one | other)
 
-        assert scent.perceive(one)[0, 1] > 0.0
+        assert scent.perceive(scent.broadcast(one))[0, 1] > 0.0
 
     def test_a_creature_does_not_perceive_its_own_scent(self):
         store, species, genetics, scent = self.build()
@@ -516,7 +516,7 @@ class TestScentBinder:
         genetics.set_genes(alone, self.genes_row(scent_emission=5.0, signature_0=2.0))
         scent.rebuild(alone)
 
-        assert scent.perceive(alone)[0] == pytest.approx(np.zeros(CHANNELS), abs=1e-5)
+        assert scent.perceive(scent.broadcast(alone))[0] == pytest.approx(np.zeros(CHANNELS), abs=1e-5)
 
     def test_an_unexpressed_signature_gene_is_not_broadcast(self):
         """Expression, not genotype — the same rule that makes an unexpressed gene cost nothing
@@ -531,7 +531,7 @@ class TestScentBinder:
         genetics.set_genes(observer, self.genes_row(scent_emission=0.0))
         scent.rebuild(quiet | observer)
 
-        assert scent.perceive(observer)[0] == pytest.approx(np.zeros(CHANNELS), abs=1e-6)
+        assert scent.perceive(scent.broadcast(observer))[0] == pytest.approx(np.zeros(CHANNELS), abs=1e-6)
 
 
 class TestAFenceStopsScent:

@@ -583,6 +583,38 @@ class TestAnAssembledWorldAges:
         assert no_entity_exceeds_its_top_speed(world.movement)(world.store) is None
 
 
+class TestATickReadsOnlyTheGenesItUses:
+    """No system builds the whole phenotype to read a few columns of it (#174).
+
+    Movement read four genes, feeding two, upkeep the nine that cost anything, conception one and a
+    strike two of each animal, and every one of them built all forty-seven to do it: about 250 ms of
+    a 1,400 ms tick at 100,000 animals, spent on columns thrown away
+    (docs/spikes/tick-budget.md). Each now asks `Genetics` for its own columns, and this is what
+    stops a new reader quietly going back to the whole block.
+    """
+
+    def test_a_tick_never_builds_a_whole_phenotype(self, monkeypatch):
+        world = build_world(world_config(), seed=5)
+
+        def refused(*_):
+            raise AssertionError("a system built the whole phenotype block")
+
+        monkeypatch.setattr(world.genetics, "expressed", refused)
+        monkeypatch.setattr(world.genetics, "expressed_at", refused)
+        struck = []
+        wound = world.predation._wound
+
+        def counted(*args):
+            struck.append(len(args[0]))
+            return wound(*args)
+
+        monkeypatch.setattr(world.predation, "_wound", counted)
+
+        world.loop.advance(30)
+
+        assert sum(struck) > 0, "nothing struck, so predation's read went unchecked"
+
+
 class TestBatchingDoesNotChangeTheWorld:
     """§2.4: the wake schedule decides when compute happens, never how fast the world moves.
 

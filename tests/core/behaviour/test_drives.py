@@ -294,7 +294,7 @@ class TestHungerScore:
             HUNGER_CONFIG,
         )
 
-        assert hunger.urgency(selection) == pytest.approx([0.0, 0.5, 1.0])
+        assert hunger.urgency(selection, candidates_at(world, selection)) == pytest.approx([0.0, 0.5, 1.0])
 
     def test_energy_above_satiation_does_not_produce_negative_hunger(self):
         """A drive scoring below zero would still lose every contest, but it would also make
@@ -307,7 +307,7 @@ class TestHungerScore:
             HUNGER_CONFIG,
         )
 
-        assert hunger.urgency(selection) == pytest.approx([0.0])
+        assert hunger.urgency(selection, candidates_at(world, selection)) == pytest.approx([0.0])
 
     def test_weight_scales_the_whole_drive_and_is_per_entity(self):
         """The weight is a gene now (#23), so two equally starving animals can want food to
@@ -327,7 +327,7 @@ class TestHungerScore:
             world.store, world.ecology, world.genetics, world.plants, world.carrion, world.scent, world.diet, world.genes, config
         )
 
-        assert hunger.urgency(selection) == pytest.approx([3.0, 1.0])
+        assert hunger.urgency(selection, candidates_at(world, selection)) == pytest.approx([3.0, 1.0])
 
 
 EAST, WEST, NULL = 0, 1, 2
@@ -639,7 +639,7 @@ class TestThirst:
             world.store, world.hydration, world.genetics, world.genes, THIRST_CONFIG
         )
 
-        assert thirst.urgency(selection) == pytest.approx([0.0, 0.5, 1.0])
+        assert thirst.urgency(selection, candidates_at(world, selection)) == pytest.approx([0.0, 0.5, 1.0])
 
     def test_thirst_reads_no_temperature(self):
         """Heat reaches thirst only physically, by drying the animal out faster in `Hydration`,
@@ -664,7 +664,7 @@ class TestThirst:
             world.store.dehydration[selection.to_indices()] = [0.1, 0.5, 0.9]
             thirst = Thirst(world.store, world.hydration, world.genetics, world.genes, THIRST_CONFIG)
             readings.append(
-                (thirst.urgency(selection), thirst.appeal(selection, candidates_at(world, selection)))
+                (thirst.urgency(selection, candidates_at(world, selection)), thirst.appeal(selection, candidates_at(world, selection)))
             )
 
         (cold_urgency, cold_appeal), (hot_urgency, hot_appeal) = readings
@@ -716,7 +716,7 @@ class TestThirst:
 
         assert appeal == pytest.approx(np.zeros((2, 3)))
         # Parched — so the flatness is a statement about direction, not about the appetite.
-        assert thirst.urgency(selection) == pytest.approx([1.0, 1.0])
+        assert thirst.urgency(selection, candidates_at(world, selection)) == pytest.approx([1.0, 1.0])
 
     def test_a_threshold_that_finds_everything_is_refused(self):
         with pytest.raises(ValueError, match="detection_threshold"):
@@ -738,7 +738,7 @@ class TestLust:
             abundant_energy=70.0,
         )
 
-        assert Lust(world.store, world.ecology, world.genetics, world.scent, world.genes, config).urgency(selection) == pytest.approx([0.0])
+        assert Lust(world.store, world.ecology, world.genetics, world.scent, world.genes, config).urgency(selection, candidates_at(world, selection)) == pytest.approx([0.0])
 
     def test_a_mature_animal_below_breeding_energy_wants_no_mate(self):
         """Gestation charges upkeep like any other trait (§2.5); wanting what you cannot afford
@@ -757,7 +757,7 @@ class TestLust:
             abundant_energy=70.0,
         )
 
-        assert Lust(world.store, world.ecology, world.genetics, world.scent, world.genes, config).urgency(selection) == pytest.approx([0.0])
+        assert Lust(world.store, world.ecology, world.genetics, world.scent, world.genes, config).urgency(selection, candidates_at(world, selection)) == pytest.approx([0.0])
 
     def test_lust_rises_with_energy_above_the_breeding_floor(self):
         world = World()
@@ -773,7 +773,7 @@ class TestLust:
             abundant_energy=70.0,
         )
 
-        scores = Lust(world.store, world.ecology, world.genetics, world.scent, world.genes, config).urgency(selection)
+        scores = Lust(world.store, world.ecology, world.genetics, world.scent, world.genes, config).urgency(selection, candidates_at(world, selection))
 
         # At the floor, halfway to abundance, and clamped above it.
         assert scores == pytest.approx([0.0, 0.5, 1.0])
@@ -793,7 +793,7 @@ class TestLust:
             abundant_energy=70.0,
         )
 
-        assert Lust(world.store, world.ecology, world.genetics, world.scent, world.genes, config).urgency(selection) == pytest.approx(
+        assert Lust(world.store, world.ecology, world.genetics, world.scent, world.genes, config).urgency(selection, candidates_at(world, selection)) == pytest.approx(
             [0.0, 1.0]
         )
 
@@ -895,7 +895,7 @@ class TestLust:
         world = World()
         selection = self.ready(world, 1)
 
-        assert self.lust(world).urgency(selection) == pytest.approx([1.0])
+        assert self.lust(world).urgency(selection, candidates_at(world, selection)) == pytest.approx([1.0])
 
 
 class TestFatigue:
@@ -908,7 +908,7 @@ class TestFatigue:
                 exertion_saturation=1.0,
                 travel_effort=TRAVEL_EFFORT,
                 climb_tolerance=CLIMB_TOLERANCE,
-            )).urgency(selection)
+            )).urgency(selection, candidates_at(world, selection))
 
         assert scores == pytest.approx([0.0, 0.75, 1.0])
 
@@ -940,7 +940,7 @@ class TestFatigue:
             ),
         )
 
-        scores = fatigue.urgency(selection)
+        scores = fatigue.urgency(selection, candidates_at(world, selection))
         assert (scores >= 0.0).all()
         assert scores[0] == pytest.approx(scores[1])
 
@@ -1154,7 +1154,7 @@ class TestFearScore:
         world.genetics.set_genes(prey, gene_rows(timid()))
         world.scent.rebuild(prey)
 
-        assert world.fear().urgency(prey) == pytest.approx([0.0])
+        assert world.fear().urgency(prey, candidates_at(world, prey)) == pytest.approx([0.0])
 
     def test_a_nearby_source_of_a_feared_signature_is_feared(self):
         world = FearWorld(grid=21)
@@ -1164,7 +1164,7 @@ class TestFearScore:
         world.genetics.set_genes(predator, gene_rows(dangerous()))
         world.scent.rebuild(prey | predator)
 
-        assert world.fear().urgency(prey)[0] > 0.0
+        assert world.fear().urgency(prey, candidates_at(world, prey))[0] > 0.0
 
     def test_fear_is_not_symmetric_and_needs_no_matrix_to_say_so(self):
         """Prey fear predators far more than predators fear prey. With aversion genetic, that
@@ -1178,8 +1178,8 @@ class TestFearScore:
         world.genetics.set_genes(predator, gene_rows(dangerous()))
         world.scent.rebuild(prey | predator)
 
-        assert world.fear().urgency(prey)[0] > 0.0
-        assert world.fear().urgency(predator) == pytest.approx([0.0])
+        assert world.fear().urgency(prey, candidates_at(world, prey))[0] > 0.0
+        assert world.fear().urgency(predator, candidates_at(world, predator)) == pytest.approx([0.0])
 
     def test_aversion_discriminates_between_signatures(self):
         """The reason cue space has more than one dimension: fearing wolves must not mean fearing
@@ -1195,7 +1195,7 @@ class TestFearScore:
         )
         world.scent.rebuild(prey | harmless)
 
-        assert world.fear().urgency(prey) == pytest.approx([0.0])
+        assert world.fear().urgency(prey, candidates_at(world, prey)) == pytest.approx([0.0])
 
     def test_fear_falls_off_with_distance_from_the_source(self):
         world = FearWorld(grid=41)
@@ -1207,7 +1207,7 @@ class TestFearScore:
         world.genetics.set_genes(predator, gene_rows(dangerous()))
         world.scent.rebuild(prey | predator)
 
-        scores = world.fear().urgency(prey)
+        scores = world.fear().urgency(prey, candidates_at(world, prey))
 
         assert scores[0] > scores[1]
 
@@ -1226,7 +1226,7 @@ class TestFearScore:
             world.genetics.set_genes(prey, gene_rows(timid(20.0)))
             world.genetics.set_genes(pack, gene_rows(*[dangerous()] * pack_size))
             world.scent.rebuild(prey | pack)
-            scores.append(world.fear().urgency(prey)[0])
+            scores.append(world.fear().urgency(prey, candidates_at(world, prey))[0])
 
         assert scores[1] > scores[0]
 
@@ -1242,7 +1242,7 @@ class TestFearScore:
             world.genetics.set_genes(prey, gene_rows(timid()))
             world.genetics.set_genes(predator, gene_rows(dangerous(emission)))
             world.scent.rebuild(prey | predator)
-            scores.append(world.fear().urgency(prey)[0])
+            scores.append(world.fear().urgency(prey, candidates_at(world, prey))[0])
 
         assert scores[1] > scores[0]
 
@@ -1262,7 +1262,7 @@ class TestFearScore:
         world.genetics.set_genes(predator, gene_rows(dangerous()))
         world.scent.rebuild(prey | predator)
 
-        scores = world.fear().urgency(prey)
+        scores = world.fear().urgency(prey, candidates_at(world, prey))
 
         assert scores[0] > scores[1]
 
@@ -1274,11 +1274,11 @@ class TestFearScore:
         world.genetics.set_genes(predator, gene_rows(dangerous()))
         world.scent.rebuild(prey | predator)
 
-        baseline = world.fear().urgency(prey)
+        baseline = world.fear().urgency(prey, candidates_at(world, prey))
         # Weight is a gene now (#23), so scaling it means changing the animal, not the world.
         world.genetics.set_genes(prey, gene_rows(timid(1000.0, fear_weight=3.0)))
 
-        assert world.fear().urgency(prey) == pytest.approx(3.0 * baseline, rel=1e-5)
+        assert world.fear().urgency(prey, candidates_at(world, prey)) == pytest.approx(3.0 * baseline, rel=1e-5)
 
 
 class TestEmergentBehaviour:
@@ -1303,7 +1303,7 @@ class TestEmergentBehaviour:
         world.genetics.set_genes(both, gene_rows(cannibal, cannibal))
         world.scent.rebuild(both)
 
-        assert world.fear().urgency(alone)[0] > 0.0
+        assert world.fear().urgency(alone, candidates_at(world, alone))[0] > 0.0
 
     def test_a_cannibal_standing_alone_is_not_afraid_of_itself(self):
         """The self-exclusion this depends on. Without it, cannibalism would be indistinguishable
@@ -1324,7 +1324,7 @@ class TestEmergentBehaviour:
         )
         world.scent.rebuild(alone)
 
-        assert world.fear().urgency(alone) == pytest.approx([0.0])
+        assert world.fear().urgency(alone, candidates_at(world, alone)) == pytest.approx([0.0])
 
     def test_a_mimic_is_avoided_without_being_dangerous(self):
         """Batesian mimicry, unauthored: a harmless lineage whose signature has drifted toward a
@@ -1337,7 +1337,7 @@ class TestEmergentBehaviour:
         world.genetics.set_genes(mimic, gene_rows(dangerous()))
         world.scent.rebuild(prey | mimic)
 
-        assert world.fear().urgency(prey)[0] > 0.0
+        assert world.fear().urgency(prey, candidates_at(world, prey))[0] > 0.0
 
     def test_a_predator_that_drifts_out_of_signature_stops_being_feared(self):
         """The predator's half of the arms race: selection on its own signature makes it stealthy
@@ -1353,7 +1353,7 @@ class TestEmergentBehaviour:
                 predator, gene_rows({"scent_emission": 1.0, signature_gene: 1.0})
             )
             world.scent.rebuild(prey | predator)
-            scores.append(world.fear().urgency(prey)[0])
+            scores.append(world.fear().urgency(prey, candidates_at(world, prey))[0])
 
         assert scores[0] > 0.0
         assert scores[1] == pytest.approx(0.0)
@@ -1371,7 +1371,7 @@ class TestEmergentBehaviour:
         world.genetics.set_genes(predator, gene_rows(dangerous()))
         world.scent.rebuild(prey | predator)
 
-        assert world.fear().urgency(prey)[0] > 0.0
+        assert world.fear().urgency(prey, candidates_at(world, prey))[0] > 0.0
 
 
 class TestScentAcuity:
@@ -1388,7 +1388,7 @@ class TestScentAcuity:
         world.genetics.set_genes(predator, gene_rows(dangerous()))
         world.scent.rebuild(prey | predator)
 
-        scores = world.fear().urgency(prey)
+        scores = world.fear().urgency(prey, candidates_at(world, prey))
 
         assert scores[0] == pytest.approx(0.0)
         assert scores[1] > 0.0
@@ -1416,7 +1416,7 @@ class TestScentAcuity:
         world.genetics.set_genes(predator, gene_rows(dangerous()))
         world.scent.rebuild(prey | predator)
 
-        assert world.fear().urgency(prey) == pytest.approx([0.0])
+        assert world.fear().urgency(prey, candidates_at(world, prey)) == pytest.approx([0.0])
 
     def test_detection_below_the_threshold_is_nothing_at_all(self):
         """Without a threshold every creature detects every trace from anywhere and acuity
@@ -1429,7 +1429,7 @@ class TestScentAcuity:
         world.genetics.set_genes(predator, gene_rows(dangerous()))
         world.scent.rebuild(prey | predator)
 
-        assert world.fear().urgency(prey) == pytest.approx([0.0])
+        assert world.fear().urgency(prey, candidates_at(world, prey)) == pytest.approx([0.0])
 
     def test_detection_saturates_at_certainty(self):
         world = FearWorld(grid=21, capacity=16)
@@ -1439,7 +1439,7 @@ class TestScentAcuity:
         world.genetics.set_genes(predator, gene_rows(*[dangerous()] * 8))
         world.scent.rebuild(prey | predator)
 
-        assert world.fear().urgency(prey) == pytest.approx([1.0])
+        assert world.fear().urgency(prey, candidates_at(world, prey)) == pytest.approx([1.0])
 
 
 class TestFearAppeal:
@@ -1498,7 +1498,7 @@ class TestFearAppeal:
         danger, not a little danger. Placing the threshold between the west and null readings
         turns west from 'safer' into 'safe'."""
         world, prey, ungated = self.plume_to_the_east()
-        perceived = world.scent.perceived_at(prey, *options_at(world, prey))[0]
+        perceived = candidates_at(world, prey).perceived(world.scent)[0]
         # timid(50) fears channel 0 alone at unit aversion, so channel 0 is the whole reading.
         reading = 50.0 * perceived[:, 0]
         between = float(np.sqrt(reading[WEST] * reading[NULL]))
@@ -1524,7 +1524,7 @@ class TestFearAppeal:
 
         appeal = fear.appeal(prey, candidates_at(world, prey))[0]
 
-        assert fear.urgency(prey) == pytest.approx([1.0]), "the fixture is not saturated"
+        assert fear.urgency(prey, candidates_at(world, prey)) == pytest.approx([1.0]), "the fixture is not saturated"
         assert appeal[NULL] == pytest.approx(0.0)
         assert appeal[EAST] > 0.0 and appeal[WEST] > 0.0
 
@@ -1603,7 +1603,7 @@ class TestNoisyOr:
         world.scent.rebuild(prey | predator)
         fear = world.fear()
 
-        assert fear.urgency(prey) == pytest.approx(fear._channels(prey)[0], rel=1e-6)
+        assert fear.urgency(prey, candidates_at(world, prey)) == pytest.approx(fear._channels(candidates_at(world, prey))[0], rel=1e-6)
 
     def test_channels_corroborate_without_exceeding_certainty(self):
         """The property that lets #24 add sight without retuning every other drive's weight
@@ -1616,13 +1616,13 @@ class TestNoisyOr:
         world.genetics.set_genes(predator, gene_rows(dangerous()))
         world.scent.rebuild(prey | predator)
         fear = world.fear()
-        scent_only = fear.urgency(prey)[0]
+        scent_only = fear.urgency(prey, candidates_at(world, prey))[0]
 
         # Stand in for #24's sight channel until it exists, to pin the composition rule now.
-        smelled = fear._channels(prey)
+        smelled = fear._channels(candidates_at(world, prey))
         sight = np.full(len(prey), 0.5, dtype=np.float32)
-        fear._channels = lambda selection: [*smelled, sight]
-        both = fear.urgency(prey)[0]
+        fear._channels = lambda candidates: [*smelled, sight]
+        both = fear.urgency(prey, candidates_at(world, prey))[0]
 
         assert both > scent_only
         assert both <= 1.0
@@ -1817,6 +1817,40 @@ class TestAllFiveDrivesCompeting:
 
         assert len(reads) == 1
 
+    def _column_reads(self, world, monkeypatch):
+        """Every `expressed_columns` call during one `choose`, as the tuple of columns it asked for."""
+        reads = []
+        expressed_columns = world.genetics.expressed_columns
+
+        def counted(selection, columns):
+            reads.append(tuple(np.asarray(columns).tolist()))
+            return expressed_columns(selection, columns)
+
+        monkeypatch.setattr(world.genetics, "expressed_columns", counted)
+        return reads
+
+    def test_one_choice_reads_what_its_animals_broadcast_once(self, monkeypatch):
+        """Lust's own signature, fear's sniff where the animal stands and the reading at every
+        candidate all need what each animal puts into the air, and none of it changes within one
+        choice. Built three times per `choose` it was 41 ms at 100,000 animals (#174)."""
+        world, prey = self._terrified_and_hungry(with_predator=True)
+        reads = self._column_reads(world, monkeypatch)
+
+        world.behaviour.choose(prey, np.random.default_rng(0))
+
+        assert reads.count(tuple(world.scent._broadcast_columns.tolist())) == 1
+
+    def test_one_choice_reads_fears_genes_once(self, monkeypatch):
+        """How frightened an animal is and which way is safer read the same nose and the same
+        aversion directions, seventeen genes built twice per `choose` (#174)."""
+        world, prey = self._terrified_and_hungry(with_predator=True)
+        reads = self._column_reads(world, monkeypatch)
+        fear = next(d for d in world.behaviour._drives if d.name == "fear")
+
+        world.behaviour.choose(prey, np.random.default_rng(0))
+
+        assert reads.count(tuple(fear._columns.tolist())) == 1
+
 
 class TestSharedScentReading:
     """The one reading `Candidates` hands several drives must be the one each would have taken."""
@@ -1841,6 +1875,31 @@ class TestSharedScentReading:
         with pytest.raises(ValueError, match="different Scent"):
             candidates.perceived(other)
 
+    def test_a_drive_cannot_rewrite_the_genes_its_other_half_reads(self):
+        """Fear's urgency and appeal share one block (#174); scaling it in one would rescale the
+        other without either knowing."""
+        world = FearWorld(grid=21)
+        prey = world.spawn_as(0, 1, x=np.float32([10.0]), y=np.float32([10.0]))
+        candidates = candidates_at(world, prey)
+
+        with pytest.raises(ValueError, match="read-only"):
+            candidates.expressed(world.genetics, world.fear()._columns)[...] *= 2.0
+        with pytest.raises(ValueError, match="read-only"):
+            candidates.broadcast(world.scent).signature[...] *= 2.0
+
+    def test_a_second_genetics_is_refused_rather_than_handed_the_first_ones_genes(self):
+        world = FearWorld(grid=21)
+        prey = world.spawn_as(0, 1, x=np.float32([10.0]), y=np.float32([10.0]))
+        other = Genetics(
+            world.store, ColumnRegistry(), world.species, world.genes, GENETICS_CONFIG
+        )
+        candidates = candidates_at(world, prey)
+        columns = world.fear()._columns
+        candidates.expressed(world.genetics, columns)
+
+        with pytest.raises(ValueError, match="different Genetics"):
+            candidates.expressed(other, columns)
+
 
 class TestTwoAversionDirections:
     """Why a creature carries more than one aversion direction (CLAUDE.md §2.5).
@@ -1864,7 +1923,7 @@ class TestTwoAversionDirections:
             threat, gene_rows({"scent_emission": 1.0, **threat_signature})
         )
         world.scent.rebuild(prey | threat)
-        return world.fear(config).urgency(prey)[0]
+        return world.fear(config).urgency(prey, candidates_at(world, prey))[0]
 
     def test_one_direction_cannot_tell_a_blend_from_the_real_thing(self):
         """The limitation the second direction exists to remove."""
@@ -2106,7 +2165,7 @@ class TestThermal:
         world = graded_world(equator_temperature=20.0, gradient=0.0)
         selection = world.spawn(2, x=np.float32([4.0, 4.0]), y=np.float32([4.0, 4.0]))
 
-        assert thermal(world).urgency(selection) == pytest.approx([0.0, 0.0])
+        assert thermal(world).urgency(selection, candidates_at(world, selection)) == pytest.approx([0.0, 0.0])
 
     def test_urgency_is_the_upkeep_penalty_over_its_saturation(self):
         """Cold by 9 units: the bill is 0.5 × 81 / (1 + tolerance). Read through the tolerance
@@ -2120,7 +2179,7 @@ class TestThermal:
             genes=gene_rows({"cold_tolerance": 0.0}, {"cold_tolerance": 1.0}),
         )
 
-        urgency = thermal(world).urgency(selection)
+        urgency = thermal(world).urgency(selection, candidates_at(world, selection))
 
         assert urgency == pytest.approx([40.5 / 50.0, 20.25 / 50.0])
 
@@ -2130,7 +2189,7 @@ class TestThermal:
             1, x=np.float32([4.0]), y=np.float32([4.0]), genes=gene_rows({"thermal_weight": 2.0})
         )
 
-        assert thermal(world).urgency(selection) == pytest.approx([2.0])
+        assert thermal(world).urgency(selection, candidates_at(world, selection)) == pytest.approx([2.0])
 
     def test_a_cold_animal_prefers_the_warmer_heading(self):
         world = graded_world(equator_temperature=15.0)
@@ -2390,7 +2449,7 @@ class TestAPenKeepsOutWhatItSmellsOf:
             # A pen over columns 0-9, so the predator three units east is outside it.
             world.barriers.enclose(0.0, 0.0, 9.6, 20.0)
         world.scent.rebuild(prey | predator)
-        return world.fear().urgency(prey)[0]
+        return world.fear().urgency(prey, candidates_at(world, prey))[0]
 
     def test_an_outsider_frightens_nobody_in_the_pen(self):
         assert self.frightened(fenced=False) > 0.1, "the control would pass vacuously"

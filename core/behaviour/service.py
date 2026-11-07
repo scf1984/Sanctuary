@@ -107,11 +107,15 @@ class Drive(Protocol):
 
     name: str
 
-    def urgency(self, selection: Selection) -> np.ndarray:
+    def urgency(self, selection: Selection, candidates: Candidates) -> np.ndarray:
         """(len(selection),) float32, unit-free: how much this entity wants it, in row order.
 
         Zero means no pull at all. This is #22's `score` under its proper name: it says *how much*,
         never *where*.
+
+        candidates: the same object `appeal` is then handed, for the readings urgency and appeal
+            share — the genes fear reads for both, what each animal broadcasts (#174). Urgency is
+            a property of the animal where it stands, so it reads no candidate position.
         """
         ...
 
@@ -374,7 +378,7 @@ class Behaviour(DomainService):
         # never be read against a later tick's world (#258).
         candidates = self.candidates(selection, x, y)
         for drive in self._drives:
-            urgency = np.asarray(drive.urgency(selection), dtype=np.float64)
+            urgency = np.asarray(drive.urgency(selection, candidates), dtype=np.float64)
             if urgency.shape != (n,):
                 raise ValueError(
                     f"drive '{drive.name}' reported urgency of shape {urgency.shape} for {n} "

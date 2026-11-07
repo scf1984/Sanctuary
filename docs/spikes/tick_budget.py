@@ -204,7 +204,8 @@ def run_profile(args: argparse.Namespace) -> None:
 
 # Public reads of `Genetics` that build or slice a phenotype or touch genes / species ids.
 GENETICS_READS = (
-    "expressed", "expressed_at", "expressed_columns", "heritable", "heritable_at",
+    "expressed", "expressed_at", "expressed_columns", "expressed_columns_at", "heritable",
+    "heritable_at",
     "vigour", "senescence_decay_at", "genes", "genes_at", "species_ids", "species_ids_at",
     "inherit", "set_genes", "speciate",
 )
@@ -225,8 +226,11 @@ class PhenotypeCensus:
         self.calls: dict[tuple[str, str, str], list[tuple[float, int, int]]] = defaultdict(list)
         genetics = world.genetics
         n_genes = world.store.genes.shape[1]
+        # `hasattr`, so the same census runs against a revision older than a read (#174's
+        # before-and-after: `expressed_columns_at` is new there).
         for name in GENETICS_READS:
-            setattr(genetics, name, self._wrap(name, getattr(genetics, name), n_genes))
+            if hasattr(genetics, name):
+                setattr(genetics, name, self._wrap(name, getattr(genetics, name), n_genes))
         expression = genetics.expression
         expression.phenotype = self._wrap("expression.phenotype", expression.phenotype, n_genes)
 

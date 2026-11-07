@@ -196,7 +196,7 @@ class Hunger:
         )
         self._weight = DriveWeight(genetics, genes, config.weight_gene)
 
-    def urgency(self, selection: Selection) -> np.ndarray:
+    def urgency(self, selection: Selection, candidates: Candidates) -> np.ndarray:
         """(len(selection),) float32: how far the pool has fallen below satiation, weighted."""
         deficit = 1.0 - self.ecology.energy(selection) / self.config.satiation_energy
         return (self._weight.of(selection) * np.clip(deficit, 0.0, 1.0)).astype(np.float32)
@@ -323,7 +323,7 @@ class Thirst:
         self.config = config
         self._weight = DriveWeight(genetics, genes, config.weight_gene)
 
-    def urgency(self, selection: Selection) -> np.ndarray:
+    def urgency(self, selection: Selection, candidates: Candidates) -> np.ndarray:
         """(len(selection),) float32: how much of its water the animal has lost, weighted.
 
         Already in [0, 1] because the column is a fraction, so unlike hunger's pool this needs no
@@ -433,7 +433,7 @@ class Thermal:
         )
         self._weight = DriveWeight(genetics, genes, config.weight_gene)
 
-    def urgency(self, selection: Selection) -> np.ndarray:
+    def urgency(self, selection: Selection, candidates: Candidates) -> np.ndarray:
         """(len(selection),) float32: the thermoregulation bill against saturation, weighted."""
         mask = selection.to_mask()
         temperature = self.climate.temperature_at(self.store.x[mask], self.store.y[mask])
@@ -561,7 +561,7 @@ class Lust:
             np.float64
         )
         perceived = candidates.perceived(self.scent)
-        own = self.scent.signature_of(selection).astype(np.float64)
+        own = candidates.broadcast(self.scent).signature.astype(np.float64)
         # Dot each candidate's cue reading against the searcher's own signature. Negative means it
         # smells like the opposite of itself, which the positive threshold discards.
         reading = candidates.only_reachable(
@@ -569,7 +569,7 @@ class Lust:
         )
         return detected(reading, self.config.detection_threshold).astype(np.float32)
 
-    def urgency(self, selection: Selection) -> np.ndarray:
+    def urgency(self, selection: Selection, candidates: Candidates) -> np.ndarray:
         """(len(selection),) float32: weighted energy surplus, zero before maturity.
 
         Maturity is per-entity because it is a gene (#20): two animals of the same age can differ
@@ -735,7 +735,7 @@ class Fear:
         quiet. How often that spread decides a choice is measured in
         docs/spikes/fear-direction.md (the #207 question).
         """
-        expressed = self.genetics.expressed_columns(selection, self._columns).astype(np.float64)
+        expressed = candidates.expressed(self.genetics, self._columns).astype(np.float64)
         perceived = candidates.perceived(self.scent).astype(np.float64)
         acuity = expressed[:, 0]
         # (n, n_directions, n_channels): each animal's aversion directions, in cue-channel order.
@@ -753,24 +753,25 @@ class Fear:
         safety = 1.0 - np.divide(danger, worst, out=np.ones_like(danger), where=worst > 0.0)
         return candidates.only_reachable(safety).astype(np.float32)
 
-    def urgency(self, selection: Selection) -> np.ndarray:
+    def urgency(self, selection: Selection, candidates: Candidates) -> np.ndarray:
         """(len(selection),) float32: weighted probability that something dangerous was detected."""
-        detected = np.stack(self._channels(selection))
+        detected = np.stack(self._channels(candidates))
         # Noisy-OR: independent detections corroborate without ever summing past certainty, which
         # is what lets #24 add a sense without re-tuning every other drive's weight.
         return (self._weight.of(selection) * (1.0 - np.prod(1.0 - detected, axis=0))).astype(np.float32)
 
-    def _channels(self, selection: Selection) -> list[np.ndarray]:
-        """Each channel's detection probability, (len(selection),) float32 in [0, 1].
+    def _channels(self, candidates: Candidates) -> list[np.ndarray]:
+        """Each channel's detection probability, one per animal, float32 in [0, 1].
 
         One channel per aversion direction, all reading the same nose. #24 appends the same
         directions read through sight instead. Nothing outside a channel knows how its probability
         was computed, so that addition changes no other line in this class.
         """
-        expressed = self.genetics.expressed_columns(selection, self._columns)
+        # The same genes `appeal` reads, built once for both (#174).
+        expressed = candidates.expressed(self.genetics, self._columns)
         # Sampled once and shared: the field read is the expensive part, and every direction
         # weighs the same air differently.
-        smelled = self.scent.perceive(selection)
+        smelled = self.scent.perceive(candidates.broadcast(self.scent))
         acuity = expressed[:, 0]
         return [
             self._detect(acuity * (expressed[:, direction] * smelled).sum(axis=1))
@@ -940,7 +941,7 @@ class Fatigue:
         # (#169). Staying put is always in the animal's own region.
         return candidates.only_reachable(restful).astype(np.float32)
 
-    def urgency(self, selection: Selection) -> np.ndarray:
+    def urgency(self, selection: Selection, candidates: Candidates) -> np.ndarray:
         """(len(selection),) float32: weighted urgency to rest, zero for a healthy idle animal."""
         injury = np.clip(1.0 - self.store.health[selection.to_mask()], 0.0, 1.0)
         spent = np.clip(

@@ -126,7 +126,9 @@ class Conception:
         self.barriers = barriers
         # Both are counts of ticks, so dimensionless: §2.1 makes the tick the only clock, and
         # neither is a length or an energy.
-        self._maturity_index = genes.index_of(config.maturity_gene, unit=Unit.DIMENSIONLESS)
+        self._maturity_column = np.array(
+            [genes.index_of(config.maturity_gene, unit=Unit.DIMENSIONLESS)], dtype=np.int64
+        )
         self._gestation_index = genes.index_of(config.gestation_gene, unit=Unit.DIMENSIONLESS)
 
     def willing(self, selection: Selection) -> Selection:
@@ -138,7 +140,7 @@ class Conception:
         arithmetic statement that you cannot give away what you do not have.
         """
         mask = selection.to_mask()
-        maturity = self.genetics.expressed(selection)[:, self._maturity_index]
+        maturity = self.genetics.expressed_columns(selection, self._maturity_column)[:, 0]
         ready = np.zeros_like(mask)
         ready[mask] = (self.store.age[mask] >= maturity) & (
             self.ecology.energy(selection) > self.config.offspring_energy

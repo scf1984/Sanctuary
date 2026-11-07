@@ -62,6 +62,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import numpy as np
+
 from core.ecology.carrion import Carrion
 from core.ecology.diet import Diet
 from core.ecology.plants import Plants
@@ -134,7 +136,11 @@ class Feeding:
         # A body size is a bare multiplier on the mouthful, hence dimensionless. Resolved through
         # the registry so a world declaring `size` as a length is rejected here rather than
         # producing a mouthful in the wrong denomination that nothing could notice (#112).
-        self._size_index = genes.index_of(config.size_gene, unit=Unit.DIMENSIONLESS)
+        # (2,) int: size, then the diet allocation, the only genes `feed` reads.
+        self._columns = np.array(
+            [genes.index_of(config.size_gene, unit=Unit.DIMENSIONLESS), diet.animal_derived_index],
+            dtype=np.int64,
+        )
 
     def feed(self, selection: Selection) -> None:
         """Take one tick's mouthful for every entity in `selection`.
@@ -147,9 +153,11 @@ class Feeding:
         x = self.store.x[mask]
         y = self.store.y[mask]
 
-        phenotype = self.genetics.expressed(selection)
-        mouthful = self.config.intake_rate * phenotype[:, self._size_index]
-        animal_share = self.diet.animal_share(phenotype)
+        phenotype = self.genetics.expressed_columns(selection, self._columns)
+        mouthful = self.config.intake_rate * phenotype[:, 0]
+        # The allocation itself, not the frontier: it splits the *mouthful*, while the efficiencies
+        # below decide what of each half the gut keeps.
+        animal_share = phenotype[:, 1]
 
         # Contention lives in `graze`, on both fields: eaters sharing a cell take the same fraction
         # of what each asked for, so the crop — or the carcass — empties exactly instead of every
@@ -161,8 +169,8 @@ class Feeding:
             self.config.assimilation_max
             * self.genetics.vigour(selection)
             * (
-                harvested * self.diet.plant_efficiency(phenotype)
-                + scavenged * self.diet.animal_efficiency(phenotype)
+                harvested * self.diet.plant_efficiency(animal_share)
+                + scavenged * self.diet.animal_efficiency(animal_share)
             )
         )
         self.ecology.gain(selection, assimilated)
