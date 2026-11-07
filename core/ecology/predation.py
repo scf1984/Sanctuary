@@ -184,7 +184,10 @@ class Predation:
         # dimensionless. Resolved through the registry so a world declaring `size` as a length is
         # rejected at construction rather than sizing a wound in a denomination nothing could
         # notice (#112).
-        self._size_index = genes.index_of(feeding.size_gene, unit=Unit.DIMENSIONLESS)
+        size_index = genes.index_of(feeding.size_gene, unit=Unit.DIMENSIONLESS)
+        # The attacker's size and diet allocation, and the victim's size: all a strike reads.
+        self._attacker_columns = np.array([size_index, diet.animal_derived_index], dtype=np.int64)
+        self._victim_columns = np.array([size_index], dtype=np.int64)
 
     def strike(self, selection: Selection, rng: np.random.Generator) -> None:
         """Let every touching pair in `selection` strike each other once.
@@ -222,13 +225,14 @@ class Predation:
         `held` is what the victim's pool held before this tick's strikes, which is what bounds the
         wound — a body cannot yield more than it is.
         """
-        attacking = self.genetics.expressed_at(attacker)
+        attacking = self.genetics.expressed_columns_at(attacker, self._attacker_columns)
         # Size ratio: the same jaws do less to a bigger body, so being large is a defence and not
         # only an upkeep bill. `size` is a magnitude and cannot express zero-or-negative mass
         # (§2.5), so the division needs no guard.
-        outmatched = attacking[:, self._size_index] / self.genetics.expressed_at(victim)[
-            :, self._size_index
-        ]
+        outmatched = (
+            attacking[:, 0]
+            / self.genetics.expressed_columns_at(victim, self._victim_columns)[:, 0]
+        )
         # Scaled by the *frontier*, not the raw allocation: killing is a whole-body specialisation
         # exactly as digesting flesh is, so `share ** p` prices the weapon on the same convex curve
         # #102 already prices the gut on. A linear reading was measured and is pathological — every
@@ -240,7 +244,7 @@ class Predation:
         # round *above* it: `kill` would take only what the body holds while the carcass received
         # the rounded-up amount, which is meat from nowhere.
         damage = np.minimum(
-            self.config.strike_power * outmatched * self.diet.animal_efficiency(attacking),
+            self.config.strike_power * outmatched * self.diet.animal_efficiency(attacking[:, 1]),
             held,
         )
 

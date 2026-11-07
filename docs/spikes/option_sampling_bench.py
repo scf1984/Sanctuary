@@ -125,7 +125,7 @@ def main() -> None:
         # drives after the first share its scent reading rather than each paying for it (#258).
         flat_ms = timed(
             lambda: [
-                (d.urgency(population), d.appeal(population, candidates))
+                (d.urgency(population, candidates), d.appeal(population, candidates))
                 for candidates in [Candidates(population, x, y, None)]
                 for d in flat
             ]

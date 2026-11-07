@@ -50,7 +50,10 @@ def expressed(**genes):
 
 def upkeep_of(metabolism, temperature=20.0, **genes):
     return float(
-        metabolism.upkeep(expressed(**genes), np.array([temperature], dtype=np.float32))[0]
+        metabolism.upkeep(
+            expressed(**genes)[:, metabolism.upkeep_columns],
+            np.array([temperature], dtype=np.float32),
+        )[0]
     )
 
 
@@ -151,10 +154,38 @@ class TestTraitUpkeep:
         rows = np.zeros((5, len(GENE_NAMES)), dtype=np.float32)
         temperature = np.full(5, 20.0, dtype=np.float32)
 
-        upkeep = metabolism.upkeep(rows, temperature)
+        upkeep = metabolism.upkeep(rows[:, metabolism.upkeep_columns], temperature)
 
         assert upkeep.shape == (5,)
         assert upkeep.dtype == np.float32
+
+
+class TestReadingOnlyWhatCosts:
+    """Upkeep is handed the costed genes alone, so a caller never builds the rest (#174)."""
+
+    def test_it_reads_every_costed_gene_and_no_other(self):
+        metabolism = make_metabolism()
+        costed = [GENE_NAMES.index(n) for n in ("size", "speed", "heat_tolerance", "cold_tolerance")]
+        assert metabolism.upkeep_columns.tolist() == costed
+
+    def test_the_bill_is_the_whole_blocks_to_the_last_bit(self):
+        """A narrower product rounds differently (BLAS groups partial sums by position), and a
+        bill a bit away from what it was is a rule change under §2.8, not an optimisation."""
+        metabolism = make_metabolism()
+        rng = np.random.default_rng(17)
+        rows = rng.uniform(-20.0, 20.0, size=(1000, len(GENE_NAMES))).astype(np.float32)
+        rows[:, metabolism.upkeep_columns] = np.abs(rows[:, metabolism.upkeep_columns])
+        temperature = rng.uniform(-40.0, 60.0, size=1000).astype(np.float32)
+
+        whole = (
+            metabolism.config.basal_rate
+            + rows @ metabolism.gene_cost
+            + metabolism.thermoregulation(rows[:, metabolism.thermal_columns], temperature)
+        ).astype(np.float32)
+
+        np.testing.assert_array_equal(
+            metabolism.upkeep(rows[:, metabolism.upkeep_columns], temperature), whole
+        )
 
 
 class TestThermoregulation:
@@ -230,7 +261,7 @@ class TestHotAndColdSelectDifferentBuilds:
         rows = np.zeros((heat.size, len(GENE_NAMES)), dtype=np.float32)
         rows[:, GENE_NAMES.index("heat_tolerance")] = heat.ravel()
         rows[:, GENE_NAMES.index("cold_tolerance")] = cold.ravel()
-        upkeep = metabolism.upkeep(rows, np.full(heat.size, temperature, dtype=np.float32))
+        upkeep = metabolism.upkeep(rows[:, metabolism.upkeep_columns], np.full(heat.size, temperature, dtype=np.float32))
         best = int(np.argmin(upkeep))
         return float(heat.ravel()[best]), float(cold.ravel()[best])
 
@@ -253,7 +284,7 @@ class TestNoEnergyIsCreated:
         rows = rng.uniform(0.0, 20.0, size=(500, len(GENE_NAMES))).astype(np.float32)
         temperature = rng.uniform(-40.0, 60.0, size=500).astype(np.float32)
 
-        assert (metabolism.upkeep(rows, temperature) >= 0.0).all()
+        assert (metabolism.upkeep(rows[:, metabolism.upkeep_columns], temperature) >= 0.0).all()
 
     def test_upkeep_is_at_least_the_basal_rate(self):
         metabolism = make_metabolism()
@@ -261,7 +292,7 @@ class TestNoEnergyIsCreated:
         rows = rng.uniform(0.0, 20.0, size=(200, len(GENE_NAMES))).astype(np.float32)
         temperature = rng.uniform(-40.0, 60.0, size=200).astype(np.float32)
 
-        assert (metabolism.upkeep(rows, temperature) >= 1.0).all()
+        assert (metabolism.upkeep(rows[:, metabolism.upkeep_columns], temperature) >= 1.0).all()
 
     def test_upkeep_holds_when_signed_phenotypes_are_negative(self):
         """The sweeps above draw phenotypes from `[0, 20]`, which is why neither of them could
@@ -275,4 +306,4 @@ class TestNoEnergyIsCreated:
         rows[:, GENE_NAMES.index("aversion0_0")] = rng.uniform(-20.0, 20.0, size=500)
         temperature = rng.uniform(-40.0, 60.0, size=500).astype(np.float32)
 
-        assert (metabolism.upkeep(rows, temperature) >= 0.0).all()
+        assert (metabolism.upkeep(rows[:, metabolism.upkeep_columns], temperature) >= 0.0).all()

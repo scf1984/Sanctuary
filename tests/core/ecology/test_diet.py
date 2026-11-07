@@ -1,6 +1,6 @@
 """Diet as an allocation, not a set of capacities (#102, CLAUDE.md §2.5).
 
-Test-first (§8.1): the whole contract is a pure function of a phenotype block, so every property
+Test-first (§8.1): the whole contract is a pure function of an allocation, so every property
 worth having was writable before the implementation. The ones that matter are structural — that
 efficiency lands in [0, 1] without a clamp, and that a generalist is strictly worse than a
 specialist at the specialist's own food — because those are what make the encoding a trade-off
@@ -26,10 +26,8 @@ def config(**overrides):
 
 
 def phenotype(*allocations):
-    """A phenotype block whose diet column holds `allocations`, already expressed on [0, 1]."""
-    block = np.zeros((len(allocations), len(GENE_NAMES)), dtype=np.float32)
-    block[:, GENE_NAMES.index("diet_animal_derived")] = allocations
-    return block
+    """The expressed diet column holding `allocations`, already on [0, 1]."""
+    return np.array(allocations, dtype=np.float32)
 
 
 class TestConfigValidation:
@@ -113,14 +111,6 @@ class TestPlantEfficiency:
 
         assert np.all(efficiencies >= 0.0)
         assert np.all(efficiencies <= 1.0)
-
-    def test_it_reads_one_column_and_ignores_the_rest_of_the_phenotype(self):
-        block = phenotype(0.3, 0.3)
-        block[1, GENE_NAMES.index("size")] = 99.0
-
-        efficiencies = self.diet().plant_efficiency(block)
-
-        assert efficiencies[0] == pytest.approx(efficiencies[1])
 
     def test_the_result_is_float32_and_one_entry_per_row(self):
         efficiencies = self.diet().plant_efficiency(phenotype(0.1, 0.6, 0.9))

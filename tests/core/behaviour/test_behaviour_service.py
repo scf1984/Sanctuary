@@ -108,7 +108,7 @@ class ConstantDrive:
         self._urgency = np.asarray(urgency, dtype=np.float32)
         self._appeal = np.asarray(appeal, dtype=np.float32)
 
-    def urgency(self, selection):
+    def urgency(self, selection, candidates):
         if self._urgency.ndim == 0:
             return np.full(len(selection), float(self._urgency), dtype=np.float32)
         return self._urgency[selection.to_mask()]
@@ -207,7 +207,7 @@ class TestRegistration:
         class ScalarUrgency:
             name = "broken"
 
-            def urgency(self, selection):
+            def urgency(self, selection, candidates):
                 return np.float32(1.0)
 
             def appeal(self, selection, candidates):
@@ -228,7 +228,7 @@ class TestRegistration:
         class OneColumn:
             name = "broken"
 
-            def urgency(self, selection):
+            def urgency(self, selection, candidates):
                 return np.ones(len(selection), dtype=np.float32)
 
             def appeal(self, selection, candidates):

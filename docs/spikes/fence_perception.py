@@ -156,7 +156,9 @@ def scent_cost() -> None:
             low_x, low_y = 20.0 + 56.0 * (i % 4), 60.0 + 70.0 * (i // 4)
             world.barriers.enclose(low_x, low_y, low_x + 40.0, low_y + 40.0)
         rebuild = timed(lambda: world.scent.rebuild(population))
-        read = timed(lambda: world.scent.perceived_at(population, x, y))
+        read = timed(
+            lambda: world.scent.perceived_at(world.scent.broadcast(population), x, y)
+        )
         print(f"{pens} pens: rebuild {rebuild:.1f} ms, candidate read {read:.1f} ms")
 
 

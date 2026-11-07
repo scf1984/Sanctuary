@@ -89,8 +89,8 @@ class DietConfig:
 class Diet:
     """One world's diet allocation, resolved against its gene vocabulary.
 
-    Holds no state and owns no store column: it reads an already-expressed phenotype block and
-    returns efficiencies. Genes are `Genetics`' to own (§2.3), and what a gene *means* for feeding
+    Holds no state and owns no store column: it reads an already-expressed allocation and returns
+    efficiencies. Genes are `Genetics`' to own (§2.3), and what a gene *means* for feeding
     is this module's.
     """
 
@@ -109,31 +109,25 @@ class Diet:
                 "quantity can rise without giving anything up (#146)"
             )
 
-    def plant_efficiency(self, phenotype: np.ndarray) -> np.ndarray:
+    def plant_efficiency(self, allocation: np.ndarray) -> np.ndarray:
         """(n,) float32, dimensionless in [0, 1]: what fraction of eaten plant biomass converts.
 
-        `phenotype` is an expressed block, `(n, n_genes)`, as `Genetics.expressed` returns it.
+        allocation: (n,) float32 in [0, 1], the expressed `animal_derived_index` column — how much
+            of the feeding effort goes to flesh. The column rather than a whole phenotype block, so
+            a caller builds the genes it reads and no more (#174).
 
         In [0, 1] because the allocation it reads is, and raised to a power above 1 — so this is
         structural rather than clamped, which is what §6's "energy is never created" needs. A
         conversion above 1 would mint energy out of grass; there is no branch here that could fail
         to prevent it.
         """
-        plant_share = 1.0 - phenotype[:, self.animal_derived_index]
+        plant_share = 1.0 - allocation
         return np.power(plant_share, self.config.frontier_exponent, dtype=np.float32)
 
-    def animal_share(self, phenotype: np.ndarray) -> np.ndarray:
-        """(n,) float32, dimensionless in [0, 1]: how much of the feeding effort goes to flesh.
-
-        The allocation itself, not the frontier. Predation reads this to size a *strike* while
-        reading `animal_efficiency` to size the *meal*, and the two are deliberately different
-        questions — see `core.ecology.predation` for why a bite is gated where a mouthful of grass
-        is not.
-        """
-        return phenotype[:, self.animal_derived_index].astype(np.float32)
-
-    def animal_efficiency(self, phenotype: np.ndarray) -> np.ndarray:
+    def animal_efficiency(self, allocation: np.ndarray) -> np.ndarray:
         """(n,) float32, dimensionless in [0, 1]: what fraction of eaten flesh converts.
+
+        allocation: as `plant_efficiency` takes it.
 
         The mirror of `plant_efficiency` across the one branch the stick-breaking tree has, and the
         thing that finally makes `diet_animal_derived` mean something in both directions (#179).
@@ -144,5 +138,4 @@ class Diet:
         allocation it reads is, and the exponent exceeds 1. A conversion above 1 would mint energy
         out of a carcass, and there is no branch here that could fail to prevent it (§6).
         """
-        animal_share = phenotype[:, self.animal_derived_index]
-        return np.power(animal_share, self.config.frontier_exponent, dtype=np.float32)
+        return np.power(allocation, self.config.frontier_exponent, dtype=np.float32)

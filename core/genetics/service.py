@@ -186,8 +186,16 @@ class Genetics(DomainService):
 
         columns: (k,) int, vocabulary indices in the order the caller wants them back.
         """
+        return self.expressed_columns_at(selection.to_indices(), columns)
+
+    def expressed_columns_at(self, rows: np.ndarray, columns: np.ndarray) -> np.ndarray:
+        """`expressed_columns`, for row indices **in the order given** — see `genes_at` for why.
+
+        A pairing reads a couple of genes of each side, and building all of them for both was most
+        of what a strike cost (#174).
+        """
         return self._phenotype(
-            selection.to_indices(), np.asarray(columns, dtype=np.int64), aged=True
+            np.asarray(rows, dtype=np.int64), np.asarray(columns, dtype=np.int64), aged=True
         )
 
     def heritable(self, selection: Selection) -> np.ndarray:

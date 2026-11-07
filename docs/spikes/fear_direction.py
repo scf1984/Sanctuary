@@ -32,6 +32,7 @@ import sys
 import numpy as np
 
 from clients.viewer.demo_world import demo_world_config
+from core.behaviour.candidates import Candidates
 from core.selection import Selection
 from core.world.assembly import build_world
 
@@ -52,7 +53,7 @@ def danger_here(world, fear, selection: Selection) -> np.ndarray:
     the saturating curve. Computed here rather than read from #265's code so master measures it
     the same way."""
     expressed = world.genetics.expressed_columns(selection, fear._columns).astype(np.float64)
-    smelled = world.scent.perceive(selection).astype(np.float64)
+    smelled = world.scent.perceive(world.scent.broadcast(selection)).astype(np.float64)
     acuity = expressed[:, 0]
     total = np.zeros(len(selection))
     for direction in fear._aversion_positions:
@@ -110,7 +111,14 @@ def main() -> None:
         # here so a reading between ticks sees where they stand now. The next tick rebuilds it from
         # the same positions, so this changes nothing the world does.
         world.scent.rebuild(population)
-        urgency = fear.urgency(population)
+        mask = population.to_mask()
+        here = Candidates(
+            population,
+            world.store.x[mask].astype(np.float64)[:, None],
+            world.store.y[mask].astype(np.float64)[:, None],
+            None,
+        )
+        urgency = fear.urgency(population, here)
         frightened = urgency > 0.0
         before = danger_here(world, fear, population)
         ids_before = world.store.row_ids()[population.to_indices()]

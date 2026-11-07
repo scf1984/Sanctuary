@@ -151,12 +151,18 @@ class Metabolism:
         self.thermal_columns = np.array(
             [self._heat_tolerance_index, self._cold_tolerance_index], dtype=np.int64
         )
+        # (k,) int, ascending: every gene that costs anything, the only columns `upkeep` reads. A
+        # zero-cost gene adds nothing to the bill, so building it is work thrown away (#174). Both
+        # tolerances are in it, since each must cost something (checked above).
+        self.upkeep_columns = np.flatnonzero(self.gene_cost).astype(np.int64)
+        self._thermal_positions = np.searchsorted(self.upkeep_columns, self.thermal_columns)
 
     def upkeep(self, expressed_genes: np.ndarray, temperature: np.ndarray) -> np.ndarray:
         """(n,) float32, energy units per tick: what one tick of life costs each of `n` entities.
 
-        expressed_genes: (n, n_genes) float32 phenotype rows — unexpressed slots already zeroed
-            by the caller, which is what makes an unexpressed gene cost nothing.
+        expressed_genes: (n, len(upkeep_columns)) float32 phenotype columns `upkeep_columns`, in
+            that order — unexpressed slots already zeroed by the caller, which is what makes an
+            unexpressed gene cost nothing.
         temperature: (n,) float32, temperature units, sampled at each entity's own position.
 
         Trait upkeep is the phenotype dotted with the cost table. Thermoregulation is the work of
@@ -178,9 +184,17 @@ class Metabolism:
         why the constructor refuses to let one carry a cost, and why that refusal is what this
         guarantee rests on rather than any check in here (#136).
         """
-        trait_upkeep = expressed_genes @ self.gene_cost
+        # Laid back into a full-width block of zeros rather than multiplied as k columns against
+        # k costs. The two are equal in exact arithmetic, but BLAS groups a dot product's partial
+        # sums by position, so the narrower product rounds the last bit differently (up to 1.5e-8
+        # on the demo world) and every pool would drift from what it was. That is a rule change
+        # under §2.8 bought for nothing, since the product is not what costs time; the build is.
+        # A zero column times a zero cost adds zero, so the bill is the one the whole block paid.
+        block = np.zeros((expressed_genes.shape[0], self.gene_cost.shape[0]), dtype=np.float32)
+        block[:, self.upkeep_columns] = expressed_genes
+        trait_upkeep = block @ self.gene_cost
         thermoregulation = self.thermoregulation(
-            expressed_genes[:, self.thermal_columns], temperature
+            expressed_genes[:, self._thermal_positions], temperature
         )
         return (self.config.basal_rate + trait_upkeep + thermoregulation).astype(np.float32)
 
