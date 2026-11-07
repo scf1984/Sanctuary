@@ -18,6 +18,7 @@ from core.behaviour.drives import (
     ThirstConfig,
     detected,
 )
+from core.behaviour.candidates import Candidates
 from core.behaviour.exertion import Exertion, ExertionConfig
 from core.behaviour.service import Behaviour, BehaviourConfig
 from core.ecology.carrion import Carrion, CarrionConfig
@@ -345,6 +346,11 @@ def options_at(world, selection, reach=2.0):
     )
 
 
+def candidates_at(world, selection, reach=2.0):
+    """`options_at` as the one object `Behaviour` hands every drive (#258)."""
+    return Candidates(selection, *options_at(world, selection, reach))
+
+
 class TestHungerAppeal:
     """The rule #93 settles, asked of each candidate option rather than of a gradient (#114).
 
@@ -377,7 +383,7 @@ class TestHungerAppeal:
     def _appeal(self, world, selection, reach=2.0, config=None):
         """(n, 3) appeal for an east option, a west option and the null option, at `reach` units."""
         x, y = options_at(world, selection, reach)
-        return self._hunger(world, config).appeal(selection, x, y)
+        return self._hunger(world, config).appeal(selection, Candidates(selection, x, y))
 
     def test_a_grazer_rates_the_option_toward_the_only_food_there_is_highest(self):
         world = World()
@@ -653,7 +659,7 @@ class TestThirst:
             world.store.dehydration[selection.to_indices()] = [0.1, 0.5, 0.9]
             thirst = Thirst(world.store, world.hydration, world.genetics, world.genes, THIRST_CONFIG)
             readings.append(
-                (thirst.urgency(selection), thirst.appeal(selection, *options_at(world, selection)))
+                (thirst.urgency(selection), thirst.appeal(selection, candidates_at(world, selection)))
             )
 
         (cold_urgency, cold_appeal), (hot_urgency, hot_appeal) = readings
@@ -686,7 +692,7 @@ class TestThirst:
         )
         x, y = options_at(world, selection)
 
-        appeal = thirst.appeal(selection, x, y)
+        appeal = thirst.appeal(selection, Candidates(selection, x, y))
 
         assert (appeal[:, WEST] > appeal[:, EAST]).all()
 
@@ -701,7 +707,7 @@ class TestThirst:
         )
         x, y = options_at(world, selection)
 
-        appeal = thirst.appeal(selection, x, y)
+        appeal = thirst.appeal(selection, Candidates(selection, x, y))
 
         assert appeal == pytest.approx(np.zeros((2, 3)))
         # Parched — so the flatness is a statement about direction, not about the appetite.
@@ -817,7 +823,7 @@ class TestLust:
         world.scent.rebuild(selection)
         x, y = options_at(world, selection)
 
-        assert self.lust(world).appeal(selection, x, y) == pytest.approx(np.zeros((1, 3)))
+        assert self.lust(world).appeal(selection, Candidates(selection, x, y)) == pytest.approx(np.zeros((1, 3)))
 
     def test_it_does_not_smell_itself_and_stay_put(self):
         """Lust's vector is the animal's *own* signature (§2.5), so its own plume is the strongest
@@ -832,7 +838,7 @@ class TestLust:
         x, y = options_at(world, selection)
 
         # Its own cell is among the candidates and must not be the winner — nothing is.
-        assert self.lust(world).appeal(selection, x, y).max() == pytest.approx(0.0)
+        assert self.lust(world).appeal(selection, Candidates(selection, x, y)).max() == pytest.approx(0.0)
 
     def test_it_is_drawn_toward_something_that_smells_like_it(self):
         world = World(grid=17)
@@ -852,7 +858,7 @@ class TestLust:
         # Two candidates for the first animal: one step toward its partner, one step away.
         toward = np.float32([[5.0, 3.0]])
         same_y = np.float32([[8.0, 8.0]])
-        appeal = self.lust(world).appeal(seeker, toward, same_y)
+        appeal = self.lust(world).appeal(seeker, Candidates(seeker, toward, same_y))
 
         assert appeal[0, 0] > appeal[0, 1]
 
@@ -874,7 +880,7 @@ class TestLust:
         seeker = Selection.from_indices(pair.to_indices()[:1], world.store.capacity)
 
         appeal = self.lust(world).appeal(
-            seeker, np.float32([[5.0, 3.0]]), np.float32([[8.0, 8.0]])
+            seeker, Candidates(seeker, np.float32([[5.0, 3.0]]), np.float32([[8.0, 8.0]]))
         )
 
         assert appeal == pytest.approx(np.zeros((1, 2)))
@@ -968,7 +974,7 @@ class TestFatigue:
         )
         x, y = options_at(world, selection)
 
-        appeal = fatigue.appeal(selection, x, y)
+        appeal = fatigue.appeal(selection, Candidates(selection, x, y))
 
         assert appeal[:, NULL] == pytest.approx([1.0, 1.0])
         assert appeal[:, :NULL] == pytest.approx(np.full((2, 2), 1.0 - TRAVEL_EFFORT))
@@ -1448,7 +1454,7 @@ class TestFearAppeal:
         world.genetics.set_genes(prey, gene_rows(prey_genes or timid(acuity)))
         world.genetics.set_genes(predator, gene_rows(dangerous()))
         world.scent.rebuild(prey | predator)
-        return world, prey, world.fear(config).appeal(prey, *options_at(world, prey))[0]
+        return world, prey, world.fear(config).appeal(prey, candidates_at(world, prey))[0]
 
     def test_it_prefers_the_option_leading_away_from_what_it_fears(self):
         _, _, appeal = self.plume_to_the_east()
@@ -1464,7 +1470,7 @@ class TestFearAppeal:
         world.genetics.set_genes(prey, gene_rows(timid()))
         world.scent.rebuild(prey)
 
-        appeal = world.fear().appeal(prey, *options_at(world, prey))
+        appeal = world.fear().appeal(prey, candidates_at(world, prey))
 
         assert appeal == pytest.approx(np.zeros((1, 3)))
 
@@ -1478,7 +1484,7 @@ class TestFearAppeal:
         world.genetics.set_genes(predator, gene_rows(dangerous()))
         world.scent.rebuild(prey | predator)
 
-        appeal = world.fear().appeal(prey, *options_at(world, prey))
+        appeal = world.fear().appeal(prey, candidates_at(world, prey))
 
         assert appeal == pytest.approx(np.zeros((1, 3)))
 
@@ -1493,7 +1499,7 @@ class TestFearAppeal:
         between = float(np.sqrt(reading[WEST] * reading[NULL]))
         gated = replace(FEAR_CONFIG, detection_threshold=between)
 
-        appeal = world.fear(gated).appeal(prey, *options_at(world, prey))[0]
+        appeal = world.fear(gated).appeal(prey, candidates_at(world, prey))[0]
 
         assert ungated[WEST] < 1.0, "the fixture's west candidate was not detected to begin with"
         assert appeal[WEST] == pytest.approx(1.0)
@@ -1511,7 +1517,7 @@ class TestFearAppeal:
         world.scent.rebuild(prey | pack)
         fear = world.fear()
 
-        appeal = fear.appeal(prey, *options_at(world, prey))[0]
+        appeal = fear.appeal(prey, candidates_at(world, prey))[0]
 
         assert fear.urgency(prey) == pytest.approx([1.0]), "the fixture is not saturated"
         assert appeal[NULL] == pytest.approx(0.0)
@@ -1530,7 +1536,7 @@ class TestFearAppeal:
         )
         world.scent.rebuild(alone)
 
-        appeal = world.fear().appeal(alone, *options_at(world, alone))
+        appeal = world.fear().appeal(alone, candidates_at(world, alone))
 
         assert appeal == pytest.approx(np.zeros((1, 3)))
 
@@ -1544,7 +1550,7 @@ class TestFearAppeal:
         world.genetics.set_genes(opposite, gene_rows({"scent_emission": 1.0, "signature_0": -1.0}))
         world.scent.rebuild(prey | opposite)
 
-        appeal = world.fear().appeal(prey, *options_at(world, prey))
+        appeal = world.fear().appeal(prey, candidates_at(world, prey))
 
         assert appeal == pytest.approx(np.zeros((1, 3)))
 
@@ -1786,6 +1792,50 @@ class TestAllFiveDrivesCompeting:
         assert breakdown["fear"] == pytest.approx([0.0])
         assert breakdown["hunger"][0] > 0.0
 
+    def test_one_choice_smells_its_candidates_once_however_many_drives_ask(self, monkeypatch):
+        """Hunger, lust and fear each read the air at the same candidates, and the air does not
+        change between one drive's appeal and the next. At 100,000 animals each read costs about
+        110 ms, so every repeat is a tenth of §2.1's tick budget spent recomputing a number already
+        in hand (#258).
+        """
+        world, prey = self._terrified_and_hungry(with_predator=True)
+        reads = []
+        perceived_at = world.scent.perceived_at
+
+        def counted(*args):
+            reads.append(args)
+            return perceived_at(*args)
+
+        monkeypatch.setattr(world.scent, "perceived_at", counted)
+
+        world.behaviour.choose(prey, np.random.default_rng(0))
+
+        assert len(reads) == 1
+
+
+class TestSharedScentReading:
+    """The one reading `Candidates` hands several drives must be the one each would have taken."""
+
+    def test_a_drive_cannot_rescale_the_air_every_later_drive_reads(self):
+        world = FearWorld(grid=21)
+        prey = world.spawn_as(0, 1, x=np.float32([10.0]), y=np.float32([10.0]))
+        world.scent.rebuild(prey)
+        candidates = candidates_at(world, prey)
+
+        with pytest.raises(ValueError, match="read-only"):
+            candidates.perceived(world.scent)[...] *= 2.0
+
+    def test_a_second_scent_is_refused_rather_than_handed_the_first_ones_air(self):
+        world = FearWorld(grid=21)
+        prey = world.spawn_as(0, 1, x=np.float32([10.0]), y=np.float32([10.0]))
+        world.scent.rebuild(prey)
+        other = Scent(world.store, world.genetics, world.cue_field, world.genes, SCENT_GENES)
+        candidates = candidates_at(world, prey)
+        candidates.perceived(world.scent)
+
+        with pytest.raises(ValueError, match="different Scent"):
+            candidates.perceived(other)
+
 
 class TestTwoAversionDirections:
     """Why a creature carries more than one aversion direction (CLAUDE.md §2.5).
@@ -1892,7 +1942,7 @@ class TestFatigueGradesTravelByEffort:
         the animal's own position and is a stay-put option rather than a travelling one.
         """
         selection = world.spawn(1, x=np.float32([4.0]), y=np.float32([4.0]))
-        return self.fatigue(world, **config).appeal(selection, *options_at(world, selection))[0]
+        return self.fatigue(world, **config).appeal(selection, candidates_at(world, selection))[0]
 
     def test_staying_put_is_worth_more_than_travelling_but_not_everything(self):
         appeal = self.scored(World())
@@ -1958,7 +2008,7 @@ class TestFatigueGradesTravelByEffort:
         """
         world = World()
         cornered = world.spawn(1)  # the fixture default is the origin
-        appeal = self.fatigue(world).appeal(cornered, *options_at(world, cornered))[0]
+        appeal = self.fatigue(world).appeal(cornered, candidates_at(world, cornered))[0]
 
         assert appeal[WEST] == pytest.approx(1.0)
         assert appeal[EAST] == pytest.approx(1.0 - TRAVEL_EFFORT)
@@ -2082,7 +2132,7 @@ class TestThermal:
         selection = world.spawn(3, x=np.float32([4.0] * 3), y=np.float32([4.0] * 3))
         x, y = options_ns(world, selection)
 
-        appeal = thermal(world).appeal(selection, x, y)
+        appeal = thermal(world).appeal(selection, Candidates(selection, x, y))
 
         assert appeal[:, NORTH] == pytest.approx(1.0)
         assert appeal[:, SOUTH] == pytest.approx(0.0)
@@ -2094,7 +2144,7 @@ class TestThermal:
         selection = world.spawn(3, x=np.float32([4.0] * 3), y=np.float32([4.0] * 3))
         x, y = options_ns(world, selection)
 
-        appeal = thermal(world).appeal(selection, x, y)
+        appeal = thermal(world).appeal(selection, Candidates(selection, x, y))
 
         assert appeal[:, SOUTH] == pytest.approx(1.0)
         assert appeal[:, NORTH] == pytest.approx(0.0)
@@ -2111,7 +2161,7 @@ class TestThermal:
         )
         x, y = options_ns(world, selection)
 
-        appeal = thermal(world).appeal(selection, x, y)
+        appeal = thermal(world).appeal(selection, Candidates(selection, x, y))
 
         assert appeal[0] == pytest.approx([0.0, 0.0, 0.0])
         assert appeal[1, NORTH] == pytest.approx(1.0)

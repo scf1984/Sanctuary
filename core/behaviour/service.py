@@ -48,6 +48,7 @@ from typing import Protocol
 
 import numpy as np
 
+from core.behaviour.candidates import Candidates
 from core.entities.store import EntityStore
 from core.genetics.registry import GeneRegistry, Unit
 from core.genetics.service import Genetics
@@ -113,13 +114,16 @@ class Drive(Protocol):
         """
         ...
 
-    def appeal(self, selection: Selection, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    def appeal(self, selection: Selection, candidates: Candidates) -> np.ndarray:
         """(len(selection), n_options) float32: how good each candidate looks, per entity.
 
-        x, y: (len(selection), n_options) float64 world positions — the point each option would take
+        candidates: the options of this one `choose` call. `candidates.x` and `candidates.y` are
+            (len(selection), n_options) float64 world positions — the point each option would take
             the animal toward, already clipped into the world. Sampled **once per entity** by the
             caller and shared by every drive, because independent sampling per drive multiplies
-            field reads by the drive count for nothing (#114).
+            field reads by the drive count for nothing (#114). A reading several drives take at
+            those positions, such as the perceived scent, is asked of `candidates` rather than
+            of its source, so it is computed once however many drives want it (#258).
 
         Scale is shared with every other drive, since utilities are summed. A drive that perceives
         nothing returns a constant — indifference, which shifts no choice — and must say in its own
@@ -345,6 +349,9 @@ class Behaviour(DomainService):
         n = len(selection)
         total = np.zeros((n, self.n_options), dtype=np.float64)
         contributions: dict[str, np.ndarray] = {}
+        # Built here and dropped on return, so a reading one drive leaves on it for the next can
+        # never be read against a later tick's world (#258).
+        candidates = Candidates(selection, x, y)
         for drive in self._drives:
             urgency = np.asarray(drive.urgency(selection), dtype=np.float64)
             if urgency.shape != (n,):
@@ -352,7 +359,7 @@ class Behaviour(DomainService):
                     f"drive '{drive.name}' reported urgency of shape {urgency.shape} for {n} "
                     f"entities; expected ({n},)"
                 )
-            appeal = np.asarray(drive.appeal(selection, x, y), dtype=np.float64)
+            appeal = np.asarray(drive.appeal(selection, candidates), dtype=np.float64)
             if appeal.shape != (n, self.n_options):
                 # Checked rather than left to NumPy: an (n, 1) return broadcasts cleanly across
                 # every option and would silently make the drive indifferent.
