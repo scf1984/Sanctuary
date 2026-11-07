@@ -1,5 +1,11 @@
 # How far can a lone animal smell a mate?
 
+> **Two measurements live here.** #251's, under the three-pass box blur, which chose the range and
+> lust's threshold; and #262's (the last section), which replaced the box with an exponential kernel
+> and re-derived the threshold by the same method. **The demo world now ships #262's numbers:
+> range 10, lust threshold 1e-4.** #251's tables are kept as the record of why, and reproduce only
+> from 1b57c0e.
+
 Measured for #251, under the decision recorded there on 2026-11-06: **a longer scent range**, with
 the implementation left to settle by measurement whether "longer" means a wider
 `CueFieldConfig.diffusion_range`, the acuity gene acting as range through a lower detection
@@ -85,8 +91,8 @@ than waiting for them to wander into range.
   it is the stricter gate.
 - Fear's and hunger's thresholds are unchanged.
 
-**What acuity does now, honestly.** Across the founder acuity range the reach only moves from 26 to
-28 units, because the blur's tail falls steeply near its support edge. Once something is perceived,
+**What acuity did then, honestly** (fixed by #262, below). Across the founder acuity range the
+reach only moved from 26 to 28 units, because the blur's tail falls steeply near its support edge. Once something is perceived,
 `detected` normalises acuity out of the appeal. So for lust, acuity is nearly inert. The gene keeps
 its teeth in fear, which reads the same nose against absolute thresholds. If a lineage should be able
 to evolve a longer nose, the blur needs a tail that does not end (#139's terrain-aware diffusion is
@@ -145,7 +151,202 @@ cull guard at 6, against 12.
 - **Grids other than 80×80** for meeting. On a larger map a fixed reach of ~27 units covers a smaller
   share of it, so the same chance-encounter problem returns at lower density.
 
+## #262: an exponential kernel, and what it re-tuned
+
+Measured for #262, under the owner's decision recorded there on 2026-11-07: replace the three-pass
+box blur with a **separable two-sided exponential**, the steady state of scent that decays while it
+spreads, so that a keener nose detects from further away. `master` at 20a2df4, which includes #249
+(thermal drive) and #254 (thirst). Every "box" row below was re-run on that commit, not copied from
+the tables above, because the world has moved since d16c681.
+
+### The kernel
+
+`diffusion_range` is now the plume's e-folding distance λ: along a grid axis a reading falls by a
+factor `a = exp(−cell_size / λ)` every cell, and never reaches zero. Each axis is one forward and
+one backward first-order recursion, so a rebuild is O(cells) whatever λ is. The 2-D kernel is the
+product of the two axes, which is what keeps self-exclusion exact (the operator's diagonal and
+every off-diagonal entry factorise per axis), at the price of diamond-shaped contours.
+
+**The rim reflects.** Each recursion starts from the mirror image of the whole axis across its end,
+and the result is scaled by `(1 − a) / (1 + a)`, the kernel's sum over an infinite line. So a
+deposit's plume sums to the deposit wherever it stands, and the operator is exactly symmetric:
+what one animal reads of another is what the other reads of it. The box blur claimed a reflecting
+rim but, normalised by in-world cells, did not have one: a corner broadcaster kept **51%** of its
+scent on the map (a 21-cell grid at range 2) (`TestEdges.test_the_rim_reflects_rather_than_absorbs` fails on it). Only one
+image per end is kept; the rest sit an axis length away and are worth `a^length`, 3e-4 of a
+deposit at range 10 on the demo world's 80 cells.
+
+### Acuity is range again
+
+One typical mate's lust reading (emission 1, own-signature dot 2, acuity 1) along an axis, under the
+exponential (`scent_range.py profile`):
+
+| λ | d = 0 | 5 | 10 | 20 | 30 | 40 | 50 | 60 |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 5 | 2.0e-2 | 7.3e-3 | 2.7e-3 | 3.6e-4 | 4.9e-5 | 6.7e-6 | 9.0e-7 | 1.2e-7 |
+| 7 | 1.0e-2 | 5.0e-3 | 2.4e-3 | 5.8e-4 | 1.4e-4 | 3.4e-5 | 8.0e-6 | 1.9e-6 |
+| 10 | 5.0e-3 | 3.0e-3 | 1.8e-3 | 6.8e-4 | 2.5e-4 | 9.1e-5 | 3.4e-5 | 1.2e-5 |
+| 15 | 2.2e-3 | 1.6e-3 | 1.1e-3 | 5.9e-4 | 3.0e-4 | 1.5e-4 | 7.9e-5 | 4.1e-5 |
+
+Reach, in world units, of a lone mate at each acuity. The box row is #251's shipped config on its
+own kernel; every other row is the exponential:
+
+| kernel, range, lust threshold | acuity 0.5 | 1.0 | 1.5 | 3.0 |
+|---|---:|---:|---:|---:|
+| box, 10, 5e-5 (before) | 26 | 27 | 28 | 29 |
+| exp, 10, 5e-5 | 39 | 46 | 50 | 57 |
+| **exp, 10, 1e-4 (shipped)** | **32** | **39** | **43** | **50** |
+| exp, 10, 3e-4 | 21 | 28 | 32 | 39 |
+| exp, 7, 5e-5 | 32 | 37 | 40 | 44 |
+| exp, 7, 2e-4 | 22 | 27 | 30 | 35 |
+
+Tripling acuity now buys `λ · ln 3`, 11 units at range 10, against 2 under the box. The founder
+acuity range 0.5–1.5 spans 11 units of reach rather than 2.
+
+### Re-deriving lust's threshold, by #251's method
+
+Range 7 is included because its per-axis spread (√2 · 7 ≈ 9.9) matches the box's at range 10
+(√110 ≈ 10.5), so it is the exponential that disturbs fear's locality least. The thresholds put a
+lone mate at the reach #251 validated (27 units at acuity 1: t3e-4, t2e-4) or further.
+
+**Two fresh founders 30 apart** (the regression test's setup, 2,000 ticks; 32 seeds rather than
+#251's 16, since the bench is cheap):
+
+| config | conceived | died first | median conception tick |
+|---|---:|---:|---:|
+| box, 10, 5e-5 (before) | 18 | 14 | 135 |
+| exp, 10, 5e-5 | 24 | 8 | 80 |
+| **exp, 10, 1e-4 (shipped)** | **23** | 9 | 90 |
+| exp, 10, 3e-4 | 17 | 15 | 100 |
+| exp, 7, 5e-5 | 26 | 6 | 80 |
+| exp, 7, 2e-4 | 20 | 12 | 85 |
+
+**Bottlenecked pairs** (source worlds grown 1,500 ticks under 20a2df4's demo config, seeds 1–3,
+each knocked to a random pair, 10 reps, 3,000 ticks). The same source worlds served both kernels:
+
+| config | pairs | conceived | died | apart | median conception tick |
+|---|---:|---:|---:|---:|---:|
+| box, 10, 5e-5 (before) | 30 | 22 | 8 | 0 | 350 |
+| exp, 10, 5e-5 | 30 | 23 | 7 | 0 | 240 |
+| **exp, 10, 1e-4 (shipped)** | 30 | **23** | 7 | 0 | 240 |
+| exp, 10, 3e-4 | 30 | 22 | 8 | 0 | 285 |
+| exp, 7, 5e-5 | 30 | 23 | 7 | 0 | 220 |
+| exp, 7, 2e-4 | 30 | 21 | 9 | 0 | 190 |
+
+The bottleneck bench cannot tell any of them apart (an established animal lives long enough to
+drift into range under all of them), so, as in #251, the founders decide. Holding #251's 27-unit
+reach (t3e-4) breeds exactly what the box did; a reach covering 30 units at every founder acuity
+breeds a third more and sooner. That is **1e-4 or 5e-5, indistinguishable**, and #251's rule keeps
+the stricter: **1e-4**. It is also, to a round number, the strictest threshold at which the dullest
+founder (acuity 0.5) still perceives a lone mate 30 units off: `0.5 × 5.0e-3 × e^−3 = 1.2e-4`.
+
+**Range stays 10.** Range 7 did as well or better on both benches, but nothing measured separates
+them, and 10 is what the owner's decision was argued at (11 units of reach per tripling of acuity,
+against 7.7 at range 7). Choosing range on a difference the benches cannot see would be tuning to
+noise.
+
+### Fear
+
+Fear reads the same field at the animal's own cell against absolute thresholds
+(`detection_threshold` 0.05, `saturation` 1.0). Both kernels read a uniform crowd at the same
+level; what changes is how one neighbour's reading is spread with distance.
+
+On the bottleneck bench's source worlds (sparse, 42–580 born; `scent_range.py readers`):
+
+| config | mean fear detection | ρ(danger, neighbours < 5) | ρ(danger, neighbours < 20) |
+|---|---:|---:|---:|
+| box, 10 (before) | 0.012 | +0.12 | +0.12 |
+| exp, 10 | 0.012 | +0.13 | +0.11 |
+| exp, 7 | 0.015 | +0.14 | +0.12 |
+
+That bench is too sparse for fear to fire much, so it was also read on dense worlds: the demo
+world grown 4,000 ticks (seeds 6–10, 1,000–4,800 alive), its fear read through its own kernel and
+then, **on the identical end state**, through the other one. This isolates the kernel from the
+run-to-run differences in evolved aversion, which dominate otherwise (mean fear across seeds runs
+from 0.002 to 0.56 under either kernel).
+
+| grown under | seed | mean fear detection, own kernel | same world, other kernel |
+|---|---:|---:|---:|
+| box | 6 | 0.031 | 0.030 |
+| box | 7 | 0.118 | 0.119 |
+| box | 8 | 0.323 | 0.327 |
+| box | 9 | 0.107 | 0.105 |
+| box | 10 | 0.146 | 0.144 |
+| exp, 1e-4 | 6 | 0.561 | 0.557 |
+| exp, 1e-4 | 7 | 0.545 | 0.542 |
+| exp, 1e-4 | 8 | 0.063 | 0.063 |
+| exp, 1e-4 | 9 | 0.095 | 0.096 |
+| exp, 1e-4 | 10 | 0.103 | 0.103 |
+
+The kernel moves mean fear by at most 0.004 on the same world, and the share of animals afraid by
+at most 0.01. On a settled population fear integrates many neighbours, and both kernels conserve
+the mass it integrates; the tail shape matters for a lone neighbour, which fear's 0.05 threshold
+does not notice under either kernel (one animal's plume peaks at 0.0025 per unit of signature
+overlap). The correlation of danger with neighbours within 5 units, #251's locality measure,
+averaged +0.04 on the box's dense worlds and +0.03 on the exponential's (seeds 1–5).
+
+**Fear's thresholds are unchanged.**
+
+### Demo-world viability
+
+`build_demo_world`, 200 founders, 4,000 ticks, alive at the end. Ten seeds rather than #251's
+five, because five on the exponential came out 600 lower and that needed checking:
+
+| | seeds 1–5 | seeds 6–10 | mean of 10 |
+|---|---|---|---:|
+| box, 10, 5e-5 (before) | 3,373 · 4,004 · 3,139 · 4,496 · 3,949 | 1,063 · 3,469 · 4,374 · 4,332 · 1,369 | 3,357 |
+| exp, 10, 1e-4 (shipped) | 3,076 · 3,264 · 2,024 · 3,854 · 3,660 | 4,126 · 4,781 · 3,443 · 4,612 · 2,045 | 3,489 |
+
+Within noise; the first five's gap reversed in the next five. Every seed survives under both.
+
+### Cost
+
+The rebuild got cheaper, not dearer. Median of 30 rebuilds of an 8-channel field (deposit and
+diffusion; the box figures are 20a2df4's):
+
+| grid, broadcasters | box | exponential |
+|---|---:|---:|
+| 80×80, 2,000 | 3.3 ms | 1.7 ms |
+| 256×256, 20,000 | 39.8 ms | 15.2 ms |
+
+The diffusion alone, on a dense random 8-channel deposit: 3.8 → 1.6 ms at 80×80, 37.6 → 12.7 ms at
+256×256. The recursion is a Python loop over each axis's length, 4 × 256 steps at 256×256, each a
+vectorised operation over the other axis and every channel at once. It is cheaper than the box's
+three passes of cumulative sums, gathers and a normalising divide, and like them it does not depend
+on the range. Construction builds each axis's full operator by running the same recursion over an
+identity matrix, once, so the subtraction can never drift from the spreading.
+
+### For #139
+
+The terrain-aware walk that replaces this kernel must keep **a loss per pass**, so the tail stays
+exponential. A loss-free spread of any shape gives a reach that grows only with the square root of
+a logarithm of acuity, and acuity goes back to being nearly inert, which is exactly what the box
+measured above.
+
 ## Reproducing
+
+#262's tables, from this commit's `scent_range.py`. The "box" rows came from the same commands
+run at 20a2df4 with `CONFIGS` cut to `R10_t5e-5`, against the **same** source worlds. A snapshot
+only loads into the config it was saved under, and #262 changed lust's threshold, so the sources
+are established and read with 20a2df4's demo config checked out; the configs under test are then
+applied by `retune`, as before:
+
+```
+PYTHONPATH=. python docs/spikes/scent_range.py profile
+PYTHONPATH=. python docs/spikes/scent_range.py founders --seeds 32 --workers 2
+git checkout 20a2df4 -- clients/viewer/demo_world.py
+PYTHONPATH=. python docs/spikes/viable_population.py establish --out <dir>
+PYTHONPATH=. python docs/spikes/scent_range.py readers --sources <dir>
+PYTHONPATH=. python docs/spikes/scent_range.py pairs --sources <dir> --reps 10 --workers 2
+git checkout HEAD -- clients/viewer/demo_world.py
+```
+
+The rebuild timings and the dense-world viability and fear readings were one-off scratch scripts:
+30 `CueField.rebuild` calls per grid on uniformly scattered broadcasters, and `build_demo_world`
+advanced 4,000 ticks then read with `Fear._channels` exactly as `readers` does, before and after
+swapping `world.scent.field` for the other kernel's `CueField`.
+
+#251's tables, from 1b57c0e:
 
 ```
 PYTHONPATH=. python docs/spikes/scent_range.py profile

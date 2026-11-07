@@ -514,15 +514,11 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
             assimilation_max=0.5,
             size_gene="size",
         ),
-        # Wide enough that a lone mate's plume reaches the distances separated animals actually sit
-        # at (#251). The blur's support ends at three ranges, so at 3.0 nothing was smellable past
-        # 9 units and bottlenecked pairs 15-57 apart never met. Measured in
-        # docs/spikes/scent-range.md: two founders 30 apart breed 10/16 at 10.0, 4/16 at 6.0 and
-        # 0/16 at 3.0. 6.0 only works for animals that live long enough to drift into its 18-unit
-        # reach; 10.0 is the narrowest that perceives them where they are. Narrowest matters
-        # because the field is shared: fear reads it too, and its correlation with neighbours
-        # within 5 units falls from +0.24 to +0.09, so "something near me" becomes partly "something
-        # in this region". Cost is flat in the range (cumulative-sum boxes).
+        # The plume's e-folding distance (#262), so a nose three times keener smells a mate about
+        # 11 units further off. Chosen at 10 under #251's box blur, as the narrowest range whose
+        # plume reached two founders 30 apart, and kept when the kernel became exponential: the
+        # threshold below now sets the reach, and range 7, the box's spread, read the same in
+        # every bench (docs/spikes/scent-range.md). The field is shared, so fear reads this too.
         cue_field=CueFieldConfig(diffusion_range=10.0),
         metabolism=MetabolismConfig(
             basal_rate=0.05,
@@ -592,16 +588,16 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
             weight_gene="lust_weight",
             maturity_gene="maturity_age",
             scent_acuity_gene="scent_acuity",
-            # Set against a *single* mate's plume, not a crowd's (#251). The blur conserves mass,
-            # so one typical animal (emission ~1, signature dot ~2) reads ~0.003 even next to it at
-            # range 10, and 0.05 meant a lone mate was never detected at any distance: lust only
-            # ever followed crowds. At 5e-5 one mate is perceived out to 26-28 units across the
-            # founder acuity range, inside the field's 30-unit support. Acuity moves that reach
-            # little, because the blur's tail falls steeply near its edge, and `detected`
-            # normalises it out of the appeal once something is perceived. The same gene keeps its
-            # teeth in fear, which reads the nose against absolute thresholds. Fear and hunger keep
-            # their own thresholds; this is lust's alone (docs/spikes/scent-range.md).
-            detection_threshold=5e-5,
+            # Set against a *single* mate's plume, not a crowd's (#251): one typical animal
+            # (emission ~1, signature dot ~2) reads 0.005 next to it at range 10, falling by e
+            # every 10 units. At 1e-4 that mate is perceived out to 32, 39 and 43 units at acuity
+            # 0.5, 1 and 1.5, so even the dullest founder notices one 30 units off. Re-derived for
+            # #262's exponential kernel: two founders 30 apart breed 23/32 here, 24/32 at 5e-5 and
+            # 17/32 at 3e-4, which held #251's 27-unit reach (and matched the box blur's 18/32).
+            # 1e-4 is the stricter of the two that do equally well, the rule #251 chose by. Fear
+            # and hunger keep their own thresholds; this is lust's alone
+            # (docs/spikes/scent-range.md).
+            detection_threshold=1e-4,
             breeding_energy=120.0,
             abundant_energy=250.0,
         ),

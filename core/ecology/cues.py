@@ -41,9 +41,12 @@ from core.world.terrain import Terrain
 class CueFieldConfig:
     """Per-world tuning for the cue field (CLAUDE.md §2.1: a table, not scattered literals).
 
-    diffusion_range: world units. The characteristic distance a cue carries before it is
-        negligible — not a hard cutoff. Must be positive; at zero the field collapses to a raw
-        per-cell tally, so a creature one cell away would be as undetectable as one across the map.
+    diffusion_range: world units. The e-folding distance of a plume: a lone broadcaster's
+        reading falls by a factor of e every `diffusion_range` along a grid axis, and never reaches
+        zero (#262). Not a cutoff, which is what lets scent acuity buy range: a nose `k` times
+        keener detects the same broadcaster `diffusion_range × ln k` further away. Must be
+        positive; at zero the field collapses to a raw per-cell tally, so a creature one cell away
+        would be as undetectable as one across the map.
     """
 
     diffusion_range: float
@@ -82,16 +85,17 @@ class CueField:
         self.terrain = terrain
         self.n_channels = n_channels
         self.config = config
-        self._half_width = max(1, int(round(config.diffusion_range / terrain.cell_size)))
+        # Per cell, so the plume falls by e every `diffusion_range` world units whatever the
+        # grid's resolution.
+        decay = float(np.exp(-terrain.cell_size / config.diffusion_range))
+        self._decay = decay
         self.concentration = np.zeros((n_channels, *terrain.heights.shape), dtype=np.float32)
         # The full 1-D diffusion operator per axis, kept rather than reduced to its diagonal.
         # The diagonal answers "how much of my own deposit do I read back **here**"; the whole
         # matrix answers it for any pair of cells, which is what sampling at a candidate needs
-        # (#188). `_axis_diagonal` already built these and discarded them, so keeping them
-        # costs memory and no time: two float32 squares of the grid's own axes, 512 KB on a
-        # 256x256 world.
-        self._row_operator = _axis_operator(terrain.heights.shape[0], self._half_width)
-        self._col_operator = _axis_operator(terrain.heights.shape[1], self._half_width)
+        # (#188). Two float32 squares of the grid's own axes, 512 KB on a 256x256 world.
+        self._row_operator = _axis_operator(terrain.heights.shape[0], decay)
+        self._col_operator = _axis_operator(terrain.heights.shape[1], decay)
         self.self_response = np.outer(
             np.diagonal(self._row_operator), np.diagonal(self._col_operator)
         )
@@ -138,7 +142,7 @@ class CueField:
                 (emission[:, None] * signature).T.ravel(),
             )
 
-        self.concentration = _diffuse(deposit, self._half_width)
+        self.concentration = _diffuse(deposit, self._decay)
 
     def sample(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """(n, n_channels) float32: every cue channel's concentration at each world position.
@@ -168,8 +172,9 @@ class CueField:
         encoding exists to allow would be indistinguishable from a bug.
 
         Exact, not approximate. Diffusion is linear, so a sampler's contribution to its own cell is
-        its deposit times the blur operator's diagonal there; and because the blur is a separable
-        *normalized* box, that diagonal factorizes per axis and is precomputed as `self_response`.
+        its deposit times the operator's diagonal there; and because the kernel is **separable**,
+        one exponential per axis (#262), that diagonal factorizes per axis and is precomputed as
+        `self_response`.
         The arguments must be the ones passed to `rebuild` for those same samplers.
         """
         emission = np.asarray(emission, dtype=np.float32)
@@ -204,14 +209,15 @@ class CueField:
 
         Exact, by the same derivation the diagonal uses. Diffusion is linear, so a source's
         contribution at any cell is its deposit times the operator entry between the two cells; the
-        blur is a **separable** normalized box, so that entry is the product of the two 1-D
-        operators' entries. `sample_excluding_self` is precisely the `source == sample` case, and
+        kernel is **separable**, one exponential per axis, so that entry is the product of the two
+        1-D operators' entries. `sample_excluding_self` is precisely the `source == sample` case, and
         the tests assert the two agree rather than trusting it.
 
         Note what this rests on: #139 would spread cues through a *cost-aware* operator, whose
         weight between two cells depends on the elevation difference between exactly those two, so
         it separates neither on the diagonal nor off it. Whatever recovers the diagonal there has
-        to recover arbitrary offsets too, or this method has no exact form.
+        to recover arbitrary offsets too, or this method has no exact form. And it must keep a loss
+        per pass, so the tail stays exponential, or acuity stops buying range (#262).
         """
         emission = np.asarray(emission, dtype=np.float32)
         signature = np.asarray(signature, dtype=np.float32)
@@ -353,58 +359,82 @@ class Scent:
         return expressed[:, 0], expressed[:, 1:]
 
 
-# Repeated box convolution converges on a Gaussian (the central limit theorem applied to the
-# kernel) while each box stays a pair of cumulative-sum differences — O(cells) regardless of blur
-# width, where a direct kernel would be O(cells × width). The shape difference between three boxes
-# and a true Gaussian is not observable by anything in this simulation; what matters ecologically
-# is only that a cue falls off smoothly with distance.
-_BLUR_PASSES = 3
+# **Why an exponential (#262).** It is the steady state of scent that decays while it spreads: in
+# one dimension, `D u'' − k u = −source` is solved by `exp(−|x| / λ)` with `λ = √(D/k)`. What that
+# buys is a tail that never ends and falls by the same factor every world unit, so a reading scaled
+# by acuity crosses a detection threshold `λ · ln(acuity)` further out. That is CLAUDE.md §2.5's "a
+# keener nose detects from further away", and only a kernel with loss delivers it. The three-pass
+# box blur this replaced had compact support, ending exactly three ranges from the source, so
+# tripling acuity moved a lone mate's detection reach from 27 to 29 units. A loss-free spread of
+# any shape (box, Gaussian) gives a reach growing only with the square root of a logarithm.
+#
+# **Separable, as the box was, and that is what keeps self-exclusion exact.** The 2-D kernel is the
+# product of one exponential per axis, so its diagonal (and every off-diagonal entry) factorises
+# per axis and `sample_excluding_self` / `sample_excluding_source` subtract the operator exactly.
+# The price is that contours are diamonds rather than circles, a grid artefact like the box's
+# square, not a new one. The true 2-D steady state is a Bessel function and does not separate.
+#
+# **O(cells) per rebuild, whatever λ is.** A two-sided exponential is a first-order recursion run
+# forwards and backwards along the axis, so every cell costs a multiply and an add however far the
+# plume reaches. The recursion is a Python loop over one axis length, with each step a vectorised
+# operation across the other axis and every channel at once (§2.3).
 
 
-def _diffuse(deposit: np.ndarray, half_width: int) -> np.ndarray:
-    """Spread every channel's plane. All planes blur in the same pass, so channels never loop."""
-    blurred = deposit.astype(np.float32)
-    for _ in range(_BLUR_PASSES):
-        blurred = _box_blur(blurred, half_width)
-    return blurred
+def _diffuse(deposit: np.ndarray, decay: float) -> np.ndarray:
+    """Spread every channel's plane along both grid axes. All channels ride in the same passes."""
+    spread = _exponential_axis(deposit.astype(np.float32), decay, axis=-1)
+    return _exponential_axis(spread, decay, axis=-2)
 
 
-def _box_blur(field: np.ndarray, half_width: int) -> np.ndarray:
-    """One separable box blur over the last two axes, normalized by in-world cells only.
+def _exponential_axis(field: np.ndarray, decay: float, axis: int) -> np.ndarray:
+    """A normalized two-sided exponential along one axis, with a reflecting rim.
 
-    Normalizing by the window's *in-world* cell count, rather than treating outside as zero, makes
-    the map edge **reflecting**: a cue that would have spread past the boundary stays inside
-    instead. Zero-padding would make borders read as emptier than they are, and prey would find the
-    world's edge spuriously safe — an artifact of the grid that selection would nonetheless act on.
-    The reflecting edge errs the other way, so a cornered animal reads as slightly *more*
-    detectable, which is both the safer error and the physically sensible one.
+    field: any shape, float32. decay: the per-cell factor `exp(−cell_size / λ)`, in (0, 1).
+
+    Each cell reads `Σ_j decay^|i−j| × field[j]` over the axis, plus the same sum over the field's
+    **mirror image** across each end of the axis: what spreads past the rim is folded back in.
+    Scaled by `(1 − decay) / (1 + decay)`, the reciprocal of the kernel's sum over an infinite line,
+    so a deposit's plume sums to the deposit wherever it stands, at the rim included. Absorbing at
+    the rim would make borders read as emptier than they are and prey would find the world's edge
+    spuriously safe, an artefact of the grid that selection would act on. A reflecting rim errs the
+    other way, so a cornered animal reads as slightly *more* detectable, which is the safer error
+    and the physical one: scent does not leak out of the world.
+
+    One reflection per end, not the infinite train a periodic mirror would have. The images left
+    out sit at least an axis length away, so they are worth `decay^length` of a deposit: 3e-4 at
+    the demo world's range 10 on its 80 cells, and far less on anything larger. Dropping them keeps
+    the operator exactly symmetric (`decay^|i−j| + decay^(i+j+1) + decay^(2L−1−i−j)` is symmetric
+    in i and j), so what one animal reads of another is what the other reads of it.
+
+    The two recursions start from those mirror images: the forward pass's first cell already holds
+    the left image of the whole axis, a dot product over it, and the backward pass's last cell the
+    right image. That is what makes the rim exact rather than a padded approximation.
     """
-    weights = np.ones(field.shape[-2:], dtype=np.float32)
-    return _box_axis(_box_axis(field, half_width, -1), half_width, -2) / _box_axis(
-        _box_axis(weights, half_width, -1), half_width, -2
-    )
+    lines = np.ascontiguousarray(np.moveaxis(field, axis, 0))
+    length = lines.shape[0]
+    # decay^m, for the image of cell m: it sits m + 1 cells past the left end and
+    # length − m cells past the right one.
+    powers = (decay ** np.arange(length, dtype=np.float64)).astype(np.float32)
+
+    forward = np.empty_like(lines)
+    forward[0] = lines[0] + decay * np.tensordot(powers, lines, axes=(0, 0))
+    for i in range(1, length):
+        np.multiply(forward[i - 1], decay, out=forward[i])
+        forward[i] += lines[i]
+
+    backward = np.empty_like(lines)
+    backward[-1] = lines[-1] + decay * np.tensordot(powers[::-1], lines, axes=(0, 0))
+    for i in range(length - 2, -1, -1):
+        np.multiply(backward[i + 1], decay, out=backward[i])
+        backward[i] += lines[i]
+
+    # Both passes counted each cell's own deposit once, so it is taken off once.
+    spread = (forward + backward - lines) * np.float32((1.0 - decay) / (1.0 + decay))
+    return np.moveaxis(spread, 0, axis)
 
 
-def _box_axis(field: np.ndarray, half_width: int, axis: int) -> np.ndarray:
-    """Running sum over a (2·half_width + 1) window along one axis, via cumulative sums.
-
-    Padded with a leading zero so `cumulative[hi] - cumulative[lo]` is a plain difference of prefix
-    sums, and clipped at the ends so the window shortens at the boundary instead of wrapping — a
-    wrap would carry scent from one edge of the world to the other.
-    """
-    length = field.shape[axis]
-    cumulative = np.cumsum(field, axis=axis)
-    zero = np.zeros_like(np.take(cumulative, [0], axis=axis))
-    cumulative = np.concatenate([zero, cumulative], axis=axis)
-
-    index = np.arange(length)
-    hi = np.minimum(index + half_width + 1, length)
-    lo = np.maximum(index - half_width, 0)
-    return np.take(cumulative, hi, axis=axis) - np.take(cumulative, lo, axis=axis)
-
-
-def _axis_operator(length: int, half_width: int) -> np.ndarray:
-    """(length, length) float32: the 1-D normalized-box operator after `_BLUR_PASSES` passes.
+def _axis_operator(length: int, decay: float) -> np.ndarray:
+    """(length, length) float32: the 1-D operator `_exponential_axis` applies along one axis.
 
     `operator[i, j]` is what a unit impulse at `j` reads as at `i`. The diagonal is the `i == j`
     case — how much of its own deposit a creature reads back where it stands — and the off-diagonal
@@ -412,13 +442,10 @@ def _axis_operator(length: int, half_width: int) -> np.ndarray:
     position needs (#188).
 
     Kept whole rather than reduced to its diagonal, because the 2-D operator is the outer product
-    of two of these: `_box_blur` is a normalized box along each axis independently, so the response
-    between any two cells factorises per axis and is **exact** rather than an approximation. Built
-    by blurring an identity matrix — O(length squared) once at construction, against a grid axis in
-    the hundreds.
+    of two of these: `_diffuse` applies the same 1-D kernel along each axis independently, so the
+    response between any two cells factorises per axis and is **exact** rather than an
+    approximation. Built by running `_exponential_axis` itself over an identity matrix, so the
+    subtraction can never drift from the spreading — O(length squared) once at construction,
+    against a grid axis in the hundreds.
     """
-    counts = _box_axis(np.ones(length, dtype=np.float32), half_width, -1)
-    operator = np.eye(length, dtype=np.float32)
-    for _ in range(_BLUR_PASSES):
-        operator = _box_axis(operator, half_width, 0) / counts[:, None]
-    return operator
+    return _exponential_axis(np.eye(length, dtype=np.float32), decay, axis=0)
