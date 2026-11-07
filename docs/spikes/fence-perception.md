@@ -55,3 +55,20 @@ which the six drives make nine. So a fenced world pays about 40 ms per tick at 1
 an unfenced one nothing, since it is one region and neither step runs.
 
 Labelling is recomputed only when a fence changes: 6 ms on 256 x 256 with four pens.
+
+## 3. Contact across the wire (#276)
+
+The same fenced run, counting the touching pairs mating and predation are handed after the fence
+goes up, and how many straddle it (`fence_perception.py contact`). Mating pairs are counted before
+the compatibility draw, so they are pairs *eligible* to conceive.
+
+| seed | master: mating across / all | master: strikes across / all | #169 only | #169 + #276 |
+|---|---|---|---|---|
+| 1 | 2 / 55 | 22 / 389 | 0 / 51, 0 / 371 | 0 / 51, 0 / 371 |
+| 2 | 2 / 71 | 34 / 615 | 0 / 54, 0 / 624 | 0 / 54, 0 / 624 |
+| 3 | 8 / 138 | 6 / 951 | 0 / 131, 0 / 1018 | 0 / 131, 0 / 1089 |
+
+On master, genes and strikes crossed the wire that bodies could not. #169's gate alone brought
+both to zero in these runs, because it keeps animals off the wire (section 1); that is a tendency,
+not a rule, and #276 makes it one by bucketing contact per sealed region. The two differ on seed 3
+because bucketing by region changes which animals pair in a fenced world, as a MAJOR change may.

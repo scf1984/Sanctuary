@@ -56,6 +56,7 @@ from core.genetics.registry import GeneRegistry, Unit
 from core.genetics.service import Genetics
 from core.genetics.speciation import interbreeding_probability
 from core.selection import Selection
+from core.world.barriers import Barriers
 
 
 @dataclass(frozen=True)
@@ -115,11 +116,14 @@ class Conception:
         genetics: Genetics,
         genes: GeneRegistry,
         config: ConceptionConfig,
+        barriers: Barriers,
     ) -> None:
         self.store = store
         self.ecology = ecology
         self.genetics = genetics
         self.config = config
+        # Two animals either side of a fence are in range and still cannot touch (#276).
+        self.barriers = barriers
         # Both are counts of ticks, so dimensionless: §2.1 makes the tick the only clock, and
         # neither is a length or an energy.
         self._maturity_index = genes.index_of(config.maturity_gene, unit=Unit.DIMENSIONLESS)
@@ -223,5 +227,5 @@ class Conception:
         brought these two together is the lust drive walking them here (#188), not anything here.
         """
         return pair_by_contact(
-            self.store.x, self.store.y, rows, self.config.contact_range, rng
+            self.store.x, self.store.y, rows, self.config.contact_range, rng, self.barriers
         )
