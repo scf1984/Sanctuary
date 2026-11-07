@@ -769,7 +769,19 @@ def build_demo_world(seed: int, n_entities: int) -> World:
     Generation is a pure function of `seed` (§2.2): the simulation itself is non-deterministic, but
     a world the viewer cannot rebuild is one whose crash cannot be replayed.
     """
-    world = build_world(demo_world_config(n_entities, seed), seed=seed)
+    return _compose(demo_world_config(n_entities, seed), seed)
+
+
+def build_temperate_world(seed: int, n_entities: int) -> World:
+    """The temperate world (#261), composed exactly as the demo world is (#268)."""
+    return _compose(temperate_world_config(n_entities, seed), seed)
+
+
+def _compose(config: WorldConfig, seed: int) -> World:
+    """Assemble a viewer world and attach what the viewer reads. Shared by both builders so they
+    can differ only in config: a temperate world built without a recorder would be one whose
+    migration nobody could chart."""
+    world = build_world(config, seed=seed)
     # Attached rather than assembled, because a recorder reads a finished world and `core/` must
     # stay importable without `metrics/` (§4). This is the composition root doing composition.
     world.loop.metrics = MetricHistory(
@@ -777,3 +789,22 @@ def build_demo_world(seed: int, n_entities: int) -> World:
     )
     world.loop.interventions = Interventions(balance=DEMO_BUDGET)
     return world
+
+
+# The worlds the viewer can open, by the name a person types (#268). Two entries, so a mapping and
+# not a framework; #101's evolved starting states may replace it.
+WORLDS = {"demo": build_demo_world, "temperate": build_temperate_world}
+# Every measurement so far runs on the demo world, so it is what opens when nothing is asked for.
+DEFAULT_WORLD = "demo"
+
+
+def build_named_world(name: str, seed: int, n_entities: int) -> World:
+    """Build the world called `name`, refusing loudly rather than falling back to the demo world
+    (§8.7): a typo that silently opened the wrong climate would be read as a result."""
+    try:
+        build = WORLDS[name]
+    except KeyError:
+        raise ValueError(
+            f"unknown world {name!r}; choose one of: {', '.join(WORLDS)}"
+        ) from None
+    return build(seed, n_entities)

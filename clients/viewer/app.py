@@ -12,13 +12,14 @@ redraw-the-whole-figure model.
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 
 import numpy as np
 import pygame
 
 from clients.viewer.charts import stack_charts, world_charts
-from clients.viewer.demo_world import build_demo_world
+from clients.viewer.demo_world import DEFAULT_WORLD, WORLDS, build_named_world
 from clients.viewer.export import export_history
 from core.world.cull import Cull
 from core.world.fence import Fence
@@ -61,8 +62,9 @@ _PANEL_TEXT = (232, 232, 226)
 # the inspection panel at the top.
 _CHART_SIZE = (320, 54)
 _EXPORT_DIRECTORY = Path("exports")
-# One slot per seed. A save browser is a UI this diagnostic instrument does not need (§3.3), and a
-# file per seed is what stops a second run of the same world silently overwriting the first's.
+# One slot per world and seed. A save browser is a UI this diagnostic instrument does not need
+# (§3.3), and a file per slot is what stops a second run of the same world silently overwriting the
+# first's. The world name is part of it because the demo and temperate worlds (#268) share seeds.
 _SAVE_DIRECTORY = Path("saves")
 
 # What one keypress removes, and the floor it will not go below. Both are the viewer's choice
@@ -160,14 +162,14 @@ def _drag_to_world(world, start, end) -> tuple[float, float, float, float]:
     return float(xs[0]), float(ys[0]), float(xs[1]), float(ys[1])
 
 
-def _export(world, seed: int) -> str:
+def _export(world, slot: str) -> str:
     """Write the recorded history beside the working directory, and say where it went.
 
     Returns the message rather than printing it: the status line is the only place a viewer can
     tell the user anything, and a `print` behind a game window is a message nobody reads (§8.7
     applies to success too — an export that says nothing is one the user repeats).
     """
-    stem = f"seed{seed}-tick{world.loop.tick_count}"
+    stem = f"{slot}-tick{world.loop.tick_count}"
     try:
         csv_path, _ = export_history(world.loop.metrics, _EXPORT_DIRECTORY, stem)
     except ValueError as refused:
@@ -175,14 +177,14 @@ def _export(world, seed: int) -> str:
     return f"wrote {csv_path} (+ .json)"
 
 
-def _save(world, seed: int) -> str:
-    """Write the world to its seed's slot, and say where it went."""
-    path = save(world, _SAVE_DIRECTORY / f"seed{seed}.npz")
+def _save(world, slot: str) -> str:
+    """Write the world to its slot, and say where it went."""
+    path = save(world, _SAVE_DIRECTORY / f"{slot}.npz")
     return f"saved {path} at tick {world.loop.tick_count}"
 
 
-def _restore(world, seed: int) -> str:
-    """Load the seed's slot into the running world, or say why not.
+def _restore(world, slot: str) -> str:
+    """Load the slot into the running world, or say why not.
 
     In place, so the viewer's services, its recorder and its overlay references all keep pointing
     at the world that now holds the loaded state. A `SnapshotError` is reported rather than raised
@@ -190,7 +192,7 @@ def _restore(world, seed: int) -> str:
     exactly what that error exists to prevent, and the status line is the only place a viewer can
     say so.
     """
-    path = _SAVE_DIRECTORY / f"seed{seed}.npz"
+    path = _SAVE_DIRECTORY / f"{slot}.npz"
     if not path.exists():
         return f"no save at {path}"
     try:
@@ -200,14 +202,15 @@ def _restore(world, seed: int) -> str:
     return f"loaded {path} at tick {world.loop.tick_count}"
 
 
-def run(seed: int = 0, n_entities: int = 200) -> None:
+def run(seed: int = 0, n_entities: int = 200, world_name: str = DEFAULT_WORLD) -> None:
     pygame.init()
     screen = pygame.display.set_mode(_SCREEN_SIZE)
-    pygame.display.set_caption("Sanctuary -- world view")
+    pygame.display.set_caption(f"Sanctuary -- {world_name} world")
     font = pygame.font.SysFont(None, 20)
     clock = pygame.time.Clock()
 
-    world = build_demo_world(seed, n_entities)
+    world = build_named_world(world_name, seed, n_entities)
+    slot = f"{world_name}-seed{seed}"
     playback = Playback(ticks_per_second=1.0)
 
     # Terrain and water never change, so this is rendered once and every overlay is blended onto
@@ -262,7 +265,7 @@ def run(seed: int = 0, n_entities: int = 200) -> None:
                     # changes run to run, so it is a key rather than a constant.
                     gene_index = (gene_index + 1) % (len(gene_names) + 1)
                 elif event.key == pygame.K_e:
-                    exported = _export(world, seed)
+                    exported = _export(world, slot)
                 elif event.key == pygame.K_x and selected is not None:
                     # Only meaningful with an animal selected: a cull names a *species*, and
                     # clicking one is how the player says which. Silently doing nothing without a
@@ -270,9 +273,9 @@ def run(seed: int = 0, n_entities: int = 200) -> None:
                     # the loud failure here would be culling the wrong thing).
                     exported = _cull(world, int(world.store.species_id[selected]))
                 elif event.key == pygame.K_s:
-                    exported = _save(world, seed)
+                    exported = _save(world, slot)
                 elif event.key == pygame.K_l:
-                    exported = _restore(world, seed)
+                    exported = _restore(world, slot)
                     # The loaded world's positions are nothing like the ones on screen, and the
                     # renderer blends two snapshots (§3.3, #119). Redrawing the background is the
                     # cheapest way to be sure the overlay matches the field that just arrived.
@@ -401,4 +404,6 @@ def run(seed: int = 0, n_entities: int = 200) -> None:
 
 
 if __name__ == "__main__":
-    run()
+    parser = argparse.ArgumentParser(description="Sanctuary diagnostic world view")
+    parser.add_argument("--world", choices=tuple(WORLDS), default=DEFAULT_WORLD)
+    run(world_name=parser.parse_args().world)
