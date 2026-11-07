@@ -3,6 +3,8 @@
 Before #249 nothing read the temperature field to decide where to go. Animals felt the climate only
 as upkeep, so a bad season was differential mortality (range contraction), never movement. #249
 adds a drive that reads it. This records what it does on the demo world, and what it does not.
+§§1–4 are the demo world, where it does not produce migration. §5 is the temperate world (#261),
+where it does.
 
 Measured on `feat/249-thermal-drive` (master at `d16c681` plus this change), 200 naive founders,
 4,000 ticks, seasons on (720-tick year), with `docs/spikes/thermal_drive.py`. "Off" is the same
@@ -105,3 +107,91 @@ The place to look for migration is a world whose thermal span straddles neutral 
 setup in `thermal-divergence.md` does), or one where terrain makes the comfortable ground move. That
 is the next measurement, not a reason to tune this one. Hibernation additionally needs a way to
 lower upkeep in place, which nothing provides.
+
+## 5. The temperate world: seasons do produce migration (#261)
+
+§4 put the missing migration down to the map. #261 tests that with a second world,
+`clients.viewer.demo_world.temperate_world_config`: the demo world in every respect but the
+climate, whose range straddles `neutral_temperature`. Measured at `20a2df4` plus this change, 200
+naive founders, 4,000 ticks (5.5 years of 720 ticks), seeds 1–5, drive on and off. The demo world was
+re-run alongside it on the same code, so the two are compared like for like (§2's demo numbers
+predate #254 and the scent-range change and are not reused here).
+
+### The climate, fitted rather than chosen
+
+With `docs/spikes/temperate_climate_fit.py`, over seeds 1–8 of the terrain, with `amplitude_fraction` left at the demo's 0.5 (#159's guard) and the
+weather unchanged:
+
+| gradients × demo | equator above neutral | share of ground-and-year above neutral | mean squared deviation from neutral | summer / winter ground above neutral |
+|---:|---:|---:|---:|---:|
+| 10 | 16 | 0.37 | 78.2 | 0.63 / 0.22 |
+| 10 | **18** | **0.48** | **68.6** | **0.78 / 0.28** |
+| 9 | 18 | 0.58 | 54.3 | 0.87 / 0.35 |
+| 11 | 18 | 0.39 | 91.7 | 0.66 / 0.23 |
+| demo (1, +10) | | 1.00 | 66.1 | 1.00 / 1.00 |
+
+Two conditions fix the two numbers. **About half the ground-and-year on each side of neutral**, so the
+comfortable band sits mid-map on average rather than hugging an edge. And **the same mean squared
+deviation as the demo world**, because `thermoregulation_rate` was derived from that quantity (#176)
+and is shared: the temperate climate moves where the bill falls, not how large it typically is. Both
+gradients scale together, so a peak stays about as cold as a pole (#112's pair). The result: winter
+poles are at most 8.6 against a neutral of 20, the summer equator's warmest cell reaches at least
+31.7 in every seed, and the share of ground
+above neutral swings from 28% in winter to 78% in summer.
+
+### What the measurement adds: movement, not just range
+
+Mean occupied latitude cannot tell migration from demography. A winter that kills at the poles and a
+summer that breeds there shift the population's mean latitude with no animal moving, and that is
+exactly the range contraction #249 set out to get past. So the spike now also records the mean
+latitude change of **animals alive at both of two consecutive samples**. Summed over the run and
+fitted for its annual cycle (`move_harmonic`), that is the range shift made of movement alone. The
+standing crop's biomass-weighted latitude (`forage_harmonic`) is recorded too, because hunger can
+follow food that the seasons move.
+
+`lat_harmonic` and `move_harmonic` are amplitudes of the one-year cycle in world units, fitted on sin
+and cos together so a lagging cycle counts at full size. A lag near 0 means the cycle peaks at the
+summer solstice, and one near 360 means it peaks in midwinter, the wrong way round. Everything is
+after the first year.
+
+| world | drive | corr(latitude, season) | swing warm − cold | `lat_harmonic` (lag) | `move_harmonic` (lag) | `forage_harmonic` | \|T − neutral\| where they stand | final n (min) |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| temperate | off | +0.72 (0.63 – 0.82) | +4.38 | 3.18 (72) | 1.19 (0.87 – 1.74) | 2.29 | 5.34 | 4,223 (131) |
+| temperate | **on** | **+0.77** (0.66 – 0.88) | **+6.17** | **4.43** (67) | **3.10** (2.65 – 3.74) | 2.13 | **4.38** | 4,088 (104) |
+| demo | off | −0.04 (−0.16 – +0.20) | −0.12 | 0.35 (483) | 0.39 (0.10 – 0.71) | 0.32 | 8.22 | 3,366 (106) |
+| demo | on | −0.05 (−0.08 – −0.01) | −0.61 | 0.78 (494) | 0.99 (0.58 – 1.35) | 0.69 | 7.86 | 3,398 (60) |
+
+Per seed, temperate world, `move_harmonic` off → on: 1.74 → 2.65, 0.99 → 3.03, 1.45 → 3.44,
+0.90 → 2.66, 0.87 → 3.74. On is higher in every seed, and the lowest on value is above the highest off
+value.
+
+- **Migration: yes, on the temperate world, and the thermal drive is what makes it.** Survivors move
+  poleward into summer and back toward the equator into winter by about 3.1 world units of annual
+  amplitude with the drive, against 1.2 without it and ~0.4 on the demo world, which is the measure's
+  noise floor. The movement peaks 60–100 ticks after the solstice, about a tenth of a year behind
+  the temperature: animals follow a moving gradient one look-ahead at a time, so they lag it.
+- **Most of the range shift is now movement.** With the drive, movement accounts for about 70% of
+  the occupied-latitude cycle (3.10 of 4.43). Without it, under 40% (1.19 of 3.18). The rest is
+  demography: in a straddling world, seasons move the range even when nobody chooses to.
+- **The drive-off world is not still**, and that is worth knowing before reading the off column as a
+  baseline of zero. The standing crop's centroid itself cycles by about 2.2 units, because plant growth
+  reads temperature too. Survivors in the drive-off world still move about 40% as far as with the
+  drive, most plausibly hunger following that crop. That would be migration by forage, produced by
+  the same climate, though this spike does not separate it from the other drives.
+- **They stand closer to neutral**: 4.4 temperature units from it with the drive against 5.3 without.
+  On the demo world the drive buys 0.4 (8.2 → 7.9), because there is no comfortable ground to reach.
+- **The demo world is unchanged in kind**: no seasonal latitude cycle in either condition, and a
+  standing poleward shift with the drive (mean latitude 25.1 against 19.6), as §2 found.
+- **Viability holds.** Every temperate run grows from 200 to 2,912–4,666. The founder bottleneck is a
+  little deeper with the drive (minimum 104 against 131), the same direction as §3's but much milder
+  than on the demo world (60 against 106), where the drive pulls every founder toward an edge.
+
+### What this means
+
+§4's diagnosis is confirmed. The drive was never what stopped migration. A map where the coolest ground
+is the best ground in every season was. Give the comfortable band somewhere to move and a local sense
+with no memory follows it: one look-ahead at a time, a tenth of a year behind, and with the
+population's range shift now made mostly of animals moving rather than of where they die.
+Hibernation is still absent, since nothing lowers upkeep in place.
+
+Reproduce with `python docs/spikes/thermal_drive.py SEED 4000 on|off temperate|demo`.

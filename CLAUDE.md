@@ -681,6 +681,20 @@ by" hunger and no animal stands still merely because the drive that won has no m
   cannot see. Hibernation would also need a way to lower upkeep in place, which nothing provides.
   Both remain behaviours a world has to make worth having, not ones to author.
 
+  **Migration needs a map whose range straddles neutral, and given one it appears** (#261). The
+  *temperate world* (`temperate_world_config`) is the demo world with one difference, its climate,
+  and it is derived from the demo config rather than written beside it, so nothing else can drift
+  between the two (§2.1). Both gradients are ten times the demo's (still #112's pair), the equator
+  sits 18 above neutral, and `amplitude_fraction` stays 0.5. Two measured conditions fix those
+  numbers: about half the ground-and-year falls on each side of neutral, and the mean squared
+  deviation matches the demo's, so the shared `thermoregulation_rate` (#176) stays valid. Survivors
+  then move poleward into summer and back into winter, with an annual amplitude of **3.1 world units
+  with the drive against 1.2 without** (5 seeds × 4,000 ticks; the lowest seed with the drive is
+  above the highest without). They lag the temperature by about a tenth of a year, and movement
+  becomes about 70% of the population's range shift, where without the drive demography makes up most
+  of it (docs/spikes/thermal-drive.md §5). The demo world stays the reference for every earlier
+  measurement, and the temperate world is where seasonal behaviour is measured.
+
   **Drinking is a rate, and that is what makes a waterhole dangerous.** A drink spans ticks like a
   meal. With water static (#165 — a lake cannot shrink) there is no depletion to contend over, so
   **time at the water's edge is the only cost a waterhole can charge**, and it is the real one: an

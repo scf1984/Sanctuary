@@ -12,14 +12,17 @@ these tests cover is the viewer's *world config* being one a world can actually 
 the frame path still reading it correctly now that entities move.
 """
 
+import dataclasses
+
 import numpy as np
 import pytest
 
-from clients.viewer.demo_world import build_demo_world
+from clients.viewer.demo_world import build_demo_world, demo_world_config, temperate_world_config
 from clients.viewer.render import live_positions, species_colors, world_to_screen
 from core.genetics.speciation import interbreeding_probability
 from core.invariants import default_registry
 from core.selection import Selection
+from core.world.assembly import build_world
 
 _SCREEN = (640, 480)
 
@@ -143,6 +146,84 @@ class TestTheShippedTuningIsNotDegenerate:
 
         assert year / generation == pytest.approx(6.0, rel=0.01)
         assert (year / 4) / generation == pytest.approx(1.5, rel=0.01)
+
+
+class TestTemperateWorld:
+    """The second world (#261): the demo world with a climate whose range straddles neutral, so the
+    comfortable ground moves with the seasons and migration has somewhere to go.
+
+    The demo world sits wholly above `neutral_temperature`, so its coolest ground is the best ground
+    in every season, and every measurement taken so far runs on it. The owner chose a second world
+    over retuning that one; these tests hold the two to differing in the one thing being tested.
+    """
+
+    def test_it_differs_from_the_demo_world_only_in_climate(self):
+        """§2.1: two worlds to keep tuned is the accepted cost, so nothing but the climate may drift
+        between them — the year, the founders, every coefficient outside the sky stay shared."""
+        demo = demo_world_config(n_entities=30, seed=4)
+        temperate = temperate_world_config(n_entities=30, seed=4)
+
+        assert temperate.climate != demo.climate
+        assert dataclasses.replace(temperate, climate=demo.climate) == demo
+        # The calendar and the weather are ratio-table entries and statements about the sky's
+        # texture, not about where neutral falls, so they are shared too.
+        assert temperate.climate.seasons == demo.climate.seasons
+        assert temperate.climate.equator_y == demo.climate.equator_y
+
+    def test_its_gradients_stay_the_tuned_pair(self):
+        """`lapse_rate` and `latitude_gradient` are one tuning decision (#112): a peak about as cold
+        as a pole. Steepening one without the other would make terrain matter less or more than
+        latitude for a reason nobody chose."""
+        demo = demo_world_config(n_entities=10, seed=0).climate
+        temperate = temperate_world_config(n_entities=10, seed=0).climate
+
+        assert temperate.lapse_rate / temperate.latitude_gradient == pytest.approx(
+            demo.lapse_rate / demo.latitude_gradient
+        )
+
+    @pytest.mark.parametrize("seed", [1, 2, 3])
+    def test_its_temperature_range_straddles_neutral_across_the_year(self, seed):
+        """What makes migration possible at all: poles below neutral in winter, the equator above it
+        in summer, and the share of ground on the warm side swinging with the season — so the
+        comfortable band moves, rather than staying pinned to the coolest edge as on the demo map.
+        """
+        config = temperate_world_config(n_entities=10, seed=seed)
+        world = build_world(config, seed=seed)
+        neutral = config.metabolism.neutral_temperature
+        year = config.climate.seasons.year_length
+        rows = np.arange(world.terrain.heights.shape[0]) * world.terrain.cell_size
+        latitude = np.abs(rows - config.climate.equator_y)
+        poles = latitude >= latitude.max() - 1.0
+        equator = latitude <= 0.5
+
+        summer = world.climate.field_at(year // 4)
+        winter = world.climate.field_at(3 * year // 4)
+
+        assert (winter[poles] < neutral).all()
+        assert (summer[equator] > neutral).any()
+        assert float((summer > neutral).mean()) - float((winter > neutral).mean()) > 0.3
+
+    def test_it_charges_the_demo_worlds_thermal_bill(self):
+        """`thermoregulation_rate` is shared, and it was derived from how far the demo map's ground
+        sits from neutral (#176). It stays valid only if the temperate climate, averaged over its
+        ground and its year, sits about as far from neutral in squared deviation — the climate
+        moves *where* the bill falls, not how large it typically is."""
+
+        def mean_squared_deviation(config, seed):
+            world = build_world(config, seed=seed)
+            year = config.climate.seasons.year_length
+            fields = np.stack(
+                [world.climate.field_at(tick) for tick in range(0, year, year // 12)]
+            )
+            return float(np.mean((fields - config.metabolism.neutral_temperature) ** 2))
+
+        seeds = range(1, 5)
+        demo = np.mean([mean_squared_deviation(demo_world_config(5, s), s) for s in seeds])
+        temperate = np.mean(
+            [mean_squared_deviation(temperate_world_config(5, s), s) for s in seeds]
+        )
+
+        assert temperate == pytest.approx(demo, rel=0.15)
 
 
 class TestFramePath:
