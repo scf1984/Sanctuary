@@ -9,10 +9,14 @@ the same file measures the tree before the gate and after it.
    more. Every 10 ticks it records the share of penned animals standing in the ring of cells just
    inside the wire, and the share of outsiders in the ring just outside it, each divided by that
    ring's share of its region's area. 1.0 is no preference; above 1 is crowding against the wire.
-   Also reports who is alive at the end, inside and out, as viability.
+   Also reports the band within one world unit of the world's rim for outsiders, the reference a
+   wire that clips like the rim should match (#278), and who is alive at the end, inside and out.
 
 2. **`choose()` cost** at 100,000 animals, N = 8, on the 256 x 256 bench grid
    (`docs/spikes/option_sampling_bench.py`'s world), unfenced and with four pens up. Median of 7.
+   Also the wire's own share: placing the candidates (`candidate_positions`, where #278 clips
+   them), #169's gate where the tree has it, and `Movement.step` (#278 moves its wire check into
+   `Barriers.reach`).
 
 3. **Contact across the wire** (#276). The same fenced run, counting the touching pairs that mating
    and predation are handed after the fence goes up, and how many of them straddle it. Pen
@@ -29,12 +33,22 @@ the same file measures the tree before the gate and after it.
    phenotypes (`core.genetics.distance.centroid_between`) and the same over the cue signature
    genes alone, which carry no cost and drift neutrally, so they are the clean clock.
 
+6. **The wire with no drives** (#278). `edge_candidates.py`'s method carried to a fence: 2,000
+   founders spread uniformly, a pen over the middle quarter, every drive removed so only the
+   commitment bonus shapes a choice, 400 ticks of choice and movement alone. Any departure from 1.0
+   in the wire ring or the rim band is the boundary rule's doing rather than an ecology's.
+
+7. **Pressed into the wire** (#278). #27's fenced run: how often a penned animal chose a travelling
+   option yet moved almost nowhere, in the wire ring against the rest of the pen.
+
 Usage:
     python docs/spikes/fence_perception.py wire [seeds...]
     python docs/spikes/fence_perception.py choose
     python docs/spikes/fence_perception.py contact [seeds...]
     python docs/spikes/fence_perception.py scent-cost
     python docs/spikes/fence_perception.py distance [seeds...]
+    python docs/spikes/fence_perception.py indifferent [seeds...]
+    python docs/spikes/fence_perception.py pressed [seeds...]
 """
 
 from __future__ import annotations
@@ -159,6 +173,37 @@ def indifferent_run(seed: int, n: int = 2000, ticks: int = 400) -> dict[str, flo
     return {
         "inside_ring_density": round(float(np.mean(inner)), 3),
         "rim_band_density": round(float(np.mean(rim_density)), 3),
+    }
+
+
+def pressed_run(seed: int) -> dict[str, tuple[int, float, float]]:
+    """#27's fenced run, per tick for 400 ticks: of the penned animals in the wire ring and in the
+    rest of the pen, the share that chose to stay put, and the share that chose a travelling option
+    but moved less than 0.05 world units, which is an animal pressed into the wire (#278)."""
+    world = build_demo_world(seed=seed, n_entities=300)
+    world.loop.advance(200)
+    corners, (r0, r1, c0, c1) = pen_bounds(world)
+    world.loop.interventions.balance = 1.0e6
+    world.loop.interventions.request(Fence(world.barriers, *corners))
+    world.loop.advance(1)
+    rows_n, cols_n = world.terrain.heights.shape
+    r, c = np.mgrid[0:rows_n, 0:cols_n]
+    pen = (r >= r0) & (r < r1) & (c >= c0) & (c < c1)
+    ring = pen & ~((r >= r0 + 1) & (r < r1 - 1) & (c >= c0 + 1) & (c < c1 - 1))
+    tallies = {"ring": [0, 0, 0], "interior": [0, 0, 0]}
+    for _ in range(400):
+        world.loop.advance(1)
+        living = world.store.alive & (world.store.age >= 0)
+        rr, cc = world.terrain.cell_indices(world.store.x[living], world.store.y[living])
+        speed = np.hypot(world.store.velocity_x[living], world.store.velocity_y[living])
+        moving = world.store.choice_moving[living]
+        for name, where in (("ring", ring[rr, cc]), ("interior", pen[rr, cc] & ~ring[rr, cc])):
+            tallies[name][0] += int(where.sum())
+            tallies[name][1] += int((where & ~moving).sum())
+            tallies[name][2] += int((where & moving & (speed < 0.05)).sum())
+    return {
+        name: (n, round(rested / max(n, 1), 3), round(pressed / max(n, 1), 3))
+        for name, (n, rested, pressed) in tallies.items()
     }
 
 
@@ -355,6 +400,10 @@ if __name__ == "__main__":
         seeds = [int(s) for s in sys.argv[2:]] or [1, 2, 3]
         for seed in seeds:
             print(f"seed {seed}: {wire_run(seed)}")
+    elif sys.argv[1] == "pressed":
+        seeds = [int(s) for s in sys.argv[2:]] or [1, 2, 3]
+        for seed in seeds:
+            print(f"seed {seed}: (animal-ticks, chose rest, pressed) {pressed_run(seed)}")
     elif sys.argv[1] == "indifferent":
         seeds = [int(s) for s in sys.argv[2:]] or [1, 2, 3, 4]
         for seed in seeds:

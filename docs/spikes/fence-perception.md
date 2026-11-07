@@ -1,4 +1,4 @@
-# Fence perception: what sealed regions do to drives, contact and scent (#169, #276, #139)
+# Fence perception: what sealed regions do to drives, contact and scent (#169, #276, #139, #278)
 
 Measured with [`fence_perception.py`](fence_perception.py). Sections 1 and 2 compare
 `origin/master` at `62b33d0` ("before") with `feat/169-region-gate` ("after"); sections 3-5 say
@@ -27,7 +27,7 @@ it could not reach, walked into the wire and was refused.
 because an option worth nothing loses to any option worth something. The world edge, which has the
 same problem, keeps its band at 1.01 of its share by clipping a candidate onto the rim rather than
 discarding it ([`edge-candidates.md`](edge-candidates.md)); the equivalent at a fence is #278,
-not built here.
+measured in section 6, and it does not hold the wire band at 1.0.
 
 The pens are small (4-18 animals at the end), so these are noisy, but the direction is the same on
 every seed. Viability is unchanged in kind: every pen and every outside population survives the
@@ -116,3 +116,108 @@ mate that could never be reached. What #139 changes is perception, measured dire
 an outsider no longer frightens a penned animal or draws it to the wire. The all-genes distance is
 dominated by `maturity_age`, whose founding range is two orders of magnitude wider than most genes'
 (#193), so it is reported but not read.
+
+## 6. Clipping candidates onto the wire (#278)
+
+#278 replaced #169's gate: a candidate whose straight path crosses a fence is read where the wire
+would stop the animal, a thousandth of a cell short of the line, found by `Barriers.reach`, which
+`Movement` now uses to stop a step too. Every candidate then lies in its animal's region, so the
+gate had nothing left to remove and was deleted. "Before" is `origin/master` at `80bd7f3` (#169's
+gate, plus #276 and #139); "after" is `fix/278-clip-to-wire`. Rebased onto `287e47a` (#174) the
+seeds re-run give identical figures on both sides.
+
+### The wire band in the live world
+
+`fence_perception.py wire`, as section 1, six seeds, with the rim band for outsiders beside it:
+
+| seed | inside ring, gate | inside ring, clip | rim band, gate | rim band, clip | alive in / out, gate | alive in / out, clip |
+|---|---|---|---|---|---|---|
+| 1 | 0.80 | 1.89 | 1.37 | 1.60 | 4 / 97 | 7 / 132 |
+| 2 | 0.75 | 2.74 | 1.25 | 1.66 | 10 / 51 | 10 / 51 |
+| 3 | 0.41 | 3.41 | 1.30 | 1.50 | 12 / 85 | 4 / 72 |
+| 4 | 0.26 | 2.18 | 1.75 | 1.99 | 12 / 64 | 14 / 79 |
+| 5 | 0.30 | 1.84 | 1.45 | 1.66 | 7 / 89 | 8 / 81 |
+| 6 | 0.15 | 1.57 | 1.56 | 1.67 | 4 / 46 | 11 / 59 |
+| mean | 0.45 | 2.27 | 1.45 | 1.68 | | |
+
+**Clipping does not hold the band at 1.0; it turns the repulsion into a pull** of about the same
+size the other way (0.45 against 2.27, or 1/2.2 against 2.3). That is not what #209's 1.01 at the
+rim predicted, and the table says why the prediction did not carry: the rim band in this live world
+is not 1.0 either, but 1.25-1.99. The 1.01 was an indifferent population. So the comparison that
+matters is the wire against the rim in one run, and the wire still crowds more, by about 1.35x.
+
+The outside ring (outsiders against the wire) moves the same way, from 0.02-0.49 to 0.22-2.60.
+Every pen and outside population survives on every seed in both trees.
+
+### The wire with no drives
+
+`fence_perception.py indifferent`, four seeds. With no drives the gate has nothing to mask, so
+both trees run the same choices and differ only in `Movement`'s crossing finder:
+
+| seed | inside ring, gate | inside ring, clip | rim band, either |
+|---|---|---|---|
+| 1 | 1.210 | 1.207 | 0.847 |
+| 2 | 1.292 | 1.292 | 0.807 / 0.805 |
+| 3 | 1.448 | 1.451 | 0.967 / 0.964 |
+| 4 | 1.250 | 1.250 | 0.903 / 0.905 |
+
+**A wire is stickier than the rim before any drive reads anything**: 1.21-1.45 against
+0.81-0.97, identically in both trees. The rim clips a landing per axis, so a step into it slides
+along it; a fence stops the step dead on its own line (#27), so an animal that heads into it stays
+where it is. That is `Movement`'s, not perception's, and it is the same on master.
+
+### Pressed into the wire
+
+`fence_perception.py pressed`, three seeds: the share of penned animal-ticks that chose a
+travelling option yet moved less than 0.05 world units.
+
+| seed | ring, gate | ring, clip | rest of pen, gate | rest of pen, clip |
+|---|---|---|---|---|
+| 1 | 0.100 | 0.149 | 0.029 | 0.032 |
+| 2 | 0.070 | 0.174 | 0.009 | 0.009 |
+| 3 | 0.074 | 0.143 | 0.005 | 0.007 |
+
+Choosing to rest is the same everywhere (0.10-0.15). What differs at the wire is choosing to go
+somewhere and going nowhere, and clipping doubles it. A candidate clipped along its own ray is
+pulled back toward the animal, so at the wire every outward heading reads nearly the ground it
+stands on: it is #209's folded option (an option proposing almost no displacement under a
+travelling index), at a fence instead of a corner. Several near-copies of staying put, one real
+one, and a wire that stops the step dead together make the wire a place animals stay. The forage
+field is not the cause: fencing raises its reading in the ring against the pen's interior by
+0-3% (0.781 to 0.767, 1.001 to 1.031, 1.033 to 1.040 on seeds 1-3).
+
+What would match the rim is the rim's own rule, a projection rather than a truncation: slide the
+step and the candidate along the wire. That is a decision rather than a fix, filed as #286.
+
+### What it costs
+
+`fence_perception.py choose`, 100,000 animals, N = 8, 256 x 256, four pens; alternating trees,
+two runs each. The first pair was taken on a quiet machine before rebasing onto #174; the second
+after, with another agent's benchmarks running, so it is slower across the board.
+
+| | gate, run 1 | gate, run 2 | clip, run 1 | clip, run 2 |
+|---|---|---|---|---|
+| `choose()` unfenced, quiet | 954 ms | 988 ms | 951 ms | 973 ms |
+| `choose()` four pens, quiet | 1,007 ms | 1,005 ms | 1,003 ms | 1,021 ms |
+| placing candidates, unfenced / pens, quiet | 27 / 27 ms | 29 / 28 ms | 29 / 89 ms | 28 / 86 ms |
+| gate marking, pens, quiet | 23 ms | 27 ms | - | - |
+| `Movement.step` unfenced / pens, quiet | 161 / 218 ms | 173 / 210 ms | 177 / 172 ms | 165 / 168 ms |
+| `choose()` unfenced / pens, loaded | 1,623 / 1,727 ms | 1,629 / 1,763 ms | 1,590 / 1,777 ms | 1,367 / 1,489 ms |
+| `Movement.step` unfenced / pens, loaded | 260 / 371 ms | 247 / 356 ms | 288 / 300 ms | 181 / 186 ms |
+
+Clipping costs about 60 ms per `choose` with four pens (placing 86-89 ms against 27-29 ms), and
+the gate it replaces cost about 40 ms (23-27 ms marking plus nine 1.8-2 ms masks), so `choose`
+is within noise of the gate. `Movement.step` gets cheaper with pens up, from 210-218 ms to
+168-172 ms, because the fence check moved out of the walk (which visited a second lattice and
+probed every pass) into one `reach` call over the steps that could meet a wire. An unfenced world
+takes neither path.
+
+Walking every candidate was what #169 measured at 2.7-7.6 s per tick. `reach` walks only rays
+that two summed-area box queries cannot rule out: per animal (any wire within one `look_ahead`,
+16% of animals with four pens) and then per ray (any wire in the box its two end cells span).
+
+### Unfenced worlds
+
+Same seed, identical output: `build_demo_world(seed, 200)`, 300 ticks, SHA-256 over every store
+column on live rows and their ids. `287e47a`: seed 1 `2a847dec...59cca07`, seed 2
+`727c9d1f...9618593c`; the branch gives the same two hashes, as did `80bd7f3` before the rebase.
