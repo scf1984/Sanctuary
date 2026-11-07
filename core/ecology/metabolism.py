@@ -146,6 +146,11 @@ class Metabolism:
                     f"tolerance gene '{gene}' must carry a positive cost; "
                     "a gene that only reduces upkeep and charges nothing is a free lunch"
                 )
+        # (2,) int, vocabulary indices of [heat tolerance, cold tolerance]: the only columns
+        # `thermoregulation` reads, so a caller can build just these instead of the whole phenotype.
+        self.thermal_columns = np.array(
+            [self._heat_tolerance_index, self._cold_tolerance_index], dtype=np.int64
+        )
 
     def upkeep(self, expressed_genes: np.ndarray, temperature: np.ndarray) -> np.ndarray:
         """(n,) float32, energy units per tick: what one tick of life costs each of `n` entities.
@@ -174,15 +179,17 @@ class Metabolism:
         guarantee rests on rather than any check in here (#136).
         """
         trait_upkeep = expressed_genes @ self.gene_cost
-        thermoregulation = self.thermoregulation(expressed_genes, temperature)
+        thermoregulation = self.thermoregulation(
+            expressed_genes[:, self.thermal_columns], temperature
+        )
         return (self.config.basal_rate + trait_upkeep + thermoregulation).astype(np.float32)
 
     def thermoregulation(
-        self, expressed_genes: np.ndarray, temperature: np.ndarray
+        self, tolerances: np.ndarray, temperature: np.ndarray
     ) -> np.ndarray:
         """Energy units per tick: the thermoregulation term of `upkeep` alone.
 
-        expressed_genes: (n, n_genes) phenotype rows.
+        tolerances: (n, 2) expressed phenotype columns `thermal_columns`, heat then cold.
         temperature: (n,) for each entity where it stands, or (n, k) for k places it might stand.
             Each row is priced with that entity's own tolerances.
 
@@ -192,8 +199,8 @@ class Metabolism:
         """
         # Shaped to broadcast against `temperature`, whether it is one place per row or several.
         trailing = (1,) * (np.ndim(temperature) - 1)
-        heat_tolerance = expressed_genes[:, self._heat_tolerance_index].reshape(-1, *trailing)
-        cold_tolerance = expressed_genes[:, self._cold_tolerance_index].reshape(-1, *trailing)
+        heat_tolerance = tolerances[:, 0].reshape(-1, *trailing)
+        cold_tolerance = tolerances[:, 1].reshape(-1, *trailing)
         # At most one of these is non-zero for any animal, so each pays only its own side's bill
         # and carries the other side's tolerance as dead weight.
         too_hot = np.maximum(temperature - self.config.neutral_temperature, 0.0)

@@ -73,11 +73,11 @@ class DriveWeight:
     def __init__(self, genetics: Genetics, genes: GeneRegistry, gene: str) -> None:
         self.genetics = genetics
         # A weight scales a drive's 0-1 shape, so it is a bare multiplier and carries no dimension.
-        self._index = genes.index_of(gene, unit=Unit.DIMENSIONLESS)
+        self._column = np.array([genes.index_of(gene, unit=Unit.DIMENSIONLESS)], dtype=np.int64)
 
     def of(self, selection: Selection) -> np.ndarray:
         """(len(selection),) float32: each entity's own weighting for this drive."""
-        return self.genetics.expressed(selection)[:, self._index]
+        return self.genetics.expressed_columns(selection, self._column)[:, 0]
 
 
 def detected(reading: np.ndarray, threshold: float) -> np.ndarray:
@@ -186,7 +186,11 @@ class Hunger:
         self.config = config
         # Raises KeyError naming the vocabulary version if the gene does not exist. Acuity
         # scales what is sampled from a field rather than a radius (#93), so it is dimensionless.
-        self._sight_index = genes.index_of(config.sight_gene, unit=Unit.DIMENSIONLESS)
+        # (2,) int: [sight, the diet's flesh allocation], the two genes `appeal` reads.
+        self._columns = np.array(
+            [genes.index_of(config.sight_gene, unit=Unit.DIMENSIONLESS), diet.animal_derived_index],
+            dtype=np.int64,
+        )
         self._weight = DriveWeight(genetics, genes, config.weight_gene)
 
     def urgency(self, selection: Selection) -> np.ndarray:
@@ -232,8 +236,8 @@ class Hunger:
         null option can win. An animal with no food in sight rests instead of marching whichever way
         the numerical noise leaned, which is the failure `forage_target` had to special-case.
         """
-        phenotype = self.genetics.expressed(selection)
-        sight = phenotype[:, self._sight_index].astype(np.float64)
+        phenotype = self.genetics.expressed_columns(selection, self._columns)
+        sight = phenotype[:, 0].astype(np.float64)
         grazing = sight[:, None] * self.plants.forage_at(self.plants.forage, x, y)
         # Summed over cue channels: how much animal lies that way, with no opinion about which.
         # Signed channels can cancel, and a cancelled blend is *less* smell rather than a negative
@@ -243,7 +247,8 @@ class Hunger:
             + self.plants.forage_at(self.carrion.scent, x, y)
         )
 
-        share = self.diet.animal_share(phenotype).astype(np.float64)[:, None]
+        # The allocation is the expressed column itself, which is all `Diet.animal_share` reads.
+        share = phenotype[:, 1].astype(np.float64)[:, None]
         threshold = self.config.detection_threshold
         return (
             (1.0 - share) * detected(grazing, threshold) + share * detected(prey, threshold)
@@ -409,27 +414,32 @@ class Thermal:
         self.metabolism = metabolism
         self.genetics = genetics
         self.config = config
-        # Acuity scales a sampled saving rather than a radius, as sight and scent acuity do (#93).
-        self._acuity_index = genes.index_of(config.acuity_gene, unit=Unit.DIMENSIONLESS)
+        # (3,) int: [heat tolerance, cold tolerance, acuity]. Acuity scales a sampled saving
+        # rather than a radius, as sight and scent acuity do (#93).
+        self._columns = np.append(
+            metabolism.thermal_columns, genes.index_of(config.acuity_gene, unit=Unit.DIMENSIONLESS)
+        )
         self._weight = DriveWeight(genetics, genes, config.weight_gene)
 
     def urgency(self, selection: Selection) -> np.ndarray:
         """(len(selection),) float32: the thermoregulation bill against saturation, weighted."""
         mask = selection.to_mask()
         temperature = self.climate.temperature_at(self.store.x[mask], self.store.y[mask])
-        bill = self.metabolism.thermoregulation(self.genetics.expressed(selection), temperature)
+        tolerances = self.genetics.expressed_columns(selection, self.metabolism.thermal_columns)
+        bill = self.metabolism.thermoregulation(tolerances, temperature)
         shape = np.clip(bill / self.config.saturation_upkeep, 0.0, 1.0)
         return (self._weight.of(selection) * shape).astype(np.float32)
 
     def appeal(self, selection: Selection, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """(n, n_options) float32 in [0, 1]: how much of the climate's bill each option would save."""
         mask = selection.to_mask()
-        phenotype = self.genetics.expressed(selection)
+        phenotype = self.genetics.expressed_columns(selection, self._columns)
+        tolerances = phenotype[:, :2]
         here = self.climate.temperature_at(self.store.x[mask], self.store.y[mask])
         there = self.climate.temperature_at(x, y)
-        bill_here = self.metabolism.thermoregulation(phenotype, here.astype(np.float64))
-        bill_there = self.metabolism.thermoregulation(phenotype, there.astype(np.float64))
-        acuity = phenotype[:, self._acuity_index].astype(np.float64)[:, None]
+        bill_here = self.metabolism.thermoregulation(tolerances, here.astype(np.float64))
+        bill_there = self.metabolism.thermoregulation(tolerances, there.astype(np.float64))
+        acuity = phenotype[:, 2].astype(np.float64)[:, None]
         saving = acuity * (bill_here[:, None] - bill_there)
         return detected(saving, self.config.detection_threshold).astype(np.float32)
 
@@ -506,11 +516,11 @@ class Lust:
         self.config = config
         # A count of ticks, so dimensionless: §2.1 makes the tick the only clock, and
         # nothing here is a length or an energy.
-        self._maturity_index = genes.index_of(
-            config.maturity_gene, unit=Unit.DIMENSIONLESS
+        self._maturity_column = np.array(
+            [genes.index_of(config.maturity_gene, unit=Unit.DIMENSIONLESS)], dtype=np.int64
         )
-        self._acuity_index = genes.index_of(
-            config.scent_acuity_gene, unit=Unit.DIMENSIONLESS
+        self._acuity_column = np.array(
+            [genes.index_of(config.scent_acuity_gene, unit=Unit.DIMENSIONLESS)], dtype=np.int64
         )
         self._weight = DriveWeight(genetics, genes, config.weight_gene)
 
@@ -535,7 +545,9 @@ class Lust:
         zeros and lust drops out of the utility sum entirely rather than voting flatly for
         everywhere — the same reason `Hunger.appeal` normalises.
         """
-        acuity = self.genetics.expressed(selection)[:, self._acuity_index].astype(np.float64)
+        acuity = self.genetics.expressed_columns(selection, self._acuity_column)[:, 0].astype(
+            np.float64
+        )
         perceived = self.scent.perceived_at(selection, x, y)
         own = self.scent.signature_of(selection).astype(np.float64)
         # Dot each candidate's cue reading against the searcher's own signature. Negative means it
@@ -550,7 +562,7 @@ class Lust:
         in whether they are looking yet, which is what lets selection tune age at first
         reproduction against the world rather than a designer choosing it.
         """
-        maturity = self.genetics.expressed(selection)[:, self._maturity_index]
+        maturity = self.genetics.expressed_columns(selection, self._maturity_column)[:, 0]
         mature = self.store.age[selection.to_mask()] >= maturity
         headroom = self.config.abundant_energy - self.config.breeding_energy
         surplus = (self.ecology.energy(selection) - self.config.breeding_energy) / headroom
@@ -666,17 +678,22 @@ class Fear:
         # Raise KeyError naming the vocabulary version if any gene does not exist. Acuity
         # scales a sampled concentration and an aversion is a direction in cue space; neither
         # carries a dimension.
-        self._acuity_index = genes.index_of(config.scent_acuity_gene, unit=Unit.DIMENSIONLESS)
         self._weight = DriveWeight(genetics, genes, config.weight_gene)
-        # (n_directions, n_channels): one row of gene columns per aversion direction, so scoring
-        # every direction is one matrix product rather than a loop over genes.
-        self._aversion_indices = np.array(
+        aversion = np.array(
             [
                 [genes.index_of(name, unit=Unit.DIMENSIONLESS) for name in block]
                 for block in config.aversion_genes
             ],
             dtype=np.int64,
         )
+        # (1 + n_directions * n_channels,) int: acuity, then every aversion gene. The only columns
+        # `_channels` reads.
+        self._columns = np.concatenate(
+            [[genes.index_of(config.scent_acuity_gene, unit=Unit.DIMENSIONLESS)], aversion.ravel()]
+        )
+        # (n_directions, n_channels): where each direction's genes sit in that block, so scoring
+        # every direction is one matrix product rather than a loop over genes.
+        self._aversion_positions = 1 + np.arange(aversion.size).reshape(aversion.shape)
 
     def appeal(self, selection: Selection, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """(n, n_options) float32: flat — fear knows it is frightened, not which way is safer.
@@ -707,14 +724,14 @@ class Fear:
         directions read through sight instead. Nothing outside a channel knows how its probability
         was computed, so that addition changes no other line in this class.
         """
-        expressed = self.genetics.expressed(selection)
+        expressed = self.genetics.expressed_columns(selection, self._columns)
         # Sampled once and shared: the field read is the expensive part, and every direction
         # weighs the same air differently.
         smelled = self.scent.perceive(selection)
-        acuity = expressed[:, self._acuity_index]
+        acuity = expressed[:, 0]
         return [
             self._detect(acuity * (expressed[:, direction] * smelled).sum(axis=1))
-            for direction in self._aversion_indices
+            for direction in self._aversion_positions
         ]
 
     def _detect(self, danger: np.ndarray) -> np.ndarray:

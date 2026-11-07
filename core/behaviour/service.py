@@ -158,10 +158,14 @@ class Behaviour(DomainService):
         self._drives: list[Drive] = []
         # A temperature is a bare scale on a utility, so it carries no dimension of its own; so is
         # a bonus added to one.
-        self._temperature_index = genes.index_of(
-            config.choice_temperature_gene, unit=Unit.DIMENSIONLESS
+        # (2,) int: [commitment, choice temperature], the two genes `choose` reads.
+        self._choice_columns = np.array(
+            [
+                genes.index_of(config.commitment_gene, unit=Unit.DIMENSIONLESS),
+                genes.index_of(config.choice_temperature_gene, unit=Unit.DIMENSIONLESS),
+            ],
+            dtype=np.int64,
         )
-        self._commitment_index = genes.index_of(config.commitment_gene, unit=Unit.DIMENSIONLESS)
         # A negative bonus rewards the option that *reverses* last tick's bearing, which is a spin
         # rather than a preference. Genes drift freely across zero (§2.5), so what forbids it is the
         # expression mode and nothing else — refused here, at the one place both facts are in hand,
@@ -406,14 +410,13 @@ class Behaviour(DomainService):
         """
         headings = self.candidate_headings(selection, rng)
         x, y = self.candidate_positions(selection, headings)
-        # One phenotype read for both genes this service consults: `expressed` rebuilds the whole
-        # (n, n_genes) block per call, so asking it twice in one tick is a block nobody needed.
-        expressed = self.genetics.expressed(selection)
+        commitment, temperature = self.genetics.expressed_columns(
+            selection, self._choice_columns
+        ).T
         total, contributions = self.utilities(
-            selection, headings, x, y, expressed[:, self._commitment_index].astype(np.float64)
+            selection, headings, x, y, commitment.astype(np.float64)
         )
 
-        temperature = expressed[:, self._temperature_index]
         scaled = total / temperature.astype(np.float64)[:, None]
         chosen = np.argmax(scaled + rng.gumbel(size=scaled.shape), axis=1)
 

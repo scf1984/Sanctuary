@@ -96,20 +96,48 @@ class ExpressionTable:
         after this rather than before it, because a mode maps an unexpressed gene's stored value to
         something that is not necessarily zero and masking first would express half of it.
         """
-        phenotype = np.where(self.magnitude_columns, np.abs(raw), raw).astype(np.float32)
+        return self._read(
+            raw,
+            self.magnitude_columns,
+            self.exponential_columns if self._has_exponential else None,
+            self.unit_interval_columns if self._has_unit_interval else None,
+        )
+
+    def phenotype_of(self, raw: np.ndarray, columns: np.ndarray) -> np.ndarray:
+        """(n, len(columns)) float32: `phenotype` for a block holding only `columns`, in that order.
+
+        The same arithmetic as `phenotype` column by column, so the result is bit-identical to the
+        full block's matching columns — a reader that wants two genes no longer pays for sixty
+        (#258).
+        """
+        exponential = self.exponential_columns[columns]
+        unit_interval = self.unit_interval_columns[columns]
+        return self._read(
+            raw,
+            self.magnitude_columns[columns],
+            exponential if exponential.any() else None,
+            unit_interval if unit_interval.any() else None,
+        )
+
+    @staticmethod
+    def _read(
+        raw: np.ndarray,
+        magnitude: np.ndarray,
+        exponential: np.ndarray | None,
+        unit_interval: np.ndarray | None,
+    ) -> np.ndarray:
+        phenotype = np.where(magnitude, np.abs(raw), raw).astype(np.float32)
         # Applied to the exponential columns alone rather than to the whole block and selected
         # from. `exp` over every column overflows on any gene holding a large value — a cue
         # signature is unbounded and read raw — which raises a RuntimeWarning per tick and
         # computes `inf` only to discard it.
-        if self._has_exponential:
-            columns = self.exponential_columns
-            phenotype[:, columns] = np.exp(phenotype[:, columns])
-        if self._has_unit_interval:
-            columns = self.unit_interval_columns
+        if exponential is not None:
+            phenotype[:, exponential] = np.exp(phenotype[:, exponential])
+        if unit_interval is not None:
             # The logistic, written as `0.5 * (1 + tanh(x/2))` rather than `1 / (1 + exp(-x))`.
             # They are the same function, but the direct form overflows `exp` on any gene that has
             # drifted well below zero — a RuntimeWarning every tick, and `inf` computed only to be
             # divided away. `tanh` saturates at ±1 instead, so an extreme allocation costs nothing
             # and still lands strictly inside the interval.
-            phenotype[:, columns] = 0.5 * (1.0 + np.tanh(0.5 * phenotype[:, columns]))
+            phenotype[:, unit_interval] = 0.5 * (1.0 + np.tanh(0.5 * phenotype[:, unit_interval]))
         return phenotype

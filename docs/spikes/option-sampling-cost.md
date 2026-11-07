@@ -135,3 +135,22 @@ Per drive at n=100,000, N=8 (median of 3, ms):
 | thirst | 77.7 | 62.3 |
 
 **What changed:** `choose()` at n=100,000 went from 362 ms to about 3 s per tick, so it alone now exceeds §2.1's 1,000 ms tick. The 100,000 row is noisy (N=8 measured above N=16), but every column is far over budget. The forage-field term that dominated at #114 is now small. The cost is in what the drives read per candidate. The conclusion "N is affordable" still holds at the margin (0.36 ms per candidate per 1,000 entities), but the fixed floor (about 20 ms per 1,000 entities at N=4) does not fit the budget at 100,000. Filed as its own issue, not addressed here.
+
+## Re-measured idle, then the phenotype read narrowed (#258, 2026-11-07)
+
+**The table above was taken on a saturated machine and overstates the cost about 2.7×.** Re-run idle at 494a995, `choose()` at n=100,000 and N=8 is **1,144 ms**, not 3,062 (N=4: 931; n=10,000: 96). That is still over §2.1's 1,000 ms tick, and still not an N problem: 0.55 ms per candidate per 1,000 entities.
+
+**Where it went.** cProfile of one `choose()` at n=100,000: `Genetics.expressed` was called **17 times** and took **727 of ~1,500 ms**. Every call built the full `(n, n_genes)` phenotype (mode, species mask, senescence) for a caller that read one to seventeen columns of it. That is #174's defect grown from 7 calls to 17 as drives were added.
+
+**The fix reads only the columns asked for** (`Genetics.expressed_columns`). It caches nothing, so it doesn't take either side of #174's deferred cache-or-pass-down question, and it computes the same arithmetic column by column. Same seed, master against branch, 2 seeds × 600 ticks of the demo world at 400 founders: identical SHA-256 over positions, energy, age, genes, occupancy and drive columns. So it's a MINOR under §2.8.
+
+Alternating master and branch runs under the same background load (median of 7, ms):
+
+| n (N=8) | master | branch |
+|---:|---:|---:|
+| 10,000 | 129–133 | 78 |
+| 100,000 | 1,490–1,552 | 910–919 |
+
+That's about **−40%**. Phenotype reads in a profiled `choose()` fell from 727 to 150 ms.
+
+**What's left at n=100,000** (same profile, ms): the cue field sampled at the candidates (`perceived_at`, 240), which hunger (prey smell) and lust **each compute with identical arguments**; terrain/climate bilinear sampling (≈145 over 5 calls, of which fatigue's elevation and thermal's temperature are the bulk); and dtype conversions (≈55). Sharing the duplicated cue read is the same lifetime question #174 defers, so it's recorded on #258 rather than decided here.

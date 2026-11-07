@@ -16,6 +16,7 @@ from core.genetics.senescence import SenescenceConfig, decay
 from core.genetics.service import Genetics
 from core.genetics.species import SpeciesRegistry
 from core.invariants import senescence_decay_stays_in_unit_interval
+from core.selection import Selection
 from core.services import ColumnRegistry
 
 from tests.support.genes import gene_registry
@@ -199,3 +200,51 @@ class TestTheInvariant:
             lambda age, resistance, base: np.where(age == 10, 0.0, 1.0),
         )
         assert senescence_decay_stays_in_unit_interval(genetics)(store) is None
+
+
+class TestReadingSomeColumns:
+    """`expressed_columns` is `expressed` with the unread columns never built (#258).
+
+    A drive that reads one gene used to pay for the whole (n, n_genes) block, seventeen times per
+    `choose()`. The column read is only worth having if it is the *same* phenotype, so the contract
+    is exact equality with the full block's columns, through every mode, a partial species mask,
+    and senescence at every age — not closeness.
+    """
+
+    NAMES = (
+        "size", "speed", "sight", "scent_acuity", "senescence_resistance", "mutability",
+        "choice_temperature", "diet_animal_derived", "signature_0", "aversion0_0",
+    )
+
+    def population(self):
+        registry = gene_registry(self.NAMES)
+        store = EntityStore(initial_capacity=64, n_drives=1, n_genes=len(self.NAMES))
+        species = SpeciesRegistry(registry)
+        species.register(registry.vocabulary.names)
+        # A second species that does not express sight, the resistance or a cue gene, so masking
+        # has to be applied to the subset rather than assumed away.
+        unexpressed = ("sight", "senescence_resistance", "signature_0")
+        species.register(tuple(n for n in self.NAMES if n not in unexpressed))
+        genetics = Genetics(store, ColumnRegistry(), species, registry, genetics_config())
+        rng = np.random.default_rng(3)
+        n = 50
+        ids = store.allocate(
+            n,
+            genes=rng.normal(0.0, 2.0, size=(n, len(self.NAMES))).astype(np.float32),
+            age=rng.integers(-5, 400, size=n),
+            species_id=rng.integers(0, 2, size=n).astype(np.int32),
+        )
+        rows = np.array([store._id_to_row[i] for i in ids.tolist()], dtype=np.int64)
+        return genetics, Selection.from_indices(rows, capacity=store.capacity)
+
+    @pytest.mark.parametrize(
+        "columns",
+        [[1], [2, 4], [6, 7, 8, 9], [9, 0, 3], list(range(10))],
+        ids=["one decaying", "decaying and resistance", "every other mode", "out of order", "all"],
+    )
+    def test_equals_the_same_columns_of_the_full_block_exactly(self, columns):
+        genetics, selection = self.population()
+        full = genetics.expressed(selection)
+        some = genetics.expressed_columns(selection, np.array(columns))
+        assert some.dtype == np.float32
+        np.testing.assert_array_equal(some, full[:, columns])
