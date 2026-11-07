@@ -37,7 +37,7 @@ from core.ecology.metabolism import MetabolismConfig
 from core.ecology.plants import PlantsConfig
 from core.genetics.expression import GeneticsConfig
 from core.genetics.senescence import SenescenceConfig
-from core.world.diffusion import DiffusionConfig
+from core.world.diffusion import CostAwareDiffusion, DiffusionConfig
 from core.invariants import no_entity_exceeds_its_top_speed
 from core.selection import Selection
 from core.world.assembly import (
@@ -194,6 +194,7 @@ def world_config(**overrides):
             exertion_premium=2.0,
             climb_cost=1.0,
             walking_pace=0.4,
+            drag=1.0,
         ),
         exertion=ExertionConfig(recovery_rate=0.2),
         hunger=HungerConfig(
@@ -525,6 +526,33 @@ class TestABuiltWorldRuns:
         world.loop.advance(10)
 
         assert world.ecology.energy(Selection.from_mask(world.store.alive)).sum() < before
+
+
+class TestWaterHasOnePrice:
+    def test_the_fields_animals_read_charge_water_with_the_walk_s_own_drag(self):
+        """#143: the walk charges `1 + drag × depth`, and the forage and water fields must see the
+        same price, or an animal reads a far shore as near and is billed for the swim. One
+        coefficient, read from `MovementConfig` by both, so the two cannot drift apart (§2.1)."""
+        base = world_config()
+        dry = build_world(
+            world_config(movement=dataclasses.replace(base.movement, drag=0.0)), seed=1
+        )
+        wet = build_world(
+            world_config(movement=dataclasses.replace(base.movement, drag=4.0)), seed=1
+        )
+        assert wet.water.depth.max() > 0.0, "the fixture map holds no water to price"
+
+        expected = CostAwareDiffusion(
+            wet.terrain,
+            wet.config.plants.forage_diffusion,
+            wet.barriers,
+            wading=4.0 * wet.water.depth,
+        ).conductance
+        np.testing.assert_array_equal(wet.plants.forage_diffusion.conductance, expected)
+        assert not np.array_equal(
+            wet.plants.forage_diffusion.conductance, dry.plants.forage_diffusion.conductance
+        )
+        assert not np.array_equal(wet.hydration.reachable, dry.hydration.reachable)
 
 
 class TestAnAssembledWorldAges:

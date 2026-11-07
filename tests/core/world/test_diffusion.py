@@ -247,3 +247,80 @@ class TestTheGradientPointsAtFood:
         gx, gy = operator.gradient_at(field, np.array([0.0, edge]), np.array([0.0, edge]))
 
         assert np.isfinite(gx).all() and np.isfinite(gy).all()
+
+
+def lake_band(depth, first_column, last_column):
+    """Standing water `depth` deep over a north-south band of columns, dry everywhere else."""
+    band = np.zeros((GRID, GRID), dtype=np.float32)
+    band[:, first_column : last_column + 1] = depth
+    return band
+
+
+DRAG = 2.0
+
+
+class TestWaterImpedes:
+    """Issue #143: the walk charges `1 + drag × depth` per world unit of haul, so perception must
+    see a lake as dear too — or an animal reads the far shore as near and is billed for the swim.
+
+    `wading` is that per-node excess, `drag × depth`, handed in already multiplied: the operator
+    knows nothing about water, only how much dearer a node is to haul across than dry ground."""
+
+    def test_a_lake_damps_what_is_behind_it(self):
+        source = point_source(column=CENTRE + 6)
+        dry = CostAwareDiffusion(flat(), config()).spread(source)
+        wet = CostAwareDiffusion(
+            flat(), config(), wading=DRAG * lake_band(1.5, CENTRE + 2, CENTRE + 4)
+        ).spread(source)
+
+        assert wet[CENTRE, CENTRE] < dry[CENTRE, CENTRE]
+
+    def test_deeper_water_damps_more(self):
+        source = point_source(column=CENTRE + 6)
+        shallow = CostAwareDiffusion(
+            flat(), config(), wading=DRAG * lake_band(0.3, CENTRE + 2, CENTRE + 4)
+        ).spread(source)
+        deep = CostAwareDiffusion(
+            flat(), config(), wading=DRAG * lake_band(1.5, CENTRE + 2, CENTRE + 4)
+        ).spread(source)
+
+        assert deep[CENTRE, CENTRE] < shallow[CENTRE, CENTRE]
+
+    def test_a_dry_world_conducts_exactly_as_it_did(self):
+        """Zero drag, or no water, must change nothing bit for bit — the plumbing is neutral before
+        the coefficient bites, which is what lets a world at drag 0 run identically (§2.8)."""
+        heights = np.random.default_rng(3).uniform(0.0, 4.0, (GRID, GRID)).astype(np.float32)
+        terrain = Terrain(heights, CELL_SIZE)
+
+        without = CostAwareDiffusion(terrain, config()).conductance
+        zero = CostAwareDiffusion(
+            terrain, config(), wading=0.0 * lake_band(1.5, CENTRE - 3, CENTRE + 3)
+        ).conductance
+
+        np.testing.assert_array_equal(zero, without)
+
+    def test_a_wet_edge_conducts_in_inverse_proportion_to_what_crossing_it_costs(self):
+        """The consistency the decision asked for, as an identity. Along a grid edge bilinear depth
+        is linear, so the walk charges crossing it `1 + drag × mean depth` times the dry haul. A
+        path's haul is the sum of its edges' prices, as a chain's resistance is the sum of its
+        resistors' — so an edge's conductance is divided by its price, relative to the weight the
+        cell keeps for itself."""
+        depth = lake_band(1.0, CENTRE, CENTRE)
+        depth[:, CENTRE + 1] = 0.4
+        operator = CostAwareDiffusion(flat(), config(), wading=DRAG * depth)
+        self_plane, west, east = 0, 3, 4
+
+        cell = operator.conductance[:, CENTRE, CENTRE]
+        assert cell[east] / cell[self_plane] == pytest.approx(1.0 / (1.0 + DRAG * 0.7), rel=1e-6)
+        assert cell[west] / cell[self_plane] == pytest.approx(1.0 / (1.0 + DRAG * 0.5), rel=1e-6)
+
+    def test_water_at_one_edge_of_the_map_is_not_felt_at_the_other(self):
+        """`_neighbours` wraps, and the rim refuses the wrapped edge before it is read. Water is
+        applied only to edges that exist, so a lake on the western rim does not leak a phantom
+        price onto the eastern one."""
+        operator = CostAwareDiffusion(flat(), config(), wading=DRAG * lake_band(1.5, 0, 0))
+        dry = CostAwareDiffusion(flat(), config())
+
+        np.testing.assert_array_equal(
+            operator.conductance[:, :, GRID - 1], dry.conductance[:, :, GRID - 1]
+        )

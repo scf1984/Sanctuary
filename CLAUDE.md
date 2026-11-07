@@ -525,6 +525,49 @@ by" hunger and no animal stands still merely because the drive that won has no m
   what turns "a starving animal can neither run nor hide" from a description into a mechanism, and
   it is why hunger closing off options needs no separate rule.
 
+  **Water is priced by depth, as a drag on the haul** — settled in #143, which owned it.
+
+  ```
+  haul = transport_cost × (distance + drag × ∫ depth ds) × (1 + exertion_premium × pace)
+  ```
+
+  Every world unit travelled at depth `d` costs `1 + drag × d` times what it costs dry. Climbing is
+  untouched, and animals still walk the lake **bed**, so the climb out of a basin is charged as it
+  always was. Drag is the medium on top of that. **Graded rather than binary**, so a drinking margin
+  costs almost nothing and every drink, which is a wet step, stays cheap. A per-cell medium flag
+  was rejected: it prices a puddle like a lake, needs the cell-edge lattice walked always, and
+  disagrees with the bilinear `is_drinkable_at`.
+
+  **Integrated exactly, on the passes the walk already makes.** Depth is bilinear on the
+  elevation's node lattice, so along a line inside one node cell it is a quadratic, and Simpson's
+  rule over each segment is exact. That is what keeps #113's additivity across wet and dry ground.
+  A trapezoid is exact only along a grid line, and on a diagonal it makes a stride and the same
+  journey in pieces disagree. A test pins exactly that case.
+
+  **Perception reads the same price.** `CostAwareDiffusion` divides each edge's conductance by
+  `1 + drag × depth` at the edge's mean. That is exact along a grid edge, and it is the resistor
+  reading: a path's haul is the sum of its edges' prices. The assembly computes `drag × depth` once
+  from `MovementConfig.drag` and hands it to the forage, carrion and water fields. So there is one
+  coefficient and nothing to drift apart (§2.1). Without it, an animal would read a lake's far
+  shore as near and be billed for the swim, which is #207's shape.
+
+  `drag` has **no default**: it reads against depth, which means only what a world's relief makes
+  it (§2.6). At drag 0 the world is bit-identical to the one before #143. It is MAJOR under §2.8.
+  #148's streamlining gene will damp this term. A shared field cannot price one animal's
+  streamlining, so perception will then read the unstreamlined price.
+
+  **Measured** ([`docs/spikes/water-drag.md`](docs/spikes/water-drag.md)), over 3 maps × 8 runs ×
+  900 ticks:
+  - The demo world's `drag = 2` is the largest of 0/1/2/4/8/16 whose population and dehydration
+    cannot be told from drag 0.
+  - At drag 2, crossings through deep water fall by 15%.
+  - The movement step costs 42% more at 100,000 animals (+61 ms).
+
+  **The negative is worth stating.** On the demo map, lakes stay weak barriers at any drag the
+  world can afford, because its water is shallow (median 0.13–0.37, max 1.76). At drag 16,
+  crossings fall only 28% while the population halves. So drag makes deep water a graded barrier
+  for #16. It does not make this map's lakes isolation.
+
   **Every withdrawal from the pool goes through `Ecology.spend`.** `Ecology` owns the `energy`
   column, so a mover cannot subtract from it directly (§2.3) — it hands over a bill. That is what
   keeps the closed loop auditable as more systems come to spend: #19's chase and #20's gestation

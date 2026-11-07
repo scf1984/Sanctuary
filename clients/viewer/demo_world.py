@@ -573,6 +573,14 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
             # above this is bought with `haste` against a real utility advantage, and the gap to 1
             # is what the premium finally has to multiply (#203).
             walking_pace=0.4,
+            # Per world unit of depth (#143): the deepest water on this map (1.76) hauls at 4.5x the
+            # dry rate, a typical lake (median depth 0.13-0.37) at 1.3-1.7x, and a drinking margin
+            # under 0.1 deep at under 1.2x. Measured, not chosen: over 3 maps x 8 runs x 900 ticks,
+            # 2 is the largest of 0/1/2/4/8/16 whose population and dehydration are
+            # indistinguishable from 0, and it cuts crossings through deep water by about 15%. At 4
+            # the minimum population and dehydration start to move; at 8 the final population
+            # falls by a third (docs/spikes/water-drag.md).
+            drag=2.0,
         ),
         exertion=ExertionConfig(recovery_rate=0.2),
         hunger=HungerConfig(

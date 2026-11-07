@@ -168,6 +168,7 @@ class Hydration(DomainService):
         water: Water,
         config: HydrationConfig,
         barriers: Barriers | None = None,
+        wading: np.ndarray | None = None,
     ) -> None:
         super().__init__(store, registry)
         self.terrain = terrain
@@ -179,9 +180,11 @@ class Hydration(DomainService):
         # advanced. When water becomes dynamic (#165) this becomes a registered system beside
         # `Plants.rebuild_forage`, and its range is the knob that decides how far a herd will walk
         # for a drink.
-        self.reachable = CostAwareDiffusion(terrain, config.reachability, barriers).spread(
-            water.depth.astype(np.float32)
-        )
+        # Priced for wading like every other field an animal steers by (#143): a lake's far shore
+        # is no nearer for the water between.
+        self.reachable = CostAwareDiffusion(
+            terrain, config.reachability, barriers, wading
+        ).spread(water.depth.astype(np.float32))
 
     def deficit(self, selection: Selection) -> np.ndarray:
         """(len(selection),) float32, dimensionless in [0, 1]: how dry each animal is."""
