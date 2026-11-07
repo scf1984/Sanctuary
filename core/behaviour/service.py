@@ -562,7 +562,14 @@ class Behaviour(DomainService):
         heading = self.store.choice_heading[mask].astype(np.float64)
         moving = self.store.choice_moving[mask]
         reach = np.where(moving, self.config.look_ahead, 0.0)
-        return (
-            np.clip(x + reach * np.cos(heading), 0.0, self.terrain.world_width),
-            np.clip(y + reach * np.sin(heading), 0.0, self.terrain.world_height),
-        )
+        target_x = np.clip(x + reach * np.cos(heading), 0.0, self.terrain.world_width)
+        target_y = np.clip(y + reach * np.sin(heading), 0.0, self.terrain.world_height)
+        # Slid along the wire as the candidate was (#286), as the rim clips both: the bearing an
+        # animal steers by is the option it chose, so heading into a wire it is steered along it at
+        # its full pace rather than leaning on it and sliding at the tangential part of its speed.
+        if self.barriers.any_blocked:
+            slid_x, slid_y = self._slide_along_the_wire(
+                x[:, None], y[:, None], target_x[:, None], target_y[:, None]
+            )
+            target_x, target_y = slid_x[:, 0], slid_y[:, 0]
+        return target_x, target_y

@@ -472,6 +472,28 @@ class TestCandidatesStopAtTheWire:
 
         assert world.barriers.same_region(here_x, here_y, x, y).all()
 
+    def test_the_bearing_steered_by_is_the_candidate_chosen(self):
+        """The rim clips the steering target as it clips the candidate, so an animal choosing a
+        heading into the edge is steered along it at its full pace (#286). The wire does the same:
+        steered at the raw point across it, the animal would lean on the wire and slide at only
+        the tangential part of its speed, and a population with no drives crowds there."""
+        world = World()
+        selection = world.spawn(1, x=np.float32([4.0]), y=np.float32([4.0]))
+        world.barriers.blocked_west[:, 5] = True  # x = 4.5
+        world.barriers.revision += 1
+        heading = np.pi / 6
+        world.travelling(selection, heading)
+        candidate_x, candidate_y = world.behaviour.candidate_positions(
+            selection, np.array([[heading]])
+        )
+
+        target_x, target_y = world.behaviour.chosen_target(selection)
+
+        assert target_x[0] == pytest.approx(4.5 - WIRE_MARGIN, abs=1e-12)
+        # To float32, the precision the stored heading is held at.
+        assert target_x[0] == pytest.approx(candidate_x[0, 0], abs=1e-6)
+        assert target_y[0] == pytest.approx(candidate_y[0, 0], abs=1e-6)
+
 
 class TestChoosing:
     def test_a_decisive_animal_takes_its_best_option(self):
