@@ -258,12 +258,27 @@ class Barriers:
         second asks it of each surviving ray's own box. Walking every candidate instead is what #169 measured at
         2.7-7.6 s per tick (docs/spikes/fence-perception.md).
         """
+        return self._reach(x, y, unit_x, unit_y, distance)[0]
+
+    def _reach(
+        self,
+        x: np.ndarray,
+        y: np.ndarray,
+        unit_x: np.ndarray,
+        unit_y: np.ndarray,
+        distance: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """`reach`, plus where the blocking line lies along each ray (`inf` where none does) and
+        whether it is a line of constant x (`blocked_west`) rather than of constant y, which is
+        what `slide` needs to know to drop the component normal to it."""
         shape = np.broadcast_shapes(
             np.shape(x), np.shape(y), np.shape(unit_x), np.shape(unit_y), np.shape(distance)
         )
         free = np.array(np.broadcast_to(distance, shape), dtype=np.float64)
+        line = np.full(shape, np.inf)
+        vertical = np.zeros(shape, dtype=np.bool_)
         if not self.any_blocked or free.size == 0:
-            return free
+            return free, line, vertical
         x = np.asarray(x, dtype=np.float64)
         y = np.asarray(y, dtype=np.float64)
 
@@ -271,7 +286,7 @@ class Barriers:
         near = self.near_wire(x, y, float(free.max()))
         rays = np.flatnonzero(np.broadcast_to(near, shape) & (free > 0.0))
         if rays.size == 0:
-            return free
+            return free, line, vertical
         at = np.unravel_index(rays, shape)
 
         def gather(values: np.ndarray) -> np.ndarray:
@@ -295,11 +310,79 @@ class Barriers:
         )
         if crossing.any():
             walked = rays[crossing]
-            free.reshape(-1)[walked] = self._walk_to_wire(
+            (
+                free.reshape(-1)[walked],
+                line.reshape(-1)[walked],
+                vertical.reshape(-1)[walked],
+            ) = self._walk_to_wire(
                 ray_x[crossing], ray_y[crossing], ray_ux[crossing], ray_uy[crossing],
                 length[crossing],
             )
-        return free
+        return free, line, vertical
+
+    def slide(
+        self, x: np.ndarray, y: np.ndarray, end_x: np.ndarray, end_y: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """(first, stop_x, stop_y), float64, the arguments' broadcast shape: a straight step from
+        `(x, y)` to `(end_x, end_y)`, slid along the first wire it meets (#286, option B).
+
+        The path is two straight legs. The first runs along the step to the **bend**, `first`
+        world units out; the second runs from the bend to the stop, along the wire. Where no wire
+        is met the bend is the end and the end is returned exactly, so an animal no wire touches
+        moves bit for bit as in an unfenced world.
+
+        **The rim's rule, carried to the wire.** The world's edge clips a landing point per axis,
+        which is a projection: a step into the rim keeps its component along it. A wire does the
+        same here: at the first blocked crossing the component of the step normal to the wire is
+        dropped, and what is left is walked on along it. That leg runs along one axis, so the only
+        wire it can meet is one across it (a pen's corner, or another fence), and there it stops,
+        since dropping that component too leaves nothing. Its stop is therefore the end with the
+        blocked coordinate replaced, the per-axis clip exactly, cut short only by a corner.
+
+        **The bend is `WIRE_MARGIN` short of the wire measured across it, not along the step.**
+        Measured along the step, a grazing heading stops a margin times the sine of its angle from
+        the line, and an animal sliding along a wire grazes it every tick: within a few the float32
+        position column rounds it onto the line, which indexes to the far side. An animal already
+        closer than that bends where it stands, so nothing ever creeps toward the line.
+        """
+        x, y, end_x, end_y = np.broadcast_arrays(
+            *(np.asarray(v, dtype=np.float64) for v in (x, y, end_x, end_y))
+        )
+        along_x, along_y = end_x - x, end_y - y
+        length = np.hypot(along_x, along_y)
+        moving = length > 0.0
+        unit_x = np.where(moving, along_x / np.where(moving, length, 1.0), 0.0)
+        unit_y = np.where(moving, along_y / np.where(moving, length, 1.0), 0.0)
+        _free, line, vertical = self._reach(x, y, unit_x, unit_y, length)
+        blocked = np.isfinite(line)
+        first = length.copy()
+        stop_x, stop_y = end_x.copy(), end_y.copy()
+        if not blocked.any():
+            return first, stop_x, stop_y
+
+        b = np.flatnonzero(blocked.ravel())
+        bx, by = x.ravel()[b], y.ravel()[b]
+        bux, buy = unit_x.ravel()[b], unit_y.ravel()[b]
+        across_x = vertical.ravel()[b]
+        # How fast the step closes on the wire per world unit along it: never zero for a ray that
+        # crossed the line.
+        closing = np.where(across_x, np.abs(bux), np.abs(buy))
+        bend = np.maximum(line.ravel()[b] - WIRE_MARGIN * self.terrain.cell_size / closing, 0.0)
+        bend_x, bend_y = bx + bux * bend, by + buy * bend
+        # The normal component dropped: the leg along the wire keeps the step's other coordinate.
+        to_x = np.where(across_x, bend_x, end_x.ravel()[b])
+        to_y = np.where(across_x, end_y.ravel()[b], bend_y)
+        leg = np.abs(to_x - bend_x) + np.abs(to_y - bend_y)  # along one axis, so this is its length
+        slides = leg > 0.0
+        safe = np.where(slides, leg, 1.0)
+        leg_ux = np.where(slides, (to_x - bend_x) / safe, 0.0)
+        leg_uy = np.where(slides, (to_y - bend_y) / safe, 0.0)
+        along = self.reach(bend_x, bend_y, leg_ux, leg_uy, leg)
+
+        first.ravel()[b] = bend
+        stop_x.ravel()[b] = np.where(along < leg, bend_x + leg_ux * along, to_x)
+        stop_y.ravel()[b] = np.where(along < leg, bend_y + leg_uy * along, to_y)
+        return first, stop_x, stop_y
 
     def near_wire(self, x: np.ndarray, y: np.ndarray, within: float) -> np.ndarray:
         """`bool`, shaped like `x`: whether a blocked edge may lie within `within` world units of
@@ -343,8 +426,8 @@ class Barriers:
         unit_x: np.ndarray,
         unit_y: np.ndarray,
         distance: np.ndarray,
-    ) -> np.ndarray:
-        """`reach` for rays that may meet a wire: every cell edge each one crosses, in order.
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """`_reach` for rays that may meet a wire: every cell edge each one crosses, in order.
 
         The iteration count is per call, not per ray: each pass advances every unfinished ray to
         its own next crossing and drops the finished ones, so the loop runs as many times as the
@@ -356,6 +439,8 @@ class Barriers:
         end_x = x + unit_x * distance
         end_y = y + unit_y * distance
         free = distance.copy()
+        line = np.full_like(distance, np.inf)
+        vertical = np.zeros(distance.shape, dtype=np.bool_)
         travelled = np.zeros_like(distance)
         walking = np.arange(distance.size)
         # A ray of length d crosses at most ceil(d / cell) edges on each axis; +2 covers the
@@ -371,10 +456,8 @@ class Barriers:
             at_x = start_x + ux * t
             at_y = start_y + uy * t
             # Cell edges are the node lattice shifted by half a cell (`Terrain.cell_indices`).
-            to_edge = np.minimum(
-                to_next_grid_line(at_x + 0.5 * cell, ux, cell),
-                to_next_grid_line(at_y + 0.5 * cell, uy, cell),
-            )
+            to_x_line = to_next_grid_line(at_x + 0.5 * cell, ux, cell)
+            to_edge = np.minimum(to_x_line, to_next_grid_line(at_y + 0.5 * cell, uy, cell))
             left = d - t
             # On the last permitted pass, finish in one segment: only reachable if float slivers
             # at a line consumed passes the bound did not expect.
@@ -403,9 +486,11 @@ class Barriers:
             travelled[walking] = reached
             done = refused | (reached >= d)
             free[walking[done]] = np.where(refused[done], reached[done], d[done])
+            line[walking[refused]] = (t + step)[refused]
+            vertical[walking[refused]] = (to_x_line <= to_edge)[refused]
             walking = walking[~done]
 
-        return free
+        return free, line, vertical
 
     def crossing_blocked(
         self, from_x: np.ndarray, from_y: np.ndarray, to_x: np.ndarray, to_y: np.ndarray

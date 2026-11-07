@@ -426,18 +426,18 @@ class TestUtilities:
 
 
 class TestCandidatesStopAtTheWire:
-    """A candidate whose straight path crosses a fence is read where the animal would be stopped
-    (#278), as one past the world's edge is read on the rim: the ground at the wire, with no pull
-    toward what lies beyond it and no push away from the wire itself."""
+    """A candidate whose straight path crosses a fence is read where the animal would go (#278):
+    slid along the wire (#286), as one past the world's edge is projected onto the rim, so the
+    ground it reads is the ground the step would reach, with no pull toward what lies beyond it."""
 
     def options(self, world, selection, seed=0):
         headings = world.behaviour.candidate_headings(selection, np.random.default_rng(seed))
         return headings, *world.behaviour.candidate_positions(selection, headings)
 
-    def test_a_candidate_across_the_wire_lands_a_margin_short_of_it_on_its_own_heading(self):
+    def test_a_candidate_across_the_wire_slides_along_it(self):
         world = World()
         selection = world.spawn(1, x=np.float32([4.0]), y=np.float32([4.0]))
-        headings, open_x, open_y = self.options(world, selection)
+        _headings, open_x, open_y = self.options(world, selection)
         # A wire between columns 4 and 5 (x = 4.5), half a cell east of the animal.
         world.barriers.blocked_west[:, 5] = True
         world.barriers.revision += 1
@@ -446,9 +446,8 @@ class TestCandidatesStopAtTheWire:
 
         crossing = open_x[0, :NULL] > 4.5
         assert 1 < crossing.sum() < N_CANDIDATES, "the wire divides nothing here"
-        to_wire = 0.5 / np.cos(headings[0, crossing]) - WIRE_MARGIN
-        assert x[0, :NULL][crossing] == pytest.approx(4.0 + to_wire * np.cos(headings[0, crossing]))
-        assert y[0, :NULL][crossing] == pytest.approx(4.0 + to_wire * np.sin(headings[0, crossing]))
+        assert x[0, :NULL][crossing] == pytest.approx(4.5 - WIRE_MARGIN, abs=1e-12)
+        assert np.array_equal(y[0, :NULL][crossing], open_y[0, :NULL][crossing])
         assert np.array_equal(x[0, :NULL][~crossing], open_x[0, :NULL][~crossing])
         assert np.array_equal(y[0, :NULL][~crossing], open_y[0, :NULL][~crossing])
         assert (x[0, NULL], y[0, NULL]) == (4.0, 4.0)
@@ -472,18 +471,6 @@ class TestCandidatesStopAtTheWire:
         _headings, x, y = self.options(world, selection, seed)
 
         assert world.barriers.same_region(here_x, here_y, x, y).all()
-        # And nothing on the straight path to it is crossed, so placing it again moves nothing.
-        along_x, along_y = x - here_x, y - here_y
-        length = np.hypot(along_x, along_y)
-        safe = np.where(length > 0.0, length, 1.0)
-        again = world.barriers.reach(
-            np.broadcast_to(here_x, x.shape).ravel(),
-            np.broadcast_to(here_y, y.shape).ravel(),
-            (along_x / safe).ravel(),
-            (along_y / safe).ravel(),
-            length.ravel(),
-        )
-        assert np.array_equal(again, length.ravel())
 
 
 class TestChoosing:

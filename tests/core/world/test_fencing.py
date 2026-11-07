@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from clients.viewer.demo_world import build_demo_world
+from core.genetics.registry import Unit
 from core.selection import Selection
 from core.world.barriers import WIRE_MARGIN, Barriers
 from core.world.diffusion import CostAwareDiffusion, DiffusionConfig
@@ -218,6 +219,95 @@ class TestHowFarARayGets:
             end = (x[i : i + 1] + ux[i] * free[i], y[i : i + 1] + uy[i] * free[i])
             assert barriers.same_region(x[i : i + 1], y[i : i + 1], *end)[0]
         assert stopped > 0, "no ray met a wire, so the test would pass vacuously"
+
+
+def slid(barriers, start, end):
+    """`Barriers.slide` for one segment from `start` to `end`: (first leg length, stop x, stop y)."""
+    first, stop_x, stop_y = barriers.slide(*at(start), *at(end))
+    return float(first[0]), float(stop_x[0]), float(stop_y[0])
+
+
+def wire_at_x_5_5():
+    barriers = Barriers(flat())
+    barriers.blocked_west[:, 6] = True
+    barriers.revision += 1
+    return barriers
+
+
+class TestSlidingAlongTheWire:
+    """`Barriers.slide` (#286, option B): at the first blocked crossing the part of the step normal
+    to the wire is dropped and the rest is walked along it, as the world's rim projects a landing
+    per axis. The path is two straight legs, start to bend and bend to stop, and both are walked."""
+
+    def test_a_ray_into_the_wire_slides_along_it(self):
+        first, stop_x, stop_y = slid(wire_at_x_5_5(), (4.0, 5.0), (6.0, 7.0))
+
+        # The bend is a margin short of the line *perpendicular to it*, on the ray, and the rest of
+        # the step keeps only its component along the wire.
+        assert first == pytest.approx((1.5 - WIRE_MARGIN) * np.sqrt(2.0), abs=1e-12)
+        assert stop_x == pytest.approx(5.5 - WIRE_MARGIN, abs=1e-12)
+        assert stop_y == 7.0
+
+    def test_a_ray_straight_into_the_wire_stops_where_reach_stops_it(self):
+        first, stop_x, stop_y = slid(wire_at_x_5_5(), (4.0, 5.0), (6.0, 5.0))
+
+        assert first == pytest.approx(1.5 - WIRE_MARGIN, abs=1e-12)
+        assert stop_x == pytest.approx(5.5 - WIRE_MARGIN, abs=1e-12)
+        assert stop_y == 5.0
+
+    def test_a_pen_corner_stops_it(self):
+        barriers = Barriers(flat())
+        barriers.enclose(5.0, 5.0, 10.0, 10.0)  # wires at 4.5 and 9.5 on both axes
+
+        _first, stop_x, stop_y = slid(barriers, (9.0, 9.0), (10.5, 10.0))
+
+        assert stop_x == pytest.approx(9.5 - WIRE_MARGIN, abs=1e-12)
+        assert stop_y == pytest.approx(9.5 - WIRE_MARGIN, abs=1e-12)
+
+    def test_a_ray_nothing_blocks_is_returned_exactly(self):
+        """Bit for bit, so an animal no wire touches moves exactly as in an unfenced world."""
+        barriers = wire_at_x_5_5()
+        x, y = at((4.0, 5.0), (7.0, 2.0), (1.0, 1.0))
+        end_x, end_y = at((5.3, 7.1), (9.9, 2.2), (1.0, 1.0))
+
+        first, stop_x, stop_y = barriers.slide(x, y, end_x, end_y)
+
+        assert np.array_equal(stop_x, end_x) and np.array_equal(stop_y, end_y)
+        assert np.array_equal(first, np.hypot(end_x - x, end_y - y))
+
+    @pytest.mark.parametrize("seed", range(4))
+    def test_the_slid_path_never_crosses_a_wire(self, seed):
+        """Arbitrary walls and rays: neither leg crosses a blocked edge, the bend lies on the ray,
+        the second leg runs along one axis, and the stop is in the start's region."""
+        rng = np.random.default_rng(seed)
+        barriers = Barriers(flat(17))
+        barriers.blocked_north[...] = rng.random((17, 17)) < 0.2
+        barriers.blocked_west[...] = rng.random((17, 17)) < 0.2
+        barriers.revision += 1
+        n = 60
+        x = np.round(rng.uniform(2.0, 14.0, n)) + 0.25
+        y = np.round(rng.uniform(2.0, 14.0, n)) - 0.25
+        heading = rng.uniform(0.0, 2.0 * np.pi, n)
+        length = rng.uniform(0.0, 2.0, n)
+        ux, uy = np.cos(heading), np.sin(heading)
+
+        first, stop_x, stop_y = barriers.slide(x, y, x + ux * length, y + uy * length)
+
+        bend_x, bend_y = x + ux * first, y + uy * first
+        slides = 0
+        for i in range(n):
+            leg = np.hypot(stop_x[i] - bend_x[i], stop_y[i] - bend_y[i])
+            assert first[i] <= length[i] + 1e-12
+            assert first_blocked_crossing(barriers, x[i], y[i], ux[i], uy[i], first[i]) is None
+            if leg > 1e-12:
+                slides += 1
+                along_one_axis = min(abs(stop_x[i] - bend_x[i]), abs(stop_y[i] - bend_y[i]))
+                assert along_one_axis < 1e-12
+                lx, ly = (stop_x[i] - bend_x[i]) / leg, (stop_y[i] - bend_y[i]) / leg
+                assert first_blocked_crossing(barriers, bend_x[i], bend_y[i], lx, ly, leg) is None
+            stop = at((stop_x[i], stop_y[i]))
+            assert barriers.same_region(x[i : i + 1], y[i : i + 1], *stop)[0]
+        assert slides > 0, "no ray slid, so the test would pass vacuously"
 
 
 def flood_fill_regions(blocked_north, blocked_west):
@@ -472,6 +562,47 @@ class TestMovementRefusesRatherThanPays:
 
         assert candidate_x[:, 0] == pytest.approx(20.5 - WIRE_MARGIN, abs=1e-12)
         assert world.store.x[rows] == pytest.approx(candidate_x[:, 0], abs=1e-5)
+
+    def test_a_step_into_the_wire_slides_along_it(self):
+        """The wire is the rim's rule (#286): heading into it at an angle, an animal keeps the part
+        of its step along the wire, rather than being held there by a step that goes nowhere."""
+        world, living, rows = self.walker(18.0)
+        target_x = np.full(rows.size, 60.0)
+        target_y = np.full(rows.size, 60.0)
+        for _ in range(8):
+            world.movement.step(living, target_x, target_y, np.full(rows.size, 5.0))
+
+        assert np.all(world.store.x[rows] < 20.5)
+        assert np.all(world.store.x[rows] > 20.5 - 2.0 * WIRE_MARGIN)
+        # Stopped dead, as before #286, every one of them stands at y = 31.8.
+        assert np.all(world.store.y[rows] > 34.0), "pressed into the wire, not sliding along it"
+
+    def test_a_candidate_at_an_angle_is_read_where_the_step_slides_to(self):
+        """What an animal reads and where it goes follow one rule: a step whose displacement is a
+        candidate's, from a standstill, lands on that candidate, slid along the wire."""
+        world, living, rows = self.walker(19.0)
+        heading = np.full((rows.size, 1), np.pi / 6)
+        candidate_x, candidate_y = world.behaviour.candidate_positions(living, heading)
+        look_ahead = world.behaviour.config.look_ahead
+        speed = world.genes.index_of("speed", unit=Unit.LENGTH)
+        agility = world.genes.index_of("agility", unit=Unit.LENGTH)
+        haste = world.genes.index_of("haste", unit=Unit.DIMENSIONLESS)
+        world.store.age[rows] = 0  # no senescent decay, so the speed expressed is the one stored
+        world.store.genes[rows, agility] = 1e6
+        world.store.genes[rows, haste] = 0.0
+        pace = world.movement.pace(living, np.zeros(rows.size))
+        world.store.genes[rows, speed] = look_ahead / pace[0]
+
+        world.movement.step(
+            living,
+            world.store.x[rows] + look_ahead * np.cos(np.pi / 6),
+            world.store.y[rows] + look_ahead * np.sin(np.pi / 6),
+            np.zeros(rows.size),
+        )
+
+        assert candidate_x[:, 0] == pytest.approx(20.5 - WIRE_MARGIN, abs=1e-12)
+        assert world.store.x[rows] == pytest.approx(candidate_x[:, 0], abs=1e-5)
+        assert world.store.y[rows] == pytest.approx(candidate_y[:, 0], abs=1e-5)
 
     def test_it_is_not_charged_for_the_crossing_it_did_not_make(self):
         """Refused, not priced. An animal that paid to cross a fence would empty its pool against

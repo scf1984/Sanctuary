@@ -315,13 +315,12 @@ class Behaviour(DomainService):
         drive samples raise outside their bounds. The null option is the animal's own position, so
         "stay put" needs no special case downstream — it is an option proposing no displacement.
 
-        **A heading across a fence is read where the wire would stop the animal** (#278), a
-        margin short of the line on its own straight path (`Barriers.reach`, which `Movement`
-        stops a step with). That is the rim's rule carried to the wire: an option is scored on
-        ground the animal could actually stand on, so the far side neither pulls it in (#169's
-        defect) nor, read as nothing, pushes it away (#169's gate, measured at half the wire
-        band's share). Every candidate therefore lies on its animal's side of every fence, which
-        is why no drive asks whether one can be reached.
+        **A heading across a fence is read where the step would go** (#278): to the wire and
+        along it (`Barriers.slide`, which `Movement` walks a step with, #286). That is the rim's
+        rule carried to the wire: an option is scored on ground the animal could actually stand
+        on, so the far side neither pulls it in (#169's defect) nor, read as nothing, pushes it
+        away (#169's gate, measured at half the wire band's share). Every candidate therefore lies
+        on its animal's side of every fence, which is why no drive asks whether one can be reached.
         """
         mask = selection.to_mask()
         here_x = self.store.x[mask].astype(np.float64)[:, None]
@@ -330,16 +329,16 @@ class Behaviour(DomainService):
         x = np.clip(here_x + reach * np.cos(headings), 0.0, self.terrain.world_width)
         y = np.clip(here_y + reach * np.sin(headings), 0.0, self.terrain.world_height)
         if self.barriers.any_blocked:
-            x, y = self._stop_at_the_wire(here_x, here_y, x, y)
+            x, y = self._slide_along_the_wire(here_x, here_y, x, y)
         return np.concatenate([x, here_x], axis=1), np.concatenate([y, here_y], axis=1)
 
-    def _stop_at_the_wire(
+    def _slide_along_the_wire(
         self, here_x: np.ndarray, here_y: np.ndarray, x: np.ndarray, y: np.ndarray
     ) -> tuple[np.ndarray, np.ndarray]:
-        """`(x, y)`, each (n, n_candidates), moved back along the straight path from `here` to the
-        point the wire stops it, where that path crosses one.
+        """`(x, y)`, each (n, k), moved to where a step from `here` toward each would end: to the
+        first wire its straight path meets, then along it.
 
-        The path runs to the rim-clipped point, not along the raw heading: the rim is applied
+        The step runs to the rim-clipped point, not along the raw heading: the rim is applied
         first, so a heading that grazes the edge and then a fence is read where both say. Only
         animals with a wire within one `look_ahead` build rays at all, which keeps a fenced world's
         cost to the animals near its wires (docs/spikes/fence-perception.md).
@@ -349,18 +348,7 @@ class Behaviour(DomainService):
         )
         if near.size == 0:
             return x, y
-        from_x, from_y = here_x[near], here_y[near]
-        along_x = x[near] - from_x
-        along_y = y[near] - from_y
-        length = np.hypot(along_x, along_y)
-        travels = length > 0.0
-        safe = np.where(travels, length, 1.0)
-        unit_x = np.where(travels, along_x / safe, 0.0)
-        unit_y = np.where(travels, along_y / safe, 0.0)
-        free = self.barriers.reach(from_x, from_y, unit_x, unit_y, length)
-        stopped = free < length
-        x[near] = np.where(stopped, from_x + unit_x * free, x[near])
-        y[near] = np.where(stopped, from_y + unit_y * free, y[near])
+        _first, x[near], y[near] = self.barriers.slide(here_x[near], here_y[near], x[near], y[near])
         return x, y
 
     def candidates(self, selection: Selection, x: np.ndarray, y: np.ndarray) -> Candidates:

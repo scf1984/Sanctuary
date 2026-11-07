@@ -386,18 +386,24 @@ class Movement(DomainService):
         unit_x = np.where(moving, along_x / np.where(moving, distance, 1.0), 0.0)
         unit_y = np.where(moving, along_y / np.where(moving, distance, 1.0), 0.0)
 
-        # A fence refuses; it does not charge (#27). The step is cut where the wire stops it, a
-        # margin short of the line (`Barriers.reach`), before anything is priced: the animal pays
-        # for the ground it covers and nothing for the crossing it does not make. Priced instead, a
-        # fence would be a very steep hill, so a desperate enough animal would cross it and the one
-        # that tried would empty its pool against the wire. The same finder places the candidates
-        # an animal scores (#278), so it is never offered ground this walk would not reach.
+        # A fence refuses; it does not charge (#27). A step that meets a wire is walked to it and
+        # then slid along it (`Barriers.slide`, #286), as the rim's per-axis clip slides a step
+        # along the world's edge, before anything is priced: the animal pays for the ground it
+        # covers and nothing for the crossing it does not make. Priced instead, a fence would be a
+        # very steep hill, so a desperate enough animal would cross it and the one that tried would
+        # empty its pool against the wire. The same slide places the candidates an animal scores
+        # (#278), so it is never offered ground this walk would not reach.
+        sliding = np.zeros(x.shape, dtype=np.bool_)
         if self.barriers is not None and self.barriers.any_blocked:
-            free = self.barriers.reach(x, y, unit_x, unit_y, distance)
-            stopped = free < distance
-            landing_x = np.where(stopped, x + unit_x * free, landing_x)
-            landing_y = np.where(stopped, y + unit_y * free, landing_y)
-            distance = free
+            first, stop_x, stop_y = self.barriers.slide(x, y, landing_x, landing_y)
+            bent = first < distance
+            # The first leg ends at the bend; the second runs from there to the stop.
+            landing_x = np.where(bent, x + unit_x * first, landing_x)
+            landing_y = np.where(bent, y + unit_y * first, landing_y)
+            distance = first
+            leg_x, leg_y = stop_x - landing_x, stop_y - landing_y
+            leg = np.abs(leg_x) + np.abs(leg_y)  # along one axis, so this is its length
+            sliding = bent & (leg > 0.0)
 
         # The budget is in work rather than energy, because `_walk` accumulates work per unit of
         # body size (see `_work`). A species that does not express size pays nothing however far it
@@ -413,6 +419,31 @@ class Movement(DomainService):
         new_x, new_y = self._landing(
             x, y, unit_x, unit_y, travelled, distance, landing_x, landing_y
         )
+        velocity_x, velocity_y = unit_x * travelled, unit_y * travelled
+
+        # The leg along the wire, for those that reached the bend with budget left: walked and
+        # priced exactly as the first, from what the first left in the pool, so the slid path costs
+        # what the same ground costs walked in two steps (#113's additivity).
+        along = np.flatnonzero(sliding & (travelled >= distance))
+        if along.size:
+            leg_ux, leg_uy = leg_x[along] / leg[along], leg_y[along] / leg[along]
+            spent = self._work(travelled[along], wading[along], ascent[along], pace[along])
+            more, more_wading, more_ascent = self._walk(
+                new_x[along], new_y[along], leg_ux, leg_uy, leg[along],
+                stop_x[along], stop_y[along], budget[along] - spent, pace[along],
+            )
+            new_x[along], new_y[along] = self._landing(
+                new_x[along], new_y[along], leg_ux, leg_uy, more, leg[along],
+                stop_x[along], stop_y[along],
+            )
+            travelled[along] += more
+            wading[along] += more_wading
+            ascent[along] += more_ascent
+            # The displacement that happened is the net one, as at the rim, whose clip keeps the
+            # part of a step into the edge that reached it: a body sliding along a wire carries the
+            # momentum of its slide, and still leans on the wire.
+            velocity_x[along] = new_x[along] - x[along]
+            velocity_y[along] = new_y[along] - y[along]
         new_z = self.terrain.elevation_at(new_x, new_y)
 
         self.write("x", selection, new_x.astype(np.float32))
@@ -425,8 +456,8 @@ class Movement(DomainService):
         # without a cap — the new value is never longer than the intended one, which is never
         # longer than the larger of the old velocity and `top_speed × pace` — which is the
         # invariant `no_entity_exceeds_its_top_speed` asserts (§6).
-        self.write("velocity_x", selection, (unit_x * travelled).astype(np.float32))
-        self.write("velocity_y", selection, (unit_y * travelled).astype(np.float32))
+        self.write("velocity_x", selection, velocity_x.astype(np.float32))
+        self.write("velocity_y", selection, velocity_y.astype(np.float32))
         # The bill and the record of effort are the same quantity read two ways: `Ecology` is
         # charged the size-scaled cost, `Exertion` accumulates the per-size work, so a sprint up a
         # ridge is both expensive and tiring while a stroll over the same ground is neither (#107).
