@@ -17,7 +17,14 @@ import dataclasses
 import numpy as np
 import pytest
 
-from clients.viewer.demo_world import build_demo_world, demo_world_config, temperate_world_config
+from clients.viewer.demo_world import (
+    DEFAULT_WORLD,
+    build_demo_world,
+    build_named_world,
+    build_temperate_world,
+    demo_world_config,
+    temperate_world_config,
+)
 from clients.viewer.render import live_positions, species_colors, world_to_screen
 from core.genetics.speciation import interbreeding_probability
 from core.invariants import default_registry
@@ -224,6 +231,43 @@ class TestTemperateWorld:
         )
 
         assert temperate == pytest.approx(demo, rel=0.15)
+
+
+
+class TestChoosingAWorld:
+    """The viewer opens either world by name (#268). The two builders must differ in config and
+    nothing else, or watching the temperate world would also mean watching it unrecorded."""
+
+    def test_the_temperate_builder_runs_the_temperate_climate(self):
+        world = build_temperate_world(seed=4, n_entities=20)
+
+        assert world.config == temperate_world_config(n_entities=20, seed=4)
+
+    def test_the_temperate_world_is_composed_like_the_demo_world(self):
+        demo = build_demo_world(seed=4, n_entities=20)
+        temperate = build_temperate_world(seed=4, n_entities=20)
+
+        assert temperate.loop.metrics is not None
+        assert type(temperate.loop.metrics) is type(demo.loop.metrics)
+        assert temperate.loop.interventions.balance == demo.loop.interventions.balance
+
+    @pytest.mark.parametrize("name", ["demo", "temperate"])
+    def test_a_world_is_built_by_its_name(self, name):
+        world = build_named_world(name, seed=3, n_entities=10)
+
+        expected = {"demo": demo_world_config, "temperate": temperate_world_config}[name]
+        assert world.config == expected(n_entities=10, seed=3)
+
+    def test_an_unknown_world_name_is_refused_naming_the_choices(self):
+        with pytest.raises(ValueError, match="demo.*temperate"):
+            build_named_world("tropical", seed=0, n_entities=10)
+
+    def test_the_demo_world_is_the_default(self):
+        """Every measurement so far was taken on the demo world, so opening the viewer without
+        asking for anything must still show it."""
+        world = build_named_world(DEFAULT_WORLD, seed=3, n_entities=10)
+
+        assert world.config == demo_world_config(n_entities=10, seed=3)
 
 
 class TestFramePath:
