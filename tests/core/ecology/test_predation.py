@@ -24,6 +24,7 @@ from core.genetics.service import Genetics
 from core.genetics.species import SpeciesRegistry
 from core.selection import Selection
 from core.services import ColumnRegistry
+from core.world.barriers import Barriers
 from core.world.climate import Climate, ClimateConfig
 from core.world.diffusion import DiffusionConfig
 from core.world.terrain import Terrain
@@ -64,6 +65,7 @@ class World:
 
     def __init__(self, strike_power=50.0, strike_range=1.0, frontier_exponent=2.0):
         self.terrain = Terrain(np.zeros((11, 11), dtype=np.float32), cell_size=1.0)
+        self.barriers = Barriers(self.terrain)
         self.climate = Climate(
             self.terrain,
             ClimateConfig(equator_y=0.0, equator_temperature=25.0, latitude_gradient=0.0),
@@ -104,6 +106,7 @@ class World:
             GENE_REGISTRY,
             FEEDING_CONFIG,
             PredationConfig(strike_range=strike_range, strike_power=strike_power),
+            self.barriers,
         )
 
     def spawn(self, *animals):
@@ -272,6 +275,25 @@ class TestContactIsWhatDecides:
         assert world.carrion.mass.sum() == pytest.approx(80.0, rel=1e-3)
 
 
+class TestAFenceStopsAStrike:
+    def test_a_carnivore_cannot_strike_through_the_wire(self):
+        """A pen protects what is in it (#276). The control is
+        `TestContactIsWhatDecides.test_both_directions_resolve_from_the_same_pre_strike_pools`,
+        where the same two animals at the same spacing do wound each other."""
+        world = World(strike_power=40.0)
+        pair = world.spawn(
+            {"x": 4.4, "y": 5.0, "flesh": CARNIVORE},
+            {"x": 4.6, "y": 5.0, "flesh": CARNIVORE},
+        )
+        world.barriers.blocked_west[:, 5] = True
+        world.barriers.revision += 1
+
+        world.strike(pair)
+
+        assert world.carrion.mass.sum() == 0.0
+        assert world.store.energy[pair.to_indices()] == pytest.approx([100.0, 100.0])
+
+
 class TestNutrientsSurviveAKill:
     def test_the_total_does_not_move(self):
         """A kill relocates nutrient from a pool to the ground; it creates and destroys none (§6).
@@ -311,13 +333,44 @@ class TestPairingByContact:
         y = np.array([p[1] for p in points], dtype=np.float32)
         return x, y
 
+    def unfenced(self):
+        return Barriers(Terrain(np.zeros((11, 11), dtype=np.float32), cell_size=1.0))
+
+    def wired(self):
+        """A wire down the whole map between columns 4 and 5, at x = 4.5."""
+        barriers = self.unfenced()
+        barriers.blocked_west[:, 5] = True
+        barriers.revision += 1
+        return barriers
+
+    def test_animals_touching_across_a_wire_do_not_pair(self):
+        """A fence is a refusal (§2.5): two animals pressed against opposite sides of it are within
+        range of each other and still cannot touch (#276)."""
+        x, y = self.positions((4.4, 4.0), (4.6, 4.0))
+
+        first, _ = pair_by_contact(x, y, np.array([0, 1]), 1.0, np.random.default_rng(1), self.wired())
+
+        assert first.shape[0] == 0
+
+    @pytest.mark.parametrize("seed", range(8))
+    def test_an_animal_at_the_wire_pairs_with_its_own_side(self, seed):
+        """Bucketed by region, not filtered afterwards: an animal whose bucket also holds a
+        stranger across the wire still finds the neighbour beside it, on every shuffle."""
+        x, y = self.positions((4.1, 4.2), (4.4, 4.2), (4.6, 4.2))
+
+        first, second = pair_by_contact(
+            x, y, np.array([0, 1, 2]), 1.0, np.random.default_rng(seed), self.wired()
+        )
+
+        assert sorted(first.tolist() + second.tolist()) == [0, 1]
+
     def test_a_shared_cell_is_not_enough_when_the_gap_is_too_wide(self):
         """A shared bucket puts two entities within `range × √2`, so the true distance is checked
         rather than assumed — the bucket finds candidates and the distance decides."""
         x, y = self.positions((0.05, 0.05), (0.95, 0.95))
 
         first, second = pair_by_contact(
-            x, y, np.array([0, 1]), 1.0, np.random.default_rng(1)
+            x, y, np.array([0, 1]), 1.0, np.random.default_rng(1), self.unfenced()
         )
 
         assert first.shape[0] == 0
@@ -326,7 +379,7 @@ class TestPairingByContact:
         x, y = self.positions((0.4, 0.4), (0.6, 0.4))
 
         first, second = pair_by_contact(
-            x, y, np.array([0, 1]), 1.0, np.random.default_rng(1)
+            x, y, np.array([0, 1]), 1.0, np.random.default_rng(1), self.unfenced()
         )
 
         assert sorted(first.tolist() + second.tolist()) == [0, 1]
@@ -337,7 +390,7 @@ class TestPairingByContact:
         x, y = self.positions((0.4, 0.4), (0.5, 0.4), (0.6, 0.4))
 
         first, second = pair_by_contact(
-            x, y, np.array([0, 1, 2]), 1.0, np.random.default_rng(1)
+            x, y, np.array([0, 1, 2]), 1.0, np.random.default_rng(1), self.unfenced()
         )
 
         paired = first.tolist() + second.tolist()
@@ -347,7 +400,7 @@ class TestPairingByContact:
         x, y = self.positions((0.5, 0.5), (8.5, 8.5))
 
         first, _ = pair_by_contact(
-            x, y, np.array([0, 1]), 1.0, np.random.default_rng(1)
+            x, y, np.array([0, 1]), 1.0, np.random.default_rng(1), self.unfenced()
         )
 
         assert first.shape[0] == 0

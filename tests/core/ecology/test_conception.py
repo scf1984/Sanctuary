@@ -18,6 +18,7 @@ from core.genetics.service import Genetics
 from core.genetics.species import SpeciesRegistry
 from core.selection import Selection
 from core.services import ColumnRegistry
+from core.world.barriers import Barriers
 from core.world.climate import Climate, ClimateConfig
 from core.world.terrain import Terrain
 
@@ -71,7 +72,7 @@ def make_world(capacity=16, **overrides):
         species,
         genetics,
         ecology,
-        Conception(store, ecology, genetics, GENE_REGISTRY, config(**overrides)),
+        Conception(store, ecology, genetics, GENE_REGISTRY, config(**overrides), Barriers(terrain)),
     )
 
 
@@ -169,6 +170,20 @@ class TestConceiving:
     def test_nobody_willing_means_nothing_conceived(self):
         store, species, _, _, conception = make_world()
         populate(store, species, [(1.0, 1.0), (1.5, 1.0)], age=1, maturity=10.0)
+
+        conception.conceive(living(store), np.random.default_rng(0))
+
+        assert len(gestating(store)) == 0
+
+    def test_animals_touching_across_a_wire_do_not_conceive(self):
+        """Genes do not cross a fence any more than bodies do (#276). Isolation that leaked
+        gametes at the wire would not be an isolation for speciation (#16). The control is
+        `test_two_touching_animals_make_one_gestating_row`, at the same spacing."""
+        store, species, _, _, conception = make_world()
+        populate(store, species, [(1.25, 1.0), (1.75, 1.0)])
+        # A wire between columns 1 and 2, at x = 1.5.
+        conception.barriers.blocked_west[:, 2] = True
+        conception.barriers.revision += 1
 
         conception.conceive(living(store), np.random.default_rng(0))
 

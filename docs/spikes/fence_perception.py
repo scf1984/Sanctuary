@@ -14,9 +14,15 @@ the same file measures the tree before the gate and after it.
 2. **`choose()` cost** at 100,000 animals, N = 8, on the 256 x 256 bench grid
    (`docs/spikes/option_sampling_bench.py`'s world), unfenced and with four pens up. Median of 7.
 
+3. **Contact across the wire** (#276). The same fenced run, counting the touching pairs that mating
+   and predation are handed after the fence goes up, and how many of them straddle it. Pen
+   membership is computed from the rectangle rather than from `Barriers.regions`, so it runs on
+   trees that have no regions.
+
 Usage:
     python docs/spikes/fence_perception.py wire [seeds...]
     python docs/spikes/fence_perception.py choose
+    python docs/spikes/fence_perception.py contact [seeds...]
 """
 
 from __future__ import annotations
@@ -29,6 +35,8 @@ from dataclasses import replace
 import numpy as np
 
 from clients.viewer.demo_world import build_demo_world, demo_world_config
+from core.ecology import conception as conception_module
+from core.ecology import predation as predation_module
 from core.world.assembly import build_world
 from core.world.fence import Fence
 
@@ -79,6 +87,43 @@ def wire_run(seed: int) -> dict[str, float]:
         "alive_inside": int(penned.sum()),
         "alive_outside": int((~penned).sum()),
     }
+
+
+def contact_run(seed: int) -> dict[str, tuple[int, int]]:
+    """{verb: (pairs straddling the wire, all pairs)} after the fence goes up."""
+    world = build_demo_world(seed=seed, n_entities=300)
+    _corners, (r0, r1, c0, c1) = pen_bounds(world)
+    counts: dict[str, list[int]] = {}
+
+    def wrap(module, verb):
+        original = module.pair_by_contact
+
+        def counted(x, y, rows, contact_range, rng, *rest):
+            first, second = original(x, y, rows, contact_range, rng, *rest)
+            if world.barriers.any_blocked and first.size:
+
+                def penned(which):
+                    r, c = world.terrain.cell_indices(x[which], y[which])
+                    return (r >= r0) & (r < r1) & (c >= c0) & (c < c1)
+
+                tally = counts.setdefault(verb, [0, 0])
+                tally[0] += int((penned(first) != penned(second)).sum())
+                tally[1] += int(first.size)
+            return first, second
+
+        module.pair_by_contact = counted
+        return original
+
+    originals = (wrap(conception_module, "mating"), wrap(predation_module, "strikes"))
+    try:
+        world.loop.advance(200)
+        corners, _bounds = pen_bounds(world)
+        world.loop.interventions.balance = 1.0e6
+        world.loop.interventions.request(Fence(world.barriers, *corners))
+        world.loop.advance(401)
+    finally:
+        conception_module.pair_by_contact, predation_module.pair_by_contact = originals
+    return {verb: (tally[0], tally[1]) for verb, tally in counts.items()}
 
 
 def timed(fn, repeats: int = 7) -> float:
@@ -137,5 +182,9 @@ if __name__ == "__main__":
         seeds = [int(s) for s in sys.argv[2:]] or [1, 2, 3]
         for seed in seeds:
             print(f"seed {seed}: {wire_run(seed)}")
+    elif sys.argv[1] == "contact":
+        seeds = [int(s) for s in sys.argv[2:]] or [1, 2, 3]
+        for seed in seeds:
+            print(f"seed {seed}: {contact_run(seed)}")
     else:
         choose_cost()

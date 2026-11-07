@@ -299,10 +299,10 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
     )
     feeding = Feeding(store, plants, carrion, genetics, ecology, diet, genes, config.feeding)
     predation = Predation(
-        store, ecology, genetics, carrion, diet, genes, config.feeding, config.predation
+        store, ecology, genetics, carrion, diet, genes, config.feeding, config.predation, barriers
     )
     death = Death(store, ecology)
-    conception = Conception(store, ecology, genetics, genes, config.conception)
+    conception = Conception(store, ecology, genetics, genes, config.conception, barriers)
     exertion = Exertion(store, columns, config.exertion)
     movement = Movement(
         store, columns, ecology, exertion, genetics, terrain, genes, config.movement, barriers

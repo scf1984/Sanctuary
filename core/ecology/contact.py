@@ -12,6 +12,13 @@ by `contact_range × √2`. A second copy would drift on any of those three and 
 loudly (§8.7) — it would merely pair slightly wrong animals, which is invisible in every test that
 does not already know the answer.
 
+**A fence is a refusal, so nobody touches through one** (#276). `Movement` stops an animal a
+thousandth of a cell short of the wire, well inside any contact range, so two animals pressed
+against opposite sides of it are as close as two that share a cell. Distance alone would let them
+mate and strike across it: genes would cross a fence that bodies cannot, and a pen would not protect
+what is in it. So the buckets are per sealed region (`Barriers.regions`) as well as per cell, which
+is exact for every fence that exists, since every fence seals.
+
 **The pairing is returned as row-index arrays, not selections.** A `Selection` is a boolean mask,
 so it carries no order, and two masks can only express pairings whose couples do not cross in row
 space — which a pairing built from *position* does constantly. #191 hit exactly this and moved
@@ -22,6 +29,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from core.world.barriers import Barriers
+
 
 def pair_by_contact(
     x: np.ndarray,
@@ -29,12 +38,14 @@ def pair_by_contact(
     rows: np.ndarray,
     contact_range: float,
     rng: np.random.Generator,
+    barriers: Barriers,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Row-index arrays of the entities in `rows` that are within `contact_range`, paired elementwise.
 
     x, y: the store's full position columns, `(capacity,) float32, world units`. Indexed by row,
         so they are the whole column rather than a selection's slice.
     rows: `(m,) int64`, the candidate rows. Each appears in at most one returned pair.
+    barriers: the world's fences. Two entities in different sealed regions never pair.
 
     Candidates are bucketed into contact-sized cells and paired with whoever else is in the bucket;
     the bucket is a cheap way to find candidates and the distance is what decides. Two animals
@@ -56,19 +67,32 @@ def pair_by_contact(
     # which is all the pairing needs. The key's arithmetic value means nothing.
     key = cell_x * np.int64(1 << 32) + cell_y
 
-    order = np.argsort(key, kind="stable")
-    sorted_key = key[order]
+    if barriers.n_regions == 1:
+        order = np.argsort(key, kind="stable")
+        sorted_key = key[order]
+        same_bucket = sorted_key[1:] == sorted_key[:-1]
+    else:
+        # A bucket is a cell *within a region*, so an animal at the wire is grouped with its own
+        # side and never with whoever is pressed against the other. Bucketing rather than dropping
+        # cross-wire pairs afterwards, because a dropped pair would also cost the animal the
+        # neighbour beside it that it could have paired with instead.
+        region = barriers.region_of(x[rows], y[rows])
+        order = np.lexsort((key, region))
+        sorted_key, sorted_region = key[order], region[order]
+        same_bucket = (sorted_key[1:] == sorted_key[:-1]) & (
+            sorted_region[1:] == sorted_region[:-1]
+        )
     n = rows.shape[0]
 
-    # Rank within each cell, so pairing consecutive entries never straddles two cells.
+    # Rank within each bucket, so pairing consecutive entries never straddles two of them.
     starts_cell = np.empty(n, dtype=bool)
     starts_cell[0] = True
-    starts_cell[1:] = sorted_key[1:] != sorted_key[:-1]
+    starts_cell[1:] = ~same_bucket
     cell_start = np.maximum.accumulate(np.where(starts_cell, np.arange(n), 0))
     rank = np.arange(n) - cell_start
 
     has_partner = np.zeros(n, dtype=bool)
-    has_partner[:-1] = sorted_key[1:] == sorted_key[:-1]
+    has_partner[:-1] = same_bucket
     leads = np.nonzero((rank % 2 == 0) & has_partner)[0]
 
     first = rows[order[leads]]

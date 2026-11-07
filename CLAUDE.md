@@ -1311,6 +1311,18 @@ by" hunger and no animal stands still merely because the drive that won has no m
   several times §2.1's whole tick. Revisit only if terrain becomes sharp at the `look_ahead` scale,
   or #143 prices water strongly enough that crossing it becomes the next unpriced sample.
 
+  **Nothing touches through a fence, so nothing mates or strikes through one** (#276). Contact
+  (`core.ecology.contact`) decides both mating (#20) and predation (#179), and it paired by distance
+  alone, while `Movement` stops an animal a thousandth of a cell short of the wire: two animals
+  pressed against opposite sides were well inside `contact_range`. Genes crossed a fence bodies
+  could not, and a pen did not protect its prey. Contact now buckets by sealed region as well as by
+  cell, so an animal at the wire is paired with its own side rather than losing that partner to a
+  stranger it cannot reach. In #27's fenced run on master, 2–8 of 55–138 touching pairs eligible to
+  mate, and 6–34 of 389–951 striking pairs, straddled the wire; with the regions, none can. #169's
+  gate alone already brought both to zero in that run, by keeping animals off the wire, but that is
+  a tendency and this is the rule. Same-seed identical in an unfenced world, **MAJOR** in a fenced
+  one.
+
   **What a fence does not stop is scent.** `core.ecology.cues` spreads scent with a separable
   exponential kernel rather than the neighbour-graph walk, because `sample_excluding_self` subtracts
   the exact diagonal of that kernel and the factorisation only holds for a separable kernel. So a

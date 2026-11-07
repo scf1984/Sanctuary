@@ -52,7 +52,8 @@ instead of a walk (#169). `regions` labels them, recomputed only when `revision`
 ask it:
 
 - a candidate heading across the wire offers nothing to any drive (#169), since the animal cannot
-  get there.
+  get there;
+- two animals on opposite sides of the wire cannot touch, so cannot mate or strike (#276).
 
 Connectivity is through the **four** edge neighbours, which is what `Movement` walks (#113): it
 crosses one edge at a time, so a diagonal through a fence corner is two crossings and is refused
@@ -151,6 +152,11 @@ class Barriers:
         from_row, from_col = self.terrain.cell_indices(from_x, from_y)
         to_row, to_col = self.terrain.cell_indices(to_x, to_y)
         return np.asarray(regions[from_row, from_col] == regions[to_row, to_col], dtype=np.bool_)
+
+    def region_of(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+        """`int32`, shaped like `x`: the sealed region each world position lies in."""
+        rows, cols = self.terrain.cell_indices(x, y)
+        return self.regions[rows, cols]
 
     def enclose(self, min_x: float, min_y: float, max_x: float, max_y: float) -> int:
         """Fence the perimeter of the world-unit rectangle; return how many edges that blocked.

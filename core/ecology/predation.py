@@ -107,6 +107,7 @@ from core.entities.store import EntityStore
 from core.genetics.registry import GeneRegistry, Unit
 from core.genetics.service import Genetics
 from core.selection import Selection
+from core.world.barriers import Barriers
 
 
 @dataclass(frozen=True)
@@ -169,8 +170,11 @@ class Predation:
         genes: GeneRegistry,
         feeding: FeedingConfig,
         config: PredationConfig,
+        barriers: Barriers,
     ) -> None:
         self.store = store
+        # A pen protects what is in it: nothing strikes through a fence (#276).
+        self.barriers = barriers
         self.ecology = ecology
         self.genetics = genetics
         self.carrion = carrion
@@ -202,7 +206,7 @@ class Predation:
             return
 
         first, second = pair_by_contact(
-            self.store.x, self.store.y, rows, self.config.strike_range, rng
+            self.store.x, self.store.y, rows, self.config.strike_range, rng, self.barriers
         )
         if not first.shape[0]:
             return
