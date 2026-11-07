@@ -18,6 +18,21 @@ would grow exactly where CLAUDE.md §2.3 says it must not, and the weights could
 because a gene "fear of species 47" cannot exist in a fixed, versioned vocabulary. Cue channels are
 fixed in number, so speciation costs this module nothing at all.
 
+**A fence stops scent, by giving each sealed region a field of its own** (#139, the owner's option
+B). `Barriers.enclose` always draws a closed rectangle, so a fence partitions the grid into sealed
+regions (`Barriers.regions`, #169). Each region's deposits are spread with the same exponential
+kernel over that region's **bounding box**, reflecting at the box's edges, and an animal reads only
+its own region's field. A box is a small world: its operator is still the product of one 1-D
+operator per axis, so self-exclusion stays exact, and the kernel keeps its exponential tail, so a
+keener nose still detects from further away inside a pen (#262). An unfenced world is one region
+whose box is the world, and computes exactly what it did before.
+
+What it forecloses is recorded rather than hidden: a region's plume covers its whole box, so a
+region that is not a rectangle (the outside of a pen) is smelled *across* whatever lies inside its
+box. Animals outside a pen smell each other through it, though never anyone in it. And scent stays
+blind to terrain, which is deferred to wind (#97): a cost-aware operator has no exact self-exclusion
+at an affordable price (measured on #139).
+
 **Why a field rather than a neighbour query.** For scent it is the physically right model — scent
 diffuses, and wind advection (#97) enters as a drift term here rather than as a per-pair test. It
 is also the affordable one: a per-observer nearest-threat query measured 6.3 s/tick at 100,000
@@ -34,6 +49,7 @@ from core.entities.store import EntityStore
 from core.genetics.service import Genetics
 from core.genetics.registry import GeneRegistry, Unit
 from core.selection import Selection
+from core.world.barriers import Barriers
 from core.world.terrain import Terrain
 
 
@@ -64,10 +80,11 @@ class CueField:
 
     concentration: ``(n_channels, height, width)`` float32, signature-units per cell after
         diffusion. Aligned cell-for-cell with `terrain.heights`. Rebuilt from scratch each tick, so
-        a stale field is impossible rather than merely unlikely.
+        a stale field is impossible rather than merely unlikely. In a fenced world each cell holds
+        its own region's field: what an animal standing there smells.
     self_response: ``(height, width)`` float32. The share of its own deposit that a creature
-        standing in each cell reads back — see `sample_excluding_self`. Static, so it is computed
-        once here rather than per tick.
+        standing in each cell reads back — see `sample_excluding_self`. Depends only on the sealed
+        regions, so it is recomputed when a fence changes rather than per tick.
 
     Memory is ``n_channels × cells``, which is fixed: 3 MB for 8 channels on a 200×200 grid, and it
     does not move when the world speciates. float32 rather than the plant field's float64 because
@@ -78,27 +95,72 @@ class CueField:
     concentration: np.ndarray
     self_response: np.ndarray
 
-    def __init__(self, terrain: Terrain, n_channels: int, config: CueFieldConfig) -> None:
+    def __init__(
+        self, terrain: Terrain, n_channels: int, config: CueFieldConfig, barriers: Barriers
+    ) -> None:
         if n_channels < 1:
             raise ValueError("n_channels must be at least 1")
 
         self.terrain = terrain
         self.n_channels = n_channels
         self.config = config
+        # Read for the sealed regions, each of which carries a field of its own (#139).
+        self.barriers = barriers
         # Per cell, so the plume falls by e every `diffusion_range` world units whatever the
         # grid's resolution.
         decay = float(np.exp(-terrain.cell_size / config.diffusion_range))
         self._decay = decay
         self.concentration = np.zeros((n_channels, *terrain.heights.shape), dtype=np.float32)
-        # The full 1-D diffusion operator per axis, kept rather than reduced to its diagonal.
-        # The diagonal answers "how much of my own deposit do I read back **here**"; the whole
-        # matrix answers it for any pair of cells, which is what sampling at a candidate needs
-        # (#188). Two float32 squares of the grid's own axes, 512 KB on a 256x256 world.
-        self._row_operator = _axis_operator(terrain.heights.shape[0], decay)
-        self._col_operator = _axis_operator(terrain.heights.shape[1], decay)
-        self.self_response = np.outer(
-            np.diagonal(self._row_operator), np.diagonal(self._col_operator)
-        )
+        # The full 1-D diffusion operator for each axis length in use, kept rather than reduced to
+        # its diagonal. The diagonal answers "how much of my own deposit do I read back **here**";
+        # the whole matrix answers it for any pair of cells, which is what sampling at a candidate
+        # needs (#188). An operator depends only on the length of the axis it spreads along, so
+        # every region whose box shares a side length shares one. Two float32 squares of the grid's
+        # own axes, 512 KB on a 256x256 world, plus one per distinct box side once fences go up.
+        self._operators: dict[int, np.ndarray] = {}
+        self._row_operator = self._operator(terrain.heights.shape[0])
+        self._col_operator = self._operator(terrain.heights.shape[1])
+        self._lay_out()
+
+    def _operator(self, length: int) -> np.ndarray:
+        if length not in self._operators:
+            self._operators[length] = _axis_operator(length, self._decay)
+        return self._operators[length]
+
+    def _lay_out(self) -> None:
+        """Take the sealed regions as they stand, for every rebuild and read until they change.
+
+        Held as a snapshot rather than read from `Barriers` at each call, so a fence that goes up
+        between a rebuild and a read cannot have the read interpret one tick's field through
+        another tick's regions. `rebuild` refreshes it when `revision` has moved.
+        """
+        self._layout_revision = self.barriers.revision
+        self._regions = self.barriers.regions
+        self._boxes = self.barriers.region_boxes
+        shape = self.terrain.heights.shape
+        # Each region's own field, by label, as of the last rebuild. Unused while the world is one
+        # region, whose field is `concentration` itself.
+        self._fields: list[np.ndarray] = []
+        if len(self._boxes) == 1:
+            self.self_response = np.outer(
+                np.diagonal(self._row_operator), np.diagonal(self._col_operator)
+            )
+            return
+        # Each cell reads back its own deposit through its own region's operator, whose rim is
+        # the box's edge: a penned animal against the wire reads back more of itself than one in
+        # the middle of the pen, exactly as one in a corner of the world does.
+        response = np.empty(shape, dtype=np.float32)
+        for label, (r0, r1, c0, c1) in enumerate(self._boxes):
+            inside = self._regions[r0:r1, c0:c1] == label
+            local = np.outer(
+                np.diagonal(self._operator(int(r1 - r0))), np.diagonal(self._operator(int(c1 - c0)))
+            )
+            response[r0:r1, c0:c1][inside] = local[inside]
+        self.self_response = response
+        self._fields = [
+            np.zeros((self.n_channels, r1 - r0, c1 - c0), dtype=np.float32)
+            for r0, r1, c0, c1 in self._boxes
+        ]
 
     def rebuild(
         self, x: np.ndarray, y: np.ndarray, emission: np.ndarray, signature: np.ndarray
@@ -142,10 +204,30 @@ class CueField:
                 (emission[:, None] * signature).T.ravel(),
             )
 
-        self.concentration = _diffuse(deposit, self._decay)
+        if self._layout_revision != self.barriers.revision:
+            self._lay_out()
+        if len(self._boxes) == 1:
+            self.concentration = _diffuse(deposit, self._decay)
+            return
+
+        # One field per sealed region: only that region's deposits, spread over its bounding box
+        # with the box's edges as the rim. A cell of the composite holds its own region's field.
+        concentration = np.zeros_like(deposit)
+        fields = []
+        for label, (r0, r1, c0, c1) in enumerate(self._boxes):
+            inside = self._regions[r0:r1, c0:c1] == label
+            field = _diffuse(np.where(inside, deposit[:, r0:r1, c0:c1], np.float32(0)), self._decay)
+            fields.append(field)
+            concentration[:, r0:r1, c0:c1][:, inside] = field[:, inside]
+        self.concentration = concentration
+        self._fields = fields
 
     def sample(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """(n, n_channels) float32: every cue channel's concentration at each world position.
+
+        In a fenced world this is the field of the region each position lies in, which is what an
+        animal standing there smells. Reading *another* region's air at a point is
+        `sample_excluding_source`'s business, and it reads nothing there.
 
         All channels at once rather than one at a time, because every caller weights across them —
         fear against an aversion vector, a predator against its prey's signature — and asking per
@@ -174,7 +256,8 @@ class CueField:
         Exact, not approximate. Diffusion is linear, so a sampler's contribution to its own cell is
         its deposit times the operator's diagonal there; and because the kernel is **separable**,
         one exponential per axis (#262), that diagonal factorizes per axis and is precomputed as
-        `self_response`.
+        `self_response`. In a fenced world each region's box is spread on its own, and its operator
+        separates just the same, so the subtraction stays exact region by region (#139).
         The arguments must be the ones passed to `rebuild` for those same samplers.
         """
         emission = np.asarray(emission, dtype=np.float32)
@@ -213,11 +296,17 @@ class CueField:
         1-D operators' entries. `sample_excluding_self` is precisely the `source == sample` case, and
         the tests assert the two agree rather than trusting it.
 
-        Note what this rests on: #139 would spread cues through a *cost-aware* operator, whose
-        weight between two cells depends on the elevation difference between exactly those two, so
-        it separates neither on the diagonal nor off it. Whatever recovers the diagonal there has
-        to recover arbitrary offsets too, or this method has no exact form. And it must keep a loss
-        per pass, so the tail stays exponential, or acuity stops buying range (#262).
+        **A sampler reads its own sealed region's field and nothing else** (#139). A point inside
+        its region's bounding box reads that field there, minus its own deposit through the box's
+        operators; a point outside the box reads nothing. So no smell crosses a fence in either
+        direction, and the subtraction stays exact, since a box's operator separates as the
+        world's does.
+
+        Note what this rests on: a *cost-aware* operator (terrain-shaped scent, deferred to #97)
+        weighs each edge by the elevation difference across exactly that edge, so it separates
+        neither on the diagonal nor off it. Whatever recovers the diagonal there has to recover
+        arbitrary offsets too, or this method has no exact form. And it must keep a loss per pass,
+        so the tail stays exponential, or acuity stops buying range (#262).
         """
         emission = np.asarray(emission, dtype=np.float32)
         signature = np.asarray(signature, dtype=np.float32)
@@ -233,17 +322,59 @@ class CueField:
                 f"{sample_rows.shape} and {source_rows.shape}"
             )
         pad = (1,) * trailing
+        own = emission.reshape(emission.shape + pad)[..., None] * signature.reshape(
+            signature.shape[:1] + pad + signature.shape[1:]
+        )
+        if len(self._boxes) > 1:
+            return self._sample_by_region(
+                sample_rows, sample_cols, source_rows, source_cols, own, pad
+            )
+
         source_rows = source_rows.reshape(source_rows.shape + pad)
         source_cols = source_cols.reshape(source_cols.shape + pad)
-
         response = (
             self._row_operator[sample_rows, source_rows]
             * self._col_operator[sample_cols, source_cols]
         )
-        own = emission.reshape(emission.shape + pad)[..., None] * signature.reshape(
-            signature.shape[:1] + pad + signature.shape[1:]
-        )
         return self.sample(x, y) - response[..., None] * own
+
+    def _sample_by_region(
+        self,
+        sample_rows: np.ndarray,
+        sample_cols: np.ndarray,
+        source_rows: np.ndarray,
+        source_cols: np.ndarray,
+        own: np.ndarray,
+        pad: tuple[int, ...],
+    ) -> np.ndarray:
+        """`sample_excluding_source` in a fenced world: each sampler reads its own region's field.
+
+        One vectorised pass per region that holds a sampler, rather than one over everybody,
+        because each region's field and operators have their own box. Regions are pens, so there
+        are few of them.
+        """
+        out = np.zeros((*sample_rows.shape, self.n_channels), dtype=np.float32)
+        source_region = self._regions[source_rows, source_cols]
+        for label in np.unique(source_region):
+            r0, r1, c0, c1 = (int(v) for v in self._boxes[label])
+            mine = source_region == label
+            rows, cols = sample_rows[mine], sample_cols[mine]
+            # Outside the box there is no field of this region to read; inside it, the clip is a
+            # no-op, and it only keeps the gather below in bounds for the points it discards.
+            in_box = (rows >= r0) & (rows < r1) & (cols >= c0) & (cols < c1)
+            local_rows = np.clip(rows - r0, 0, r1 - r0 - 1)
+            local_cols = np.clip(cols - c0, 0, c1 - c0 - 1)
+            from_row = (source_rows[mine] - r0).reshape(-1, *pad)
+            from_col = (source_cols[mine] - c0).reshape(-1, *pad)
+            response = (
+                self._operator(r1 - r0)[local_rows, from_row]
+                * self._operator(c1 - c0)[local_cols, from_col]
+            )
+            reading = np.moveaxis(self._fields[label][:, local_rows, local_cols], 0, -1)
+            out[mine] = np.where(
+                in_box[..., None], reading - response[..., None] * own[mine], np.float32(0)
+            )
+        return out
 
 
 

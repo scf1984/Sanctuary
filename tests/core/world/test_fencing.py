@@ -225,6 +225,18 @@ class TestSealedRegions:
         assert barriers.n_regions == count
         assert np.array_equal(barriers.regions, expected)
 
+    def test_each_region_knows_its_bounding_box(self):
+        """What each region's scent field is spread over (#139): a pen's box is the pen, and the
+        outside's is the whole grid."""
+        barriers = Barriers(flat())
+        assert barriers.region_boxes.tolist() == [[0, 21, 0, 21]]
+
+        barriers.enclose(5.0, 6.0, 10.0, 12.0)
+
+        pen = barriers.regions[8, 7]
+        assert barriers.region_boxes[pen].tolist() == [6, 12, 5, 10]
+        assert barriers.region_boxes[0].tolist() == [0, 21, 0, 21]
+
     def test_same_region_compares_the_cells_two_points_lie_in(self):
         barriers = Barriers(flat())
         barriers.enclose(5.0, 5.0, 10.0, 10.0)
