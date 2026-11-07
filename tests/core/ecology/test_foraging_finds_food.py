@@ -106,18 +106,20 @@ def _plant_eaters_only(world):
 def test_a_drive_that_perceives_nothing_ranks_no_better_than_chance(seed):
     """The control, and the reason the test above means anything.
 
-    Fear is flat by construction — flight has never existed (§2.5, #24) — so its "preferred"
-    heading is whichever the argmax tie-break lands on. If *that* also scored 0.99 the measure
-    would be reading something other than the drive, and the whole diagnosis on #205 would be
-    built on an artefact.
+    Fear steers away from danger (#265) and knows nothing of food, and at tick 150 on the demo
+    world almost no animal detects anything (6 of 141 and 1 of 114 on these seeds), so its appeal
+    is all zeros and its "preferred" heading is whichever the argmax tie-break lands on. The few
+    that are frightened point away from a smell rather than toward a meadow. If *that* also scored
+    0.99 the measure would be reading something other than the drive, and the whole diagnosis on
+    #205 would be built on an artefact.
 
-    **The tolerance is wide because an all-ties argmax is one draw, not an average.** Every option
-    scores identically, so `argmax` returns the same fixed column for every animal, and the result
-    is that one arbitrary column's forage rank rather than a mean over independent choices — it has
-    no reason to concentrate at 0.5 and it moves whenever the world does. Measured at 0.50 and 0.61
-    across these two seeds; the claim being made is "nothing like 0.99", so the band is set to
-    exclude the signal rather than to pin the noise (§8.1 — a tighter bound here would be a test
-    written to a measurement).
+    **The tolerance is wide because an all-ties argmax is one draw, not an average.** Nearly every
+    animal scores every option identically, so `argmax` returns the same fixed column for almost
+    all of them, and the result is that one arbitrary column's forage rank rather than a mean over
+    independent choices — it has no reason to concentrate at 0.5 and it moves whenever the world
+    does. Measured at 0.58 and 0.49 across these two seeds (0.50 and 0.61 while fear was flat);
+    the claim being made is "nothing like 0.99", so the band is set to exclude the signal rather
+    than to pin the noise (§8.1 — a tighter bound here would be a test written to a measurement).
     """
     _, contributions, crop = options(grazed_world(seed))
 

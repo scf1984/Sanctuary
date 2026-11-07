@@ -145,11 +145,11 @@ class TestDeposit:
 class TestSamplingElsewhere:
     """Reading the field at a candidate position rather than where the animal stands (#188).
 
-    This is what lets a drive *steer* by smell. `Fear.appeal` and `Lust.appeal` both return flat
-    scores today because the only exclusion available was at the sampler's own cell, and lust needs
-    it most: its vector is the animal's own signature, so its own deposit is the strongest match to
-    it anywhere in the world. Without exclusion at candidates, every animal would be maximally
-    attracted to the cell it is already standing in — a rule that says never move.
+    This is what lets a drive *steer* by smell. `Lust.appeal` (#188) and `Fear.appeal` (#265) both
+    returned flat scores while the only exclusion available was at the sampler's own cell, and lust
+    needs it most: its vector is the animal's own signature, so its own deposit is the strongest
+    match to it anywhere in the world. Without exclusion at candidates, every animal would be
+    maximally attracted to the cell it is already standing in — a rule that says never move.
     """
 
     def test_a_lone_broadcaster_smells_nothing_of_itself_one_cell_over(self):

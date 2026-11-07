@@ -1431,6 +1431,154 @@ class TestScentAcuity:
         assert world.fear().urgency(prey) == pytest.approx([1.0])
 
 
+class TestFearAppeal:
+    """Fear steers by relative safety (#265): danger read at every candidate, scaled to the worst.
+
+    Each option's danger is what urgency reads where the animal stands, read at the candidate
+    instead: acuity times each aversion direction dotted against the self-excluded air, gated by
+    the same threshold, summed over directions. Appeal is `1 − danger / max danger`, so the most
+    dangerous option scores 0 and one where nothing is detected scores 1.
+    """
+
+    def plume_to_the_east(self, acuity=50.0, config=FEAR_CONFIG, prey_genes=None):
+        """One timid animal at (20, 20) and one feared broadcaster three units east of it."""
+        world = FearWorld(grid=41)
+        prey = world.spawn_as(0, 1, x=np.float32([20.0]), y=np.float32([20.0]))
+        predator = world.spawn_as(0, 1, x=np.float32([23.0]), y=np.float32([20.0]))
+        world.genetics.set_genes(prey, gene_rows(prey_genes or timid(acuity)))
+        world.genetics.set_genes(predator, gene_rows(dangerous()))
+        world.scent.rebuild(prey | predator)
+        return world, prey, world.fear(config).appeal(prey, *options_at(world, prey))[0]
+
+    def test_it_prefers_the_option_leading_away_from_what_it_fears(self):
+        _, _, appeal = self.plume_to_the_east()
+
+        assert appeal[EAST] == pytest.approx(0.0), "the most dangerous option is not the worst"
+        assert appeal[EAST] < appeal[NULL] < appeal[WEST]
+
+    def test_an_animal_that_detects_nothing_prefers_nowhere(self):
+        """All zeros rather than flat ones, so fear drops out of the utility sum (`detected`'s
+        rule) instead of voting equally for every option."""
+        world = FearWorld(grid=41)
+        prey = world.spawn_as(0, 1, x=np.float32([20.0]), y=np.float32([20.0]))
+        world.genetics.set_genes(prey, gene_rows(timid()))
+        world.scent.rebuild(prey)
+
+        appeal = world.fear().appeal(prey, *options_at(world, prey))
+
+        assert appeal == pytest.approx(np.zeros((1, 3)))
+
+    def test_a_trace_too_faint_to_detect_anywhere_is_nothing(self):
+        """A dull nose twelve units from the source: below the threshold at every candidate, so
+        there is no danger to rank and no direction to take."""
+        world = FearWorld(grid=41)
+        prey = world.spawn_as(0, 1, x=np.float32([32.0]), y=np.float32([20.0]))
+        predator = world.spawn_as(0, 1, x=np.float32([20.0]), y=np.float32([20.0]))
+        world.genetics.set_genes(prey, gene_rows(timid(1.0)))
+        world.genetics.set_genes(predator, gene_rows(dangerous()))
+        world.scent.rebuild(prey | predator)
+
+        appeal = world.fear().appeal(prey, *options_at(world, prey))
+
+        assert appeal == pytest.approx(np.zeros((1, 3)))
+
+    def test_a_candidate_below_the_threshold_counts_as_perfectly_safe(self):
+        """The gate applies per candidate, as it does for urgency: a sub-threshold reading is no
+        danger, not a little danger. Placing the threshold between the west and null readings
+        turns west from 'safer' into 'safe'."""
+        world, prey, ungated = self.plume_to_the_east()
+        perceived = world.scent.perceived_at(prey, *options_at(world, prey))[0]
+        # timid(50) fears channel 0 alone at unit aversion, so channel 0 is the whole reading.
+        reading = 50.0 * perceived[:, 0]
+        between = float(np.sqrt(reading[WEST] * reading[NULL]))
+        gated = replace(FEAR_CONFIG, detection_threshold=between)
+
+        appeal = world.fear(gated).appeal(prey, *options_at(world, prey))[0]
+
+        assert ungated[WEST] < 1.0, "the fixture's west candidate was not detected to begin with"
+        assert appeal[WEST] == pytest.approx(1.0)
+        assert appeal[EAST] == pytest.approx(0.0)
+
+    def test_it_still_points_away_at_point_blank_range(self):
+        """The failure the decision on #265 rejected: urgency saturates, so a direction read through
+        the saturating curve would go flat exactly when the predator is closest. Read unsaturated,
+        staying on top of it is still the worst option and leaving is still better."""
+        world = FearWorld(grid=21, capacity=16)
+        prey = world.spawn_as(0, 1, x=np.float32([10.0]), y=np.float32([10.0]))
+        pack = world.spawn_as(0, 8, x=np.float32([10.0] * 8), y=np.float32([10.0] * 8))
+        world.genetics.set_genes(prey, gene_rows(timid(10_000.0)))
+        world.genetics.set_genes(pack, gene_rows(*[dangerous()] * 8))
+        world.scent.rebuild(prey | pack)
+        fear = world.fear()
+
+        appeal = fear.appeal(prey, *options_at(world, prey))[0]
+
+        assert fear.urgency(prey) == pytest.approx([1.0]), "the fixture is not saturated"
+        assert appeal[NULL] == pytest.approx(0.0)
+        assert appeal[EAST] > 0.0 and appeal[WEST] > 0.0
+
+    def test_a_cannibal_alone_has_nothing_to_flee(self):
+        """Its own plume is excluded at every candidate (#188), so a lineage whose aversion matches
+        its own signature is not driven away from wherever it happens to stand."""
+        world = FearWorld(grid=21)
+        alone = world.spawn_as(0, 1, x=np.float32([10.0]), y=np.float32([10.0]))
+        world.genetics.set_genes(
+            alone,
+            gene_rows(
+                {"scent_emission": 5.0, "signature_0": 1.0, "scent_acuity": 500.0, "aversion0_0": 1.0}
+            ),
+        )
+        world.scent.rebuild(alone)
+
+        appeal = world.fear().appeal(alone, *options_at(world, alone))
+
+        assert appeal == pytest.approx(np.zeros((1, 3)))
+
+    def test_a_smell_opposite_to_the_aversion_is_not_danger(self):
+        """A negative reading is discarded by the positive threshold, as urgency discards it. It is
+        not ranked as safety, which would turn fear into an attraction toward the opposite smell."""
+        world = FearWorld(grid=41)
+        prey = world.spawn_as(0, 1, x=np.float32([20.0]), y=np.float32([20.0]))
+        opposite = world.spawn_as(0, 1, x=np.float32([23.0]), y=np.float32([20.0]))
+        world.genetics.set_genes(prey, gene_rows(timid()))
+        world.genetics.set_genes(opposite, gene_rows({"scent_emission": 1.0, "signature_0": -1.0}))
+        world.scent.rebuild(prey | opposite)
+
+        appeal = world.fear().appeal(prey, *options_at(world, prey))
+
+        assert appeal == pytest.approx(np.zeros((1, 3)))
+
+    def test_the_second_aversion_direction_steers_too(self):
+        """Every direction contributes its own danger, so a threat feared only through the second
+        direction is fled exactly as one feared through the first."""
+        _, _, appeal = self.plume_to_the_east(prey_genes={"scent_acuity": 50.0, "aversion1_0": 1.0})
+
+        assert appeal[EAST] == pytest.approx(0.0)
+        assert appeal[EAST] < appeal[NULL] < appeal[WEST]
+
+    def test_a_frightened_animal_walks_away(self):
+        """End to end through `Behaviour.choose`: with fear the only drive, a decisive animal takes
+        a heading away from the plume. Flight had never existed before #265.
+
+        Twenty independent draws rather than one, because a drive with no direction picks among
+        nine options at random and a single draw lands west of north-south four times in nine.
+        """
+        world = FearWorld(grid=41)
+        prey = world.spawn_as(0, 1, x=np.float32([20.0]), y=np.float32([20.0]))
+        predator = world.spawn_as(0, 1, x=np.float32([23.0]), y=np.float32([20.0]))
+        world.genetics.set_genes(prey, gene_rows(timid(**DECISIVE)))
+        world.genetics.set_genes(predator, gene_rows(dangerous()))
+        world.scent.rebuild(prey | predator)
+        world.behaviour.register(world.fear())
+        row = prey.to_indices()[0]
+
+        for seed in range(20):
+            world.behaviour.choose(prey, np.random.default_rng(seed))
+
+            assert world.store.choice_moving[row]
+            assert np.cos(world.store.choice_heading[row]) < 0.0, "it did not turn away from the east"
+
+
 class TestNoisyOr:
     def test_a_single_channel_passes_through_unchanged(self):
         """With one channel the product collapses to that probability, so today's scores are the
@@ -1554,7 +1702,7 @@ class TestAllFiveDrivesCompeting:
                 climb_tolerance=CLIMB_TOLERANCE,
             )))
 
-    def _terrified_and_hungry(self, with_predator):
+    def _terrified_and_hungry(self, with_predator, predator_x=10.0):
         world = FearWorld(grid=21, capacity=16)
         prey = world.spawn_as(
             0,
@@ -1569,7 +1717,9 @@ class TestAllFiveDrivesCompeting:
         world.genetics.set_genes(prey, gene_rows(genes))
         smellers = prey
         if with_predator:
-            predator = world.spawn_as(0, 3, x=np.float32([10.0] * 3), y=np.float32([10.0] * 3))
+            predator = world.spawn_as(
+                0, 3, x=np.float32([predator_x] * 3), y=np.float32([10.0] * 3)
+            )
             world.genetics.set_genes(predator, gene_rows(*[dangerous()] * 3))
             smellers = prey | predator
         world.scent.rebuild(smellers)
@@ -1581,31 +1731,39 @@ class TestAllFiveDrivesCompeting:
         self.register_all(world)
         return world, prey
 
-    def test_a_hungry_creature_next_to_a_predator_is_more_afraid_than_hungry(self):
+    def eastward(self, with_predator):
+        """Mean cosine of the heading taken over twenty draws: 1 is straight at the meadow."""
+        world, prey = self._terrified_and_hungry(with_predator, predator_x=12.0)
+        row = prey.to_indices()[0]
+        progress = []
+        for seed in range(20):
+            world.behaviour.choose(prey, np.random.default_rng(seed))
+            progress.append(np.cos(world.store.choice_heading[row]))
+        return float(np.mean(progress))
+
+    def test_a_predator_between_a_hungry_creature_and_its_food_turns_it_aside(self):
         """Fear outweighing hunger in a creature that is *also* hungry is the case the whole
-        utility contest exists for — a fixed priority order could not express it.
+        utility contest exists for, and a fixed priority order could not express it.
 
-        What it can no longer be asserted as is "it fled": fear has no direction yet, because
-        reading the cue field at a candidate needs `sample_excluding_self` generalised to arbitrary
-        points (see `Fear.appeal`). So the contest is visible in the breakdown rather than in the
-        heading, and it is the breakdown that #114 makes the load-bearing surface.
+        Before #265 this could only be asserted in the breakdown, because fear had no direction.
+        Now it shows in the heading: the only meadow is due east and the pack stands two units east,
+        between the animal and its food. Without the pack the animal walks almost straight at the
+        meadow; with it, the animal swings wide and makes less than half the eastward progress.
+        It does not simply reverse, because hunger still pulls, and the plume's diamond contours
+        (#262) make the flanks as safe as the way back. Twenty draws, so one lucky Gumbel draw
+        does not pass for a decision.
         """
-        world, prey = self._terrified_and_hungry(with_predator=True)
-
-        world.behaviour.choose(prey, np.random.default_rng(0))
-
-        assert world.behaviour.drive_names == ("hunger", "thirst", "fear", "lust", "fatigue")
-        breakdown = world.behaviour.breakdown(prey)
-        assert breakdown["fear"][0] > breakdown["hunger"][0]
+        assert self.eastward(with_predator=True) < 0.5 * self.eastward(with_predator=False)
 
     def test_terror_no_longer_freezes_an_animal_that_can_see_food(self):
         """The defect #114 exists to remove (#126), asserted directly.
 
         Under #22 fear won the argmax, movement acted only for hunger, and a frightened animal
         therefore stood still — a drive without a mechanic behind it could paralyse one that had
-        one. Now fear contributes to every option equally, so it cannot shift a ranking: the same
-        terrified animal still walks to the meadow it can see. Nothing about fear changed to make
-        this true; it falls out of scoring options rather than entities.
+        one. Scoring options rather than entities removed that, and #265's direction does not bring
+        it back: with the pack on the animal's own cell, staying put is the most dangerous option
+        and every way out is about as safe as every other, so fear pushes the animal off the spot
+        and hunger picks which way. The same terrified animal still walks to the meadow it can see.
         """
         world, prey = self._terrified_and_hungry(with_predator=True)
 
