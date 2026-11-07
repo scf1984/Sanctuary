@@ -110,8 +110,8 @@ class ConstantDrive:
             return np.full(len(selection), float(self._urgency), dtype=np.float32)
         return self._urgency[selection.to_mask()]
 
-    def appeal(self, selection, x, y):
-        return np.broadcast_to(self._appeal, x.shape).astype(np.float32)
+    def appeal(self, selection, candidates):
+        return np.broadcast_to(self._appeal, candidates.x.shape).astype(np.float32)
 
 
 def wanting(option, urgency=1.0):
@@ -206,8 +206,8 @@ class TestRegistration:
             def urgency(self, selection):
                 return np.float32(1.0)
 
-            def appeal(self, selection, x, y):
-                return np.ones_like(x, dtype=np.float32)
+            def appeal(self, selection, candidates):
+                return np.ones_like(candidates.x, dtype=np.float32)
 
         world.behaviour.register(ScalarUrgency())
 
@@ -227,8 +227,8 @@ class TestRegistration:
             def urgency(self, selection):
                 return np.ones(len(selection), dtype=np.float32)
 
-            def appeal(self, selection, x, y):
-                return np.ones((x.shape[0], 1), dtype=np.float32)
+            def appeal(self, selection, candidates):
+                return np.ones((candidates.x.shape[0], 1), dtype=np.float32)
 
         world.behaviour.register(OneColumn())
 

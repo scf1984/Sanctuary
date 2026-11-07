@@ -154,3 +154,23 @@ Alternating master and branch runs under the same background load (median of 7, 
 That's about **−40%**. Phenotype reads in a profiled `choose()` fell from 727 to 150 ms.
 
 **What's left at n=100,000** (same profile, ms): the cue field sampled at the candidates (`perceived_at`, 240), which hunger (prey smell) and lust **each compute with identical arguments**; terrain/climate bilinear sampling (≈145 over 5 calls, of which fatigue's elevation and thermal's temperature are the bulk); and dtype conversions (≈55). Sharing the duplicated cue read is the same lifetime question #174 defers, so it's recorded on #258 rather than decided here.
+
+## The scent at the candidates, read once (#258, 2026-11-07)
+
+With #265's fear direction (PR #272), three drives read `Scent.perceived_at` at the candidates in one `choose()`: hunger (prey smell), lust and fear. They pass the same selection and the same positions, and nothing writes the cue field between one drive's `appeal` and the next. The owner's decision on #258: drives receive their candidates as one object, `core.behaviour.candidates.Candidates`, built once per `Behaviour.utilities` call and dropped on return. It computes the perceived-scent block on the first drive's request and hands the same read-only array to the others, so there is one read where there were three. A test counts the reads inside one `choose()` (3 before, 1 after).
+
+**Behaviour-neutral (MINOR, §2.8 tier 1).** Demo world, 400 founders, 600 ticks, SHA-256 over every store column, the biomass field and the generator state, identical on `2a14454` (the #272 branch) and this branch:
+
+| seed | alive at 600 | SHA-256 |
+|---:|---:|---|
+| 1 | 87 | `36754fab26b76f1073ef48fe99f00ae55294a56099a9990223a6fc42cd611f84` |
+| 2 | 106 | `38c21db5a47ca030cdd69c17eccc993b391fbe8824c8d8c2d2dfee1b4ea705bf` |
+
+`choose()` at N=8 on the 256×256 bench (`Bench`, `timed`: median of 7 after a warm-up), base and branch alternated three times (ms):
+
+| n | base round 1 | branch round 1 | base round 2 | branch round 2 | base round 3 | branch round 3 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 10,000 | 91.5 | 75.7 | 93.6 | 74.1 | 93.7 | 74.4 |
+| 100,000 | 1,071.2 | 864.9 | 1,078.4 | 859.9 | 1,077.5 | 860.6 |
+
+About **−215 ms at 100,000 (−20%)**, which is the two repeated reads at ~107 ms each. That puts `choose()` back under §2.1's 1,000 ms tick with #265's fear direction in it. Still left from the list above: terrain/climate bilinear sampling (`cell_indices` called 11× per `choose()`), not yet measured on its own.

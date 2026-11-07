@@ -37,6 +37,7 @@ from dataclasses import replace
 import numpy as np
 
 from clients.viewer.demo_world import demo_world_config
+from core.behaviour.candidates import Candidates
 from core.world.assembly import build_world
 
 SIZES = (1_000, 10_000, 100_000)
@@ -120,8 +121,14 @@ def main() -> None:
         field = bench.plants.forage_field()
         reads_ms = timed(lambda b=bench: b.plants.forage_at(field, x, y))
         flat = [d for d in bench.behaviour._drives if d.name != "hunger"]
+        # One Candidates per timed call, as `Behaviour.utilities` builds one per choice, so the
+        # drives after the first share its scent reading rather than each paying for it (#258).
         flat_ms = timed(
-            lambda: [(d.urgency(population), d.appeal(population, x, y)) for d in flat]
+            lambda: [
+                (d.urgency(population), d.appeal(population, candidates))
+                for candidates in [Candidates(population, x, y)]
+                for d in flat
+            ]
         )
         draw_ms = timed(
             lambda b=bench: np.argmax(
