@@ -1358,9 +1358,21 @@ by" hunger and no animal stands still merely because the drive that won has no m
   holds even a population with no drives at 1.21–1.45× against the rim's 0.81–0.97×. Truncating the
   candidate along its ray then makes every outward option at the wire a near-copy of staying put —
   #209's fold, at a fence — and the share of penned animals that chose to travel and went nowhere
-  doubles in the ring (7–10% to 14–17%). Matching the rim means projecting rather than truncating,
-  in `Movement` and in the candidates alike, which is a decision of its own (#286)
-  ([`docs/spikes/fence-perception.md`](docs/spikes/fence-perception.md) §6).
+  doubles in the ring (7–10% to 14–17%) ([`docs/spikes/fence-perception.md`](docs/spikes/fence-perception.md) §6).
+
+  **So a wire slides, exactly as the rim does** — settled in #286 (the owner's decision, option
+  B+T). At the first blocked crossing a step bends a `WIRE_MARGIN` short of the wire, measured
+  across it, drops the component normal to it and walks the rest along it, stopping short of a
+  corner (`Barriers.slide`). The rule acts in **three** places, and all three are needed:
+  where a step lands (`Movement.step`), where a candidate is read (`candidate_positions`), and the
+  steering target (`chosen_target`). Sliding only the first two left an animal steering into the
+  wire every tick and creeping along it at `speed × sin(angle)`, so the ring stayed at 1.33× with
+  no drives. Both legs are priced exactly (climb and #143's drag, out of what the first leg left),
+  and velocity is the net displacement (#204). Over six seeds the wire ring reads **0.93× the rim
+  band** in the live world (stop: 1.35×) and **0.90 with no drives** against the rim's 0.89. No
+  animal runs laps: the longest single visit covers at most a fifth of the ring. Cost about 45 ms
+  per tick at 100,000 animals with four pens, none unfenced, and same-seed identical unfenced;
+  **MAJOR** in a fenced world (`fence-perception.md` §7).
 
   **Ridges stay unpriced in perception**, and that is a decision with its measurement rather than
   an oversight (#169). A candidate is read where it lands, not along the way, so it does not see a
