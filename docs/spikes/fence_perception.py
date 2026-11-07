@@ -1,4 +1,4 @@
-"""What sealed regions do to drives, contact and scent, and what they cost (#169, #276, #139).
+"""What sealed regions do to drives, contact and scent, and what they cost (#169, #276, #139, #278, #286).
 
 Throwaway spike code (CLAUDE.md §8.3), not imported by anything. Run from a worktree root with
 `PYTHONPATH=.`; it uses only what master already had before #169 (`build_demo_world`, `Fence`), so
@@ -40,6 +40,8 @@ the same file measures the tree before the gate and after it.
 
 7. **Pressed into the wire** (#278). #27's fenced run: how often a penned animal chose a travelling
    option yet moved almost nowhere, in the wire ring against the rest of the pen.
+   Also, for #286, travelling speed in the ring and the pen, and how long and how far each visit
+   to the ring lasts, which is where laps along a wire that slides would show.
 
 Usage:
     python docs/spikes/fence_perception.py wire [seeds...]
@@ -176,10 +178,15 @@ def indifferent_run(seed: int, n: int = 2000, ticks: int = 400) -> dict[str, flo
     }
 
 
-def pressed_run(seed: int) -> dict[str, tuple[int, float, float]]:
+def pressed_run(seed: int) -> dict[str, tuple]:
     """#27's fenced run, per tick for 400 ticks: of the penned animals in the wire ring and in the
     rest of the pen, the share that chose to stay put, and the share that chose a travelling option
-    but moved less than 0.05 world units, which is an animal pressed into the wire (#278)."""
+    but moved less than 0.05 world units, which is an animal pressed into the wire (#278).
+
+    Also, for #286's slide, what could become laps along the wire: the mean and 95th-percentile
+    speed of a travelling animal (world units per tick) in each zone, and per visit to the ring
+    (consecutive ticks there, by id) how far the animal travelled while in it. The longest visit is
+    reported against the ring's perimeter, so 1.0 would be a full lap."""
     world = build_demo_world(seed=seed, n_entities=300)
     world.loop.advance(200)
     corners, (r0, r1, c0, c1) = pen_bounds(world)
@@ -190,7 +197,11 @@ def pressed_run(seed: int) -> dict[str, tuple[int, float, float]]:
     r, c = np.mgrid[0:rows_n, 0:cols_n]
     pen = (r >= r0) & (r < r1) & (c >= c0) & (c < c1)
     ring = pen & ~((r >= r0 + 1) & (r < r1 - 1) & (c >= c0 + 1) & (c < c1 - 1))
+    perimeter = 2.0 * ((r1 - r0) + (c1 - c0)) * world.terrain.cell_size
     tallies = {"ring": [0, 0, 0], "interior": [0, 0, 0]}
+    speeds: dict[str, list[np.ndarray]] = {"ring": [], "interior": []}
+    visiting: dict[int, list[float]] = {}  # id -> [ticks, distance] of the visit in progress
+    visits: list[tuple[int, float]] = []
     for _ in range(400):
         world.loop.advance(1)
         living = world.store.alive & (world.store.age >= 0)
@@ -201,10 +212,40 @@ def pressed_run(seed: int) -> dict[str, tuple[int, float, float]]:
             tallies[name][0] += int(where.sum())
             tallies[name][1] += int((where & ~moving).sum())
             tallies[name][2] += int((where & moving & (speed < 0.05)).sum())
-    return {
+            speeds[name].append(speed[where & moving])
+        in_ring = ring[rr, cc]
+        ids = world.store.row_ids()[living]
+        here = {int(i): float(s) for i, s in zip(ids[in_ring], speed[in_ring])}
+        for i in list(visiting):
+            if i not in here:
+                visits.append(tuple(visiting.pop(i)))
+        for i, s in here.items():
+            visit = visiting.setdefault(i, [0, 0.0])
+            visit[0] += 1
+            visit[1] += s
+    visits.extend(tuple(v) for v in visiting.values())
+    result: dict[str, tuple] = {
         name: (n, round(rested / max(n, 1), 3), round(pressed / max(n, 1), 3))
         for name, (n, rested, pressed) in tallies.items()
     }
+    for name, chunks in speeds.items():
+        travelling = np.concatenate(chunks) if chunks else np.zeros(0)
+        result[f"{name}_speed_mean_p95"] = (
+            round(float(travelling.mean()), 3) if travelling.size else float("nan"),
+            round(float(np.percentile(travelling, 95)), 3) if travelling.size else float("nan"),
+        )
+    if visits:
+        ticks = np.array([v[0] for v in visits])
+        travelled = np.array([v[1] for v in visits])
+        result["ring_visits_n_ticks_mean_p95"] = (
+            len(visits), round(float(ticks.mean()), 2), float(np.percentile(ticks, 95))
+        )
+        result["ring_visit_distance_mean_p95_max_over_perimeter"] = (
+            round(float(travelled.mean()), 2),
+            round(float(np.percentile(travelled, 95)), 2),
+            round(float(travelled.max() / perimeter), 3),
+        )
+    return result
 
 
 def contact_run(seed: int) -> dict[str, tuple[int, int]]:
@@ -392,6 +433,17 @@ def choose_cost() -> None:
     print(
         f"Movement.step 100k: unfenced {statistics.median(stepping[False]):.1f} ms, "
         f"four pens {statistics.median(stepping[True]):.1f} ms"
+    )
+
+    # `chosen_target`, which #286's B+T slides along the wire as it slides the candidates.
+    targeting: dict[bool, list[float]] = {False: [], True: []}
+    for _ in range(4):
+        for up in (False, True):
+            fence(up)
+            targeting[up].append(timed(lambda: world.behaviour.chosen_target(population)))
+    print(
+        f"chosen_target 100k: unfenced {statistics.median(targeting[False]):.1f} ms, "
+        f"four pens {statistics.median(targeting[True]):.1f} ms"
     )
 
 

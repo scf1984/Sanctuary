@@ -1,4 +1,4 @@
-# Fence perception: what sealed regions do to drives, contact and scent (#169, #276, #139, #278)
+# Fence perception: what sealed regions do to drives, contact and scent (#169, #276, #139, #278, #286)
 
 Measured with [`fence_perception.py`](fence_perception.py). Sections 1 and 2 compare
 `origin/master` at `62b33d0` ("before") with `feat/169-region-gate` ("after"); sections 3-5 say
@@ -221,3 +221,165 @@ that two summed-area box queries cannot rule out: per animal (any wire within on
 Same seed, identical output: `build_demo_world(seed, 200)`, 300 ticks, SHA-256 over every store
 column on live rows and their ids. `287e47a`: seed 1 `2a847dec...59cca07`, seed 2
 `727c9d1f...9618593c`; the branch gives the same two hashes, as did `80bd7f3` before the rebase.
+
+## 7. Sliding along the wire instead of stopping (#286)
+
+The owner's decision on #286 was to measure option B (slide) against A (#287's stop) on the same
+runs before deciding. Three trees, all built on `fix/278-clip-to-wire` at `86005ad`:
+
+- **A** is #287 as it stands. A step stops dead a margin short of the wire along its own ray, and
+  a candidate is read there.
+- **B** (`d30e56f`) adds `Barriers.slide`. A straight step is walked to its first blocked
+  crossing. It bends a `WIRE_MARGIN` short of the wire, measured across the wire, drops its
+  component normal to the wire and walks the rest along it, stopping a margin short of a corner.
+  `Movement.step` walks and prices both legs, and writes velocity from the net displacement.
+  `candidate_positions` reads each candidate at the slide's stop.
+- **B+T** (`812293d`) is B, plus `chosen_target` slides the steering target the same way. The rim
+  clips the target as well as the candidate (`chosen_target`'s `np.clip`), so the target is the
+  third place the rim's rule acts. B leaves it out.
+
+B+T was not in the brief. It is here because B alone did not move the population with no drives
+(below), and the target was the reason. Steered at the raw point across the wire, an animal leans
+on it and slides at only the tangential part of its speed, so it lingers. At the rim the clipped
+target points along the wall, and the animal travels at its full pace.
+
+All the modes below are `fence_perception.py`, seeds 1-6, the same runs as section 6. Tree A
+reproduces section 6's figures exactly on every seed.
+
+### The wire band in the live world
+
+`wire`: penned animals in the ring just inside the wire, and outsiders in the band within one
+world unit of the rim, each over its area share.
+
+| seed | ring, A | ring, B | ring, B+T | rim, A | rim, B | rim, B+T |
+|---|---|---|---|---|---|---|
+| 1 | 1.89 | 2.72 | 2.05 | 1.60 | 1.60 | 1.76 |
+| 2 | 2.74 | 2.83 | 0.74 | 1.66 | 1.23 | 1.70 |
+| 3 | 3.41 | 3.41 | 2.11 | 1.50 | 1.18 | 1.63 |
+| 4 | 2.18 | 2.83 | 1.96 | 1.99 | 2.38 | 2.25 |
+| 5 | 1.84 | 1.49 | 1.06 | 1.66 | 1.60 | 1.75 |
+| 6 | 1.57 | 2.15 | 1.94 | 1.67 | 1.58 | 1.56 |
+| mean | 2.27 | 2.57 | 1.64 | 1.68 | 1.60 | 1.78 |
+| ring / rim | 1.35 | 1.61 | 0.93 | | | |
+
+B does not lower the ring. B+T brings it to the rim's level in the same runs. Outsiders against
+the wire (the outside ring) read A 0.22-2.60 (mean 1.03), B 0.31-2.60 (1.06) and B+T 0.18-1.25
+(0.65).
+
+### The wire with no drives
+
+`indifferent`: 2,000 founders, the pen over the middle quarter, every drive removed.
+
+| seed | ring, A | ring, B | ring, B+T | rim, A | rim, B | rim, B+T |
+|---|---|---|---|---|---|---|
+| 1 | 1.207 | 1.277 | 0.818 | 0.847 | 0.847 | 0.865 |
+| 2 | 1.292 | 1.301 | 0.941 | 0.807 | 0.812 | 0.813 |
+| 3 | 1.451 | 1.507 | 0.973 | 0.964 | 0.949 | 0.966 |
+| 4 | 1.250 | 1.372 | 0.892 | 0.905 | 0.926 | 0.927 |
+| 5 | 1.250 | 1.220 | 0.816 | 0.911 | 0.918 | 0.922 |
+| 6 | 1.285 | 1.327 | 0.932 | 0.832 | 0.849 | 0.861 |
+| mean | 1.289 | 1.334 | 0.895 | 0.878 | 0.884 | 0.892 |
+
+**Sliding the step alone is not the rim's rule.** B is as sticky as A, and slightly more so (1.33
+against 1.29). With no drives a choice depends only on the heading, and the heading's steering
+target still lies across the wire. So the animal is steered into the wire every tick, slides at
+`speed x sin(angle)` and stays in the ring. B+T matches the rim, at 0.895 against 0.892.
+
+This measure has two caveats. First, it is not 1.0 without a fence. On the demo terrain the same
+ring reads 1.04 with no fence at all (seed 1). On flat, dry ground with energy topped up every tick
+it reads 1.05 and 0.95 (seeds 1-2). So about 5% either way is terrain and noise. Second, the rim
+itself reads 0.81-0.97 at this one-unit scale, which #209's 1.01 (measured over a band one
+`look_ahead` wide) did not resolve. On that flat, dry ground the fenced ring reads A 1.29 / 1.38,
+B 1.30 / 1.39 and B+T 0.84 / 0.93, with the rim at 0.85 throughout. With the terrain removed, the
+picture is the same.
+
+### Pressed into the wire, speed, and laps
+
+`pressed`, on #27's fenced run, reports four things for penned animals, in the ring and in the rest
+of the pen:
+
+- the share of animal-ticks that chose a travelling option and moved less than 0.05 world units;
+- the mean speed of travelling animals, in world units per tick;
+- per visit to the ring (consecutive ticks there, by id), how long the visit lasts;
+- the longest distance covered in one visit, over the ring's perimeter (1.0 would be a full lap).
+
+| seed | pressed ring A / B / B+T | pressed interior A / B / B+T | speed ring A / B / B+T | speed interior A / B / B+T |
+|---|---|---|---|---|
+| 1 | 0.149 / 0.025 / 0.015 | 0.032 / 0.026 / 0.026 | 0.37 / 0.44 / 0.53 | 0.49 / 0.50 / 0.50 |
+| 2 | 0.174 / 0.024 / 0.006 | 0.009 / 0.011 / 0.021 | 0.38 / 0.48 / 0.52 | 0.50 / 0.52 / 0.49 |
+| 3 | 0.143 / 0.028 / 0.017 | 0.007 / 0.009 / 0.008 | 0.38 / 0.45 / 0.55 | 0.52 / 0.51 / 0.54 |
+| 4 | 0.144 / 0.024 / 0.014 | 0.010 / 0.010 / 0.012 | 0.33 / 0.40 / 0.45 | 0.42 / 0.43 / 0.42 |
+| 5 | 0.162 / 0.022 / 0.023 | 0.009 / 0.007 / 0.003 | 0.39 / 0.48 / 0.56 | 0.52 / 0.51 / 0.54 |
+| 6 | 0.136 / 0.029 / 0.027 | 0.015 / 0.012 / 0.009 | 0.34 / 0.35 / 0.46 | 0.50 / 0.49 / 0.50 |
+
+| | A | B | B+T |
+|---|---|---|---|
+| chose rest, ring | 0.10-0.12 | 0.10-0.14 | 0.09-0.13 |
+| ring visit, mean ticks | 9.0-12.1 | 9.0-12.9 | 5.5-9.6 |
+| ring visit, 95th percentile ticks | 25-41 | 25-38 | 14-30 |
+| longest visit / perimeter | 0.07-0.16 | 0.12-0.26 | 0.07-0.19 |
+| 95th-percentile speed, ring | 0.71-0.85 | 0.61-0.93 | 0.89-1.10 |
+| 95th-percentile speed, interior | 0.83-0.95 | 0.85-0.94 | 0.82-1.03 |
+
+Both B and B+T remove the pressed animals. Choosing to travel and going nowhere falls from 14-17% in
+the ring to 1-3%, the interior's level. Under B the ring is still slower than the interior, and
+visits last as long as under A, which is why its density does not fall. Under B+T the ring moves at
+the interior's speed (2-9% faster on five seeds of six), and visits are shorter.
+
+**No laps.** The longest single visit to the ring covered at most a quarter of its perimeter under
+B and a fifth under B+T (a sixth under A). Ring speeds stay within the interior's range at the 95th
+percentile. A fence has become a wall an animal can travel along, which the rim already is, and
+nothing in these runs circles it.
+
+### Viability
+
+Alive in / out at the end of `wire`:
+
+| seed | A | B | B+T |
+|---|---|---|---|
+| 1 | 7 / 132 | 7 / 73 | 8 / 75 |
+| 2 | 10 / 51 | 8 / 38 | 4 / 33 |
+| 3 | 4 / 72 | 6 / 92 | 7 / 89 |
+| 4 | 14 / 79 | 15 / 60 | 12 / 64 |
+| 5 | 8 / 81 | 6 / 71 | 8 / 78 |
+| 6 | 11 / 59 | 5 / 56 | 9 / 62 |
+
+Every pen and every outside population survives on every seed in all three trees. The outside
+totals differ (means 79, 65 and 67), mostly through A's seed 1. Six seeds of a 300-founder world do
+not separate them, and this run was not designed to.
+
+### What it costs
+
+`fence_perception.py choose`: 100,000 animals, N = 8, 256 x 256, four pens. The trees alternated
+A, B, B+T and then again, on a quiet machine. Each figure is the median of each run; two runs per
+tree.
+
+| | A | B | B+T |
+|---|---|---|---|
+| `choose()` unfenced | 827 / 822 ms | 820 / 821 ms | 822 / 824 ms |
+| `choose()` four pens | 880 / 881 ms | 908 / 900 ms | 899 / 900 ms |
+| placing candidates, four pens | 85 / 86 ms | 112 / 110 ms | 111 / 109 ms |
+| `Movement.step` unfenced | 120 / 120 ms | 120 / 113 ms | 122 / 111 ms |
+| `Movement.step` four pens | 121 / 126 ms | 141 / 130 ms | 130 / 126 ms |
+| `chosen_target` four pens | 2.4 / 2.3 ms | 2.3 / 2.3 ms | 17.3 / 16.5 ms |
+
+The slide's second pass costs about 25 ms in placing candidates, because each blocked candidate is
+walked again along the wire. `chosen_target` costs about 15 ms more under B+T, because it is one
+slide per animal near a wire. `Movement.step` costs 0-15 ms more, though this bench steps founders
+from rest, so few steps reach a wire. In all, B+T costs about 45 ms a tick over A at 100,000
+animals with four pens, about 5% of §2.1's 1 s tick. Unfenced worlds take none of these paths.
+
+### Unfenced worlds
+
+All three trees give the same output for the same seed: `build_demo_world(seed, 200)`, 300 ticks,
+SHA-256 over every per-row store array on live rows plus their ids. That is a slightly different
+column set from section 6's, so the digests differ from it. Seed 1 gives `95c0851f...7248583` and
+seed 2 gives `a4adac3e...6041dab` on A, B and B+T alike.
+
+### Reading
+
+B as specified fixes the pressed animals and nothing else: the ring stays at A's density, both in
+the live world and with no drives. The rim's rule acts in three places (the landing, the
+candidate and the steering target), and B carries two of them. B+T carries all three. It is the
+only variant that makes the wire read like the rim: 0.895 against the rim's 0.892 with no drives,
+and 0.93x the rim band in the live world against A's 1.35x.
