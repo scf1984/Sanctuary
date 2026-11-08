@@ -74,10 +74,12 @@ candidate headings instead was tried in design and rejected: candidates sit one 
 lakes are sparse, and a binary reading means thirst can only steer when a candidate lands *on*
 water — which is #126 again in a new place, and the exact failure this issue exists to end.
 
-**It is built once and never rebuilt**, because `Water` is derived from terrain and never advanced
-(#165). That is the one difference from the forage field, which grazing changes every tick. When
-water becomes dynamic this becomes a per-tick system beside `rebuild_forage`, and the comment on the
-field says so rather than leaving the next reader to discover it.
+**It is spread again only when a fence changes**, because `Water` is derived from terrain and never
+advanced (#165). That is the one difference from the forage field, which grazing changes every tick.
+A fence is what can still move it (#275): the check sits on the read, so the tick an intervention
+lands in, and a restored snapshot, both see the wire. When water becomes dynamic this becomes a
+per-tick system beside `rebuild_forage`, and the comment on the field says so rather than leaving the
+next reader to discover it.
 """
 
 from __future__ import annotations
@@ -175,16 +177,24 @@ class Hydration(DomainService):
         self.climate = climate
         self.water = water
         self.config = config
-        # `(h, w) float32, world units`: how much standing water is *reachable* from each cell.
-        # Built once rather than per tick, because `Water` is derived from terrain and never
-        # advanced. When water becomes dynamic (#165) this becomes a registered system beside
-        # `Plants.rebuild_forage`, and its range is the knob that decides how far a herd will walk
-        # for a drink.
+        # Spread here and again only when a fence changes, because `Water` is derived from terrain
+        # and never advanced. When water becomes dynamic (#165) this becomes a registered system
+        # beside `Plants.rebuild_forage`, and its range is the knob that decides how far a herd will
+        # walk for a drink.
         # Priced for wading like every other field an animal steers by (#143): a lake's far shore
         # is no nearer for the water between.
-        self.reachable = CostAwareDiffusion(
-            terrain, config.reachability, barriers, wading
-        ).spread(water.depth.astype(np.float32))
+        self._reachability = CostAwareDiffusion(terrain, config.reachability, barriers, wading)
+        self._reachable = self._spread_water()
+
+    def _spread_water(self) -> np.ndarray:
+        return self._reachability.spread(self.water.depth.astype(np.float32))
+
+    @property
+    def reachable(self) -> np.ndarray:
+        """`(h, w) float32, world units`: how much standing water is *reachable* from each cell."""
+        if self._reachability.stale:
+            self._reachable = self._spread_water()
+        return self._reachable
 
     def deficit(self, selection: Selection) -> np.ndarray:
         """(len(selection),) float32, dimensionless in [0, 1]: how dry each animal is."""

@@ -13,6 +13,7 @@ import pytest
 from core.ecology.hydration import Hydration, HydrationConfig
 from core.selection import Selection
 from core.services import ColumnRegistry
+from core.world.barriers import Barriers
 from core.world.climate import Climate, ClimateConfig
 from core.world.diffusion import DiffusionConfig
 from core.world.terrain import Terrain
@@ -22,9 +23,15 @@ from core.entities.store import EntityStore
 GRID = 11
 
 
-def world(loss_rate=0.1, heat_scaling=0.0, drink_rate=0.5, temperature=20.0, lake=True):
+def flat():
+    return Terrain(np.zeros((GRID, GRID), dtype=np.float32), cell_size=1.0)
+
+
+def world(
+    loss_rate=0.1, heat_scaling=0.0, drink_rate=0.5, temperature=20.0, lake=True, barriers=None
+):
     """A flat world with a lake in one corner, or none at all."""
-    terrain = Terrain(np.zeros((GRID, GRID), dtype=np.float32), cell_size=1.0)
+    terrain = flat()
     climate = Climate(
         terrain,
         ClimateConfig(
@@ -54,6 +61,7 @@ def world(loss_rate=0.1, heat_scaling=0.0, drink_rate=0.5, temperature=20.0, lak
             drink_rate=drink_rate,
             reachability=DiffusionConfig(range=4.0, climb_penalty=0.5),
         ),
+        barriers,
     )
     return store, hydration
 
@@ -208,6 +216,59 @@ class TestWaterAdvertisesItself:
         block = np.full((3, 8), 4.0)
 
         assert hydration.reachable_at(block, block).shape == (3, 8)
+
+
+class TestAFenceReachesTheWaterField:
+    """The field is spread once because water never changes, but a fence does (#27, #275). Built
+    in play, a pen blocked the animals and not their reading of the lakes outside it, so thirst
+    steered at the wire for a drink nothing could reach."""
+
+    # The lake fills rows and columns 1-2, and the wire runs down the whole map east of it.
+    BEYOND_THE_WIRE = (np.array([5.0]), np.array([1.0]))
+
+    @staticmethod
+    def wire_off_the_lake(barriers):
+        barriers.blocked_west[:, 4] = True
+        barriers.revision += 1
+
+    def test_water_wired_off_after_assembly_stops_advertising_itself(self):
+        barriers = Barriers(flat())
+        _, hydration = world(barriers=barriers)
+        assert hydration.reachable_at(*self.BEYOND_THE_WIRE)[0] > 0.0
+
+        self.wire_off_the_lake(barriers)
+
+        assert hydration.reachable_at(*self.BEYOND_THE_WIRE)[0] == 0.0
+
+    def test_the_field_matches_one_spread_with_the_fence_already_up(self):
+        late = Barriers(flat())
+        _, fenced_later = world(barriers=late)
+        early = Barriers(flat())
+        self.wire_off_the_lake(early)
+        _, fenced_first = world(barriers=early)
+
+        self.wire_off_the_lake(late)
+
+        assert np.array_equal(fenced_later.reachable, fenced_first.reachable)
+
+    def test_taking_the_fence_down_restores_the_field(self):
+        barriers = Barriers(flat())
+        _, hydration = world(barriers=barriers)
+        before = hydration.reachable.copy()
+        self.wire_off_the_lake(barriers)
+        hydration.reachable_at(*self.BEYOND_THE_WIRE)
+
+        barriers.clear()
+
+        assert np.array_equal(hydration.reachable, before)
+
+    def test_the_field_is_not_spread_again_while_the_fences_stand(self):
+        """`reachable_at` runs every tick for every candidate; a spread there is the whole cost."""
+        barriers = Barriers(flat())
+        _, hydration = world(barriers=barriers)
+        self.wire_off_the_lake(barriers)
+
+        assert hydration.reachable is hydration.reachable
 
 
 class TestDeathFallsOutRatherThanBeingARule:
