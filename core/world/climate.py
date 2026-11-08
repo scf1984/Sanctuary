@@ -173,7 +173,7 @@ class Climate:
         if config.seasons is not None:
             # Per row, the temperature units one full summer adds: `amplitude_fraction` of what
             # the latitude gradient drops between the equator and that row (see SeasonsConfig).
-            row_y = np.arange(terrain.heights.shape[0], dtype=np.float64) * terrain.cell_size
+            row_y = terrain.row_y
             self._seasonal_profile = (
                 config.seasons.amplitude_fraction
                 * config.latitude_gradient
@@ -284,8 +284,8 @@ class _UpsamplingLattice:
 def _axis_weights(
     n_cells: int, cell_size: float, spacing: float
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """For each grid line along one axis: the lattice index either side, and the weight of the far one."""
-    position = np.arange(n_cells, dtype=np.float64) * cell_size / spacing
+    """For each cell centre along one axis: the lattice index either side, and the far one's weight."""
+    position = (np.arange(n_cells, dtype=np.float64) + 0.5) * cell_size / spacing
     lower = np.floor(position).astype(np.int64)
     return lower, lower + 1, position - lower
 
@@ -310,7 +310,7 @@ def _temperature_field(terrain: Terrain, config: ClimateConfig) -> np.ndarray:
     The part of the field that does not move with time. Held at float64 so the seasonal and weather
     terms are added before the one rounding to the stored float32.
     """
-    row_y = np.arange(terrain.heights.shape[0], dtype=np.float64) * terrain.cell_size
+    row_y = terrain.row_y
     latitude_temperature = config.equator_temperature - config.latitude_gradient * np.abs(
         row_y - config.equator_y
     )

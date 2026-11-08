@@ -64,7 +64,7 @@ from metrics import MetricHistory, MetricsConfig
 
 _GRID = 80
 _CELL_SIZE = 1.0
-_WORLD_EXTENT = (_GRID - 1) * _CELL_SIZE
+_WORLD_EXTENT = _GRID * _CELL_SIZE
 
 # Ticks. Founders' age at first breeding and term, drawn so founders differ from generation one.
 _FOUNDER_MATURITY = (40.0, 120.0)

@@ -90,7 +90,7 @@ def flat_heights(elevation=0.0):
 def ramp_heights(gain_per_unit):
     """Ground rising steadily along +x: elevation = gain_per_unit * x, so a step east climbs and
     the identical step west descends."""
-    x = np.arange(GRID, dtype=np.float32) * CELL_SIZE
+    x = (np.arange(GRID, dtype=np.float32) + 0.5) * CELL_SIZE  # cell centres, where nodes sit
     return np.broadcast_to(x * gain_per_unit, (GRID, GRID)).astype(np.float32)
 
 
@@ -101,7 +101,7 @@ def ravine_heights(depth, floor_x, wall_width):
     change**, so pricing it from its endpoints alone charges nothing for the climb out — while an
     animal that walked it did every world unit of that climb.
     """
-    x = np.arange(GRID, dtype=np.float32) * CELL_SIZE
+    x = (np.arange(GRID, dtype=np.float32) + 0.5) * CELL_SIZE  # cell centres, where nodes sit
     dip = np.clip(1.0 - np.abs(x - floor_x) / wall_width, 0.0, 1.0)
     return np.broadcast_to(-depth * dip, (GRID, GRID)).astype(np.float32)
 
@@ -702,7 +702,7 @@ class TestAStepIsPricedAlongItsWholePath:
 def round_lake(peak, centre_x, centre_y, radius):
     """Depth falling linearly from `peak` at the centre to nothing at `radius`: a crossing meets a
     shallow margin, the deep middle and a shallow margin again, like every lake a basin fills."""
-    rows, cols = np.mgrid[0:GRID, 0:GRID] * CELL_SIZE
+    rows, cols = (np.mgrid[0:GRID, 0:GRID] + 0.5) * CELL_SIZE  # cell centres
     reach = np.hypot(cols - centre_x, rows - centre_y)
     return (peak * np.clip(1.0 - reach / radius, 0.0, 1.0)).astype(np.float32)
 
@@ -719,7 +719,7 @@ def bowl_heights(depth, centre_x, centre_y, radius):
     """A closed basin. Unlike `ravine_heights` it does not drain off the map, so `Water.generate`
     fills it and the lake is the one hydrology would put there, standing over the bed animals
     walk on."""
-    rows, cols = np.mgrid[0:GRID, 0:GRID] * CELL_SIZE
+    rows, cols = (np.mgrid[0:GRID, 0:GRID] + 0.5) * CELL_SIZE  # cell centres
     reach = np.hypot(cols - centre_x, rows - centre_y)
     return (-depth * np.clip(1.0 - reach / radius, 0.0, 1.0)).astype(np.float32)
 
@@ -1085,10 +1085,11 @@ class TestVelocityChangesAtABoundedRate:
         rewritten from the displacement that happened, so an animal pinned against the boundary
         carries nothing into the next tick rather than sliding along it."""
         world = World(flat_heights())
-        runner = world.place(35.0, 10.0, speed=4.0, agility=4.0)
+        edge = world.terrain.world_width
+        runner = world.place(edge - 5.0, 10.0, speed=4.0, agility=4.0)
 
         for _ in range(4):
-            world.step_toward(runner, 40.0, 10.0, pace=1.0)
+            world.step_toward(runner, edge, 10.0, pace=1.0)
 
         assert float(world.position(runner)[0][0]) == pytest.approx(world.terrain.world_width)
         assert float(world.store.velocity_x[runner.to_mask()][0]) == pytest.approx(0.0)
@@ -1137,7 +1138,7 @@ class TestASlidStepIsPricedAlongTheWire:
     the path, so both are charged, climb and wading included, exactly what the same path costs
     walked as two steps (#113's additivity); and velocity is the displacement that happened."""
 
-    START = (18.25, 20.25)
+    START = (18.75, 20.75)
     STEP = (4.0, 3.0)
 
     def world(self, fenced):
@@ -1148,7 +1149,7 @@ class TestASlidStepIsPricedAlongTheWire:
         depth[18:26, 10:30] = 0.7
         world = World(heights, depth=depth)
         if fenced:
-            world.movement.barriers.blocked_west[:, 21] = True  # the wire at x = 20.5
+            world.movement.barriers.blocked_west[:, 21] = True  # the wire at x = 21
             world.movement.barriers.revision += 1
         return world
 
@@ -1158,7 +1159,7 @@ class TestASlidStepIsPricedAlongTheWire:
         from core.world.barriers import WIRE_MARGIN
 
         (x, y), (dx, dy) = self.START, self.STEP
-        to_bend = (20.5 - WIRE_MARGIN - x) / dx
+        to_bend = (21.0 - WIRE_MARGIN - x) / dx
         bend = (x + dx * to_bend, y + dy * to_bend)
         return bend, (bend[0], y + dy)
 

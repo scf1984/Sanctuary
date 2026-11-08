@@ -1310,10 +1310,11 @@ by" hunger and no animal stands still merely because the drive that won has no m
   killing field rather than a boundary.
 
   **Two lattices, offset by half a cell, and missing that is what made it leak.** Elevation is
-  bilinear between nodes on the integer lattice, so a step's profile bends there and that is where
-  the cell walk samples (#113). A *cell* — which is what holds biomass, carrion and a fence — is the
-  square centred on a node, so its edges lie on the **half-integer** lattice. Walking only the node
-  crossings, a segment steps clean over a fence in its middle. And a step that lands exactly *on* a
+  bilinear between nodes at cell centres, so a step's profile bends on the lines through them and
+  that is where the cell walk samples (#113). A *cell* — which is what holds biomass, carrion and a
+  fence — is the square around a node, so its edges lie half a cell off those lines, on the integer
+  lattice since the world became cell-edge to cell-edge (#162). Walking only the node crossings, a
+  segment steps clean over a fence in its middle. And a step that lands exactly *on* a
   cell boundary indexes to the cell beyond it, so stopping on the line reads as already through.
   Measured before both were fixed: a 39×39 pen lost 3 of 20 penned animals per 100 ticks and gained
   strangers at the same rate, while every direct test of the barrier passed. A ray is walked over
@@ -1487,6 +1488,37 @@ by" hunger and no animal stands still merely because the drive that won has no m
 - World size is set by climate-zone variety and animal home range — large enough to feel vast and
   hold distinct zones, small enough that animals do not wander into irrelevance. Not all zones
   appear in every world.
+- **The world spans cell edge to cell edge** — settled in #162 (the owner's decision). Cell
+  `(r, c)` is the square `[c, c + 1) × [r, r + 1)` in cells and its elevation node sits at its
+  centre, so a world of `n` columns is `n × cell_size` wide. The convention it replaced put the
+  nodes on the world's edge, which left each rim cell holding half a cell of world and each corner a
+  quarter. Every per-cell quantity was then twice as dense per unit area along the rim, and that
+  meant growth, soil, carrion and scent deposits alike. On the demo world the rim's standing crop
+  per unit area stood at **2.1–2.3×** the interior's; after it, 0.87–1.14× (3 seeds × 900 ticks).
+  Area weighting was the alternative and was rejected: it fixes growth, and then every reader of a
+  field must remember to weight its rim as well. The first reader that didn't (the forage field)
+  turned the wall from attracting to repelling (#162's measurement).
+
+  Two rules come with it. **A field sampled between centres is bilinear, and within half a cell of
+  the edge it holds the rim cell's value** (`bilinear_sample`): there is no centre beyond to
+  interpolate toward, and a flat strip is what a mirror implies. So elevation bends on the lines
+  through cell centres, which is where `Movement`'s walk samples, while fences stand on the cell
+  edges, which is where `Barriers` walks. **Both reflecting fields mirror about the world's edge
+  exactly**, since a cell's outer edge now is the world's edge.
+
+  **The forage field keeps reflecting at the rim** (#140, the owner's option A), so it shares one
+  rule with the scent kernel (#262). The cost is known: a patch within about two cells of a corner
+  reads strongest in the corner. Absorbing instead makes the edge repel (rim occupancy halved), and
+  a normalised reading was not measurably better than reflecting. After #162, over 8 seeds × 2,000
+  ticks, the half unit beside an east or west wall holds **0.79 ± 0.36** of a uniform share
+  (0.69 ± 0.24 on master just before), short of the ~1.1 #140 set for revisiting it. The north and
+  south walls are the cool poles on the demo map and hold 2.3×, unchanged by #162. The trade is
+  stated in `core.world.diffusion`.
+
+  **MAJOR** under §2.8: it moves where food grows per unit area, and so where animals go. Population
+  over the same runs cannot be told from before (final count rank test p = 0.96, 8 seeds), and the
+  whole tick at 100,000 animals costs 1,122 ms against 1,108 (+1.3%, within the run-to-run spread).
+
 - **Weather is derived, never simulated** — decided on #159. Temperature is a pure function of
   `(x, y, tick, seed)`: the static altitude-and-latitude field, plus a seasonal cycle, plus smooth
   noise evaluated on a coarse lattice and upsampled. `Climate.advance_to` writes it at the top of

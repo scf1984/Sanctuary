@@ -13,7 +13,7 @@ def make_config(**overrides):
         octaves=5,
         persistence=0.5,
         min_elevation=0.0,
-        max_elevation=32.0,  # a tenth of the 320-unit extent (#112)
+        max_elevation=32.0,  # about a tenth of the 330-unit extent (#112)
     )
     params.update(overrides)
     return TerrainConfig(**params)
@@ -78,7 +78,8 @@ class TestElevationLookup:
         terrain = Terrain(heights, cell_size=2.0)
         for row in range(2):
             for col in range(3):
-                x, y = col * 2.0, row * 2.0
+                # A node sits at its cell's centre (#162).
+                x, y = (col + 0.5) * 2.0, (row + 0.5) * 2.0
                 assert terrain.elevation_at(x, y) == pytest.approx(heights[row, col])
 
     def test_interpolates_midpoint(self):
@@ -90,8 +91,8 @@ class TestElevationLookup:
             dtype=np.float32,
         )
         terrain = Terrain(heights, cell_size=1.0)
-        # Halfway between column 0 (height 0) and column 1 (height 10).
-        assert terrain.elevation_at(0.5, 0.0) == pytest.approx(5.0)
+        # Halfway between column 0's centre (height 0) and column 1's (height 10).
+        assert terrain.elevation_at(1.0, 0.5) == pytest.approx(5.0)
 
     def test_accepts_vectorized_positions(self):
         heights = np.array(
@@ -102,8 +103,8 @@ class TestElevationLookup:
             dtype=np.float32,
         )
         terrain = Terrain(heights, cell_size=1.0)
-        xs = np.array([0.0, 1.0, 0.0])
-        ys = np.array([0.0, 0.0, 1.0])
+        xs = np.array([0.5, 1.5, 0.5])
+        ys = np.array([0.5, 0.5, 1.5])
         result = terrain.elevation_at(xs, ys)
         assert np.allclose(result, [0.0, 10.0, 20.0])
 
@@ -114,6 +115,61 @@ class TestElevationLookup:
             terrain.elevation_at(-0.1, 0.0)
         with pytest.raises(ValueError):
             terrain.elevation_at(0.0, 10.0)
+
+
+class TestTheWorldSpansCellEdgeToCellEdge:
+    """Every cell is a whole cell (#162). With nodes on the world's edge a rim cell held half a
+    cell of world and a corner a quarter, so whatever a cell holds per cell (growth, soil, a scent
+    deposit) was twice as dense per unit area along the rim."""
+
+    def test_the_extent_is_one_cell_per_column_and_row(self):
+        terrain = Terrain(np.zeros((4, 6), dtype=np.float32), cell_size=2.0)
+
+        assert terrain.world_width == 12.0
+        assert terrain.world_height == 8.0
+
+    def test_a_uniform_population_falls_evenly_into_every_cell(self):
+        """The defect itself: each cell, rim and corner included, catches its area's share."""
+        terrain = Terrain(np.zeros((8, 8), dtype=np.float32), cell_size=1.0)
+        # A regular lattice of positions covering the world evenly, 10 per unit on each axis, so
+        # the count each cell catches is exact rather than a sample.
+        along = (np.arange(80) + 0.5) / 10.0
+        x, y = (grid.ravel() for grid in np.meshgrid(along, along))
+
+        rows, cols = terrain.cell_indices(x, y)
+        counts = np.bincount(rows * 8 + cols, minlength=64)
+
+        assert (counts == 100).all()
+
+    def test_a_cell_owns_the_half_open_span_from_its_west_edge(self):
+        terrain = Terrain(np.zeros((4, 4), dtype=np.float32), cell_size=1.0)
+
+        rows, cols = terrain.cell_indices(np.array([0.0, 0.999, 1.0, 3.5]), np.zeros(4))
+
+        assert cols.tolist() == [0, 0, 1, 3]
+
+    def test_the_far_rim_belongs_to_the_last_cell(self):
+        """The world is closed, and `Movement` puts animals exactly on its far edge."""
+        terrain = Terrain(np.zeros((4, 4), dtype=np.float32), cell_size=1.0)
+
+        rows, cols = terrain.cell_indices(np.array([4.0]), np.array([4.0]))
+
+        assert (rows[0], cols[0]) == (3, 3)
+
+    def test_the_outer_half_cell_reads_the_rim_cell_flat(self):
+        """There is no centre beyond the rim to interpolate toward, so the reading holds."""
+        heights = np.array([[0.0, 10.0, 20.0]] * 3, dtype=np.float32)
+        terrain = Terrain(heights, cell_size=1.0)
+
+        readings = terrain.elevation_at(np.array([0.0, 0.25, 0.5, 2.5, 2.75, 3.0]), np.full(6, 1.5))
+
+        assert readings.tolist() == [0.0, 0.0, 0.0, 20.0, 20.0, 20.0]
+
+    def test_cell_centres_are_where_the_nodes_sit(self):
+        terrain = Terrain(np.zeros((2, 3), dtype=np.float32), cell_size=2.0)
+
+        assert terrain.column_x.tolist() == [1.0, 3.0, 5.0]
+        assert terrain.row_y.tolist() == [1.0, 3.0]
 
 
 class TestSlopeAndAspect:

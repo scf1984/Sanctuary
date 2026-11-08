@@ -83,7 +83,7 @@ def flat_heights():
 def ramp_heights(gain_per_unit):
     """Ground rising steadily along +x, so an eastward step climbs and the identical westward step
     descends."""
-    x = np.arange(GRID, dtype=np.float32) * CELL_SIZE
+    x = (np.arange(GRID, dtype=np.float32) + 0.5) * CELL_SIZE  # cell centres, where nodes sit
     return np.broadcast_to(x * gain_per_unit, (GRID, GRID)).astype(np.float32)
 
 

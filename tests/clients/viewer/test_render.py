@@ -583,11 +583,11 @@ class TestBarrierSegments:
         assert vertical[0] == vertical[2] and vertical[1] != vertical[3]
 
     def test_an_edge_draws_on_the_cell_boundary_not_through_its_middle(self):
-        """The edge above row 3 is at world y = 2.5, which is 25 pixels into a 10-unit world drawn
-        at 100 pixels — not 30, which is where the cell's centre is."""
+        """The edge above row 3 is at world y = 3, which is 30 pixels into a 10-unit world drawn
+        at 100 pixels — not 35, which is where the cell's centre is (#162)."""
         barriers = self.barriers()
         barriers.blocked_north[3, 4] = True
 
         (segment,) = barrier_segments(barriers, 10.0, 10.0, 100, 100)
 
-        assert segment[1] == 25
+        assert segment[1] == 30
