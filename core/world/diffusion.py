@@ -125,9 +125,9 @@ class CostAwareDiffusion:
 
     conductance: ``(5, height, width)`` float32, unit-free in [0, 1] — how readily a signal passes
         into each cell from itself and from its four neighbours, already normalised so a cell's five
-        weights sum to one. Plane order is self, north, south, west, east, matching the shifts in
-        `_neighbours`. Edges of the world conduct nothing inward from outside, which makes the
-        boundary reflecting rather than a sink: a cell at the map edge is not spuriously deaf.
+        weights sum to one. Plane order is the shifts in `_neighbours`. Edges of the world conduct
+        nothing inward from outside, which makes the boundary reflecting rather than a sink: a cell
+        at the map edge is not spuriously deaf.
     passes: how many relaxation passes one `spread` costs. Derived from `range` and the cell size
         rather than configured, because it is a numerical property of the kernel and not an
         ecological choice.
@@ -244,8 +244,10 @@ def _rise(difference: np.ndarray, span: np.ndarray) -> np.ndarray:
 
 
 def _neighbours(field: np.ndarray) -> np.ndarray:
-    """``(5, height, width)``: what each cell itself, then its north, south, west and east
-    neighbour, holds.
+    """``(5, height, width)``: what each cell itself, then the cell at row + 1, row - 1,
+    column - 1 and column + 1, holds. Named by index and not by compass point, because
+    `Barriers.blocked_north[r]` faces row - 1 and a plane called north that reads row + 1 is how
+    an east-west wire came to be applied to the wrong edges (#289).
 
     **The cell itself is the first plane, and that is not an optimisation.** A four-neighbour step
     always changes the parity of ``row + column``, so a walk of an even number of steps can only
@@ -321,13 +323,13 @@ def _conductance(
         # operator is a walk over the neighbour graph, so what arrives behind a barrier is only what
         # came round the end of it. Nothing here attenuates; an edge is simply not there.
         #
-        # Plane order is self, north, south, west, east, matching `_neighbours`. `blocked_north[r]`
-        # is the edge above row r, which is that row's *north* neighbour and row r-1's *south* one,
-        # so each grid writes two planes and the pair can never disagree.
+        # Planes as in `_neighbours`: self, row + 1, row - 1, column - 1, column + 1. A grid's entry
+        # `[r]` is the edge between r and r - 1, so it closes plane "- 1" of cell r and, rolled,
+        # plane "+ 1" of cell r - 1: one bool, both directions, and the pair can never disagree.
         north, west = barriers.blocked_north, barriers.blocked_west
         for plane, blocked in (
-            (1, north),
-            (2, np.roll(north, -1, axis=0)),
+            (1, np.roll(north, -1, axis=0)),
+            (2, north),
             (3, west),
             (4, np.roll(west, -1, axis=1)),
         ):

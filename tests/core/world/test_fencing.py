@@ -461,12 +461,10 @@ class TestPerceptionRoutesAround:
         source[10, 7] = 100.0
         return source
 
-    def test_a_sealed_pen_receives_essentially_nothing_from_outside(self):
-        """Five parts in a million of what an open field delivers, which is float32 round-off over
-        thirty diffusion passes rather than a path: every conductance row still sums to exactly 1,
-        and there is no sequence of open edges from the source into the pen. Asserted as a ratio
-        against the unfenced world rather than against zero, because "the fence removes essentially
-        all of it" is the claim, and pinning an exact zero would be pinning the arithmetic."""
+    def test_a_sealed_pen_receives_nothing_from_outside(self):
+        """Exactly nothing: with no sequence of open edges from the source, a cell in the pen only
+        ever averages zeros. This test once allowed five parts in a million and called that
+        round-off; it was the east-west wires leaking (#289)."""
         barriers = Barriers(flat())
         diffusion = self.field(barriers)
         unfenced = diffusion.spread(self.source())[10, 11]
@@ -474,7 +472,7 @@ class TestPerceptionRoutesAround:
 
         barriers.enclose(8.5, 0.5, 13.5, 20.5)
 
-        assert diffusion.spread(self.source())[10, 11] / unfenced < 1e-4
+        assert diffusion.spread(self.source())[10, 11] == 0.0
 
     def test_the_field_is_rebuilt_when_a_fence_goes_up(self):
         """On a revision comparison rather than an invalidation call, so nothing has to remember."""
@@ -503,11 +501,54 @@ class TestPerceptionRoutesAround:
         end, so a gap in a fence is a gap rather than an attenuation."""
         barriers = Barriers(flat())
         diffusion = self.field(barriers)
+        unfenced = diffusion.spread(self.source())[18, 11]
         barriers.blocked_west[:15, 9] = True
+        barriers.revision += 1
 
         behind = diffusion.spread(self.source())[18, 11]
 
-        assert behind > 0.0
+        assert 0.0 < behind < unfenced
+
+    @pytest.mark.parametrize("source_row, far_rows", [(9, np.s_[10:]), (10, np.s_[:10])])
+    def test_nothing_crosses_an_east_west_wire_even_from_the_row_touching_it(
+        self, source_row, far_rows
+    ):
+        """From either side. The wire's own edge once stayed open, so whatever stood beside it
+        crossed, and standing crop stands beside nearly every wire (#289)."""
+        barriers = Barriers(flat())
+        diffusion = self.field(barriers)
+        barriers.blocked_north[10, :] = True
+        barriers.revision += 1
+        source = np.zeros((21, 21), dtype=np.float32)
+        source[source_row, :] = 100.0
+
+        assert diffusion.spread(source)[far_rows].max() == 0.0
+
+    def test_the_rows_beside_an_east_west_wire_still_hear_their_own_side(self):
+        """The same defect from the other end: both rows beside the wire read as empty."""
+        barriers = Barriers(flat())
+        diffusion = self.field(barriers)
+        barriers.blocked_north[10, :] = True
+        barriers.revision += 1
+        source = np.zeros((21, 21), dtype=np.float32)
+        source[8, :] = 100.0
+
+        assert diffusion.spread(source)[9, 10] > 0.0
+
+    def test_a_wire_does_the_same_along_either_axis(self):
+        """On flat ground the two axes are one operator, so a field and its mirror must agree."""
+        along_x, along_y = Barriers(flat()), Barriers(flat())
+        along_x.blocked_west[:, 10] = True
+        along_x.revision += 1
+        along_y.blocked_north[10, :] = True
+        along_y.revision += 1
+        source = np.zeros((21, 21), dtype=np.float32)
+        source[6, 8] = 100.0
+
+        read_x = self.field(along_x).spread(source)
+        read_y = self.field(along_y).spread(source.T)
+
+        assert read_x == pytest.approx(read_y.T, abs=1e-5)
 
 
 class TestMovementRefusesRatherThanPays:
