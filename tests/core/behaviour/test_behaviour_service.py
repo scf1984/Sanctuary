@@ -8,7 +8,7 @@ from core.genetics.service import Genetics
 from core.genetics.species import SpeciesRegistry
 from core.selection import Selection
 from core.services import ColumnOwnershipError, ColumnRegistry
-from core.world.barriers import Barriers
+from core.world.barriers import WIRE_MARGIN, Barriers
 from core.world.terrain import Terrain
 
 from tests.support.genes import gene_registry
@@ -425,37 +425,74 @@ class TestUtilities:
         assert total[1, 0] == pytest.approx(0.1)
 
 
-class TestReachableCandidates:
-    """Which options lie on the animal's own side of every fence (#169), asked once per choice and
-    handed to every drive on the one `Candidates` object."""
+class TestCandidatesStopAtTheWire:
+    """A candidate whose straight path crosses a fence is read where the animal would go (#278):
+    slid along the wire (#286), as one past the world's edge is projected onto the rim, so the
+    ground it reads is the ground the step would reach, with no pull toward what lies beyond it."""
 
-    def options(self, world, selection):
-        headings = world.behaviour.candidate_headings(selection, np.random.default_rng(0))
-        return world.behaviour.candidate_positions(selection, headings)
+    def options(self, world, selection, seed=0):
+        headings = world.behaviour.candidate_headings(selection, np.random.default_rng(seed))
+        return headings, *world.behaviour.candidate_positions(selection, headings)
 
-    def test_an_unfenced_world_marks_nothing(self):
-        """One region, so nothing is computed and every drive reads what it read before fences
-        could seal anything."""
-        world = World()
-        selection = world.spawn(3)
-
-        assert world.behaviour.candidates(selection, *self.options(world, selection)).reachable is None
-
-    def test_a_candidate_across_the_wire_is_unreachable_and_staying_put_never_is(self):
+    def test_a_candidate_across_the_wire_slides_along_it(self):
         world = World()
         selection = world.spawn(1, x=np.float32([4.0]), y=np.float32([4.0]))
+        _headings, open_x, open_y = self.options(world, selection)
         # A wire between columns 4 and 5 (x = 4.5), half a cell east of the animal.
         world.barriers.blocked_west[:, 5] = True
         world.barriers.revision += 1
-        x, y = self.options(world, selection)
 
-        reachable = world.behaviour.candidates(selection, x, y).reachable
+        _headings, x, y = self.options(world, selection)
 
-        assert reachable is not None
-        assert reachable[0, NULL]
-        expected = world.terrain.cell_indices(x[0], y[0])[1] < 5
-        assert reachable[0].tolist() == expected.tolist()
-        assert not expected.all() and expected.sum() > 1, "the wire divides nothing here"
+        crossing = open_x[0, :NULL] > 4.5
+        assert 1 < crossing.sum() < N_CANDIDATES, "the wire divides nothing here"
+        assert x[0, :NULL][crossing] == pytest.approx(4.5 - WIRE_MARGIN, abs=1e-12)
+        assert np.array_equal(y[0, :NULL][crossing], open_y[0, :NULL][crossing])
+        assert np.array_equal(x[0, :NULL][~crossing], open_x[0, :NULL][~crossing])
+        assert np.array_equal(y[0, :NULL][~crossing], open_y[0, :NULL][~crossing])
+        assert (x[0, NULL], y[0, NULL]) == (4.0, 4.0)
+
+    @pytest.mark.parametrize("seed", range(3))
+    def test_every_candidate_lies_on_its_animals_side_of_every_fence(self, seed):
+        """Which is what lets the drives read a field at a candidate without asking whether it can
+        be reached: #169's gate had nothing left to remove once this holds."""
+        rng = np.random.default_rng(seed)
+        world = World(capacity=64, grid=17)
+        world.barriers.enclose(3.0, 3.0, 9.0, 8.0)
+        world.barriers.enclose(9.0, 10.0, 14.0, 15.0)
+        selection = world.spawn(
+            64,
+            x=rng.uniform(0.0, 16.0, 64).astype(np.float32),
+            y=rng.uniform(0.0, 16.0, 64).astype(np.float32),
+        )
+        here_x = world.store.x[selection.to_indices()].astype(np.float64)[:, None]
+        here_y = world.store.y[selection.to_indices()].astype(np.float64)[:, None]
+
+        _headings, x, y = self.options(world, selection, seed)
+
+        assert world.barriers.same_region(here_x, here_y, x, y).all()
+
+    def test_the_bearing_steered_by_is_the_candidate_chosen(self):
+        """The rim clips the steering target as it clips the candidate, so an animal choosing a
+        heading into the edge is steered along it at its full pace (#286). The wire does the same:
+        steered at the raw point across it, the animal would lean on the wire and slide at only
+        the tangential part of its speed, and a population with no drives crowds there."""
+        world = World()
+        selection = world.spawn(1, x=np.float32([4.0]), y=np.float32([4.0]))
+        world.barriers.blocked_west[:, 5] = True  # x = 4.5
+        world.barriers.revision += 1
+        heading = np.pi / 6
+        world.travelling(selection, heading)
+        candidate_x, candidate_y = world.behaviour.candidate_positions(
+            selection, np.array([[heading]])
+        )
+
+        target_x, target_y = world.behaviour.chosen_target(selection)
+
+        assert target_x[0] == pytest.approx(4.5 - WIRE_MARGIN, abs=1e-12)
+        # To float32, the precision the stored heading is held at.
+        assert target_x[0] == pytest.approx(candidate_x[0, 0], abs=1e-6)
+        assert target_y[0] == pytest.approx(candidate_y[0, 0], abs=1e-6)
 
 
 class TestChoosing:

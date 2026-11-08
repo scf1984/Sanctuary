@@ -40,8 +40,9 @@ exception to forget:
   wire and die there, so a fence would read as a killing field rather than a boundary.
 
 So `Movement` stops an animal *at* a blocked edge without charging it for the crossing it did not
-make, and the walk it already does per cell crossing (#113) is where that lands — a fence needs no
-second pass, because the code that would have to know about it is already visiting every edge.
+make. Where that is along a straight line is `reach`, the one crossing finder: `Movement` cuts each
+step there before pricing it, and `Behaviour` reads each candidate heading there (#278), so the
+ground an animal scores is the ground it would stand on.
 
 ## A sealed fence partitions the grid into regions
 
@@ -51,12 +52,10 @@ another, so "are these two places on the same side of every fence" is one intege
 instead of a walk (#169). `regions` labels them, recomputed only when `revision` moves, and these
 ask it:
 
-- a candidate heading across the wire offers nothing to any drive (#169), since the animal cannot
-  get there;
 - two animals on opposite sides of the wire cannot touch, so cannot mate or strike (#276);
 - each region carries its own scent field, spread over its bounding box (`region_boxes`, #139).
 
-Connectivity is through the **four** edge neighbours, which is what `Movement` walks (#113): it
+Connectivity is through the **four** edge neighbours, which is what `reach` walks for `Movement`: it
 crosses one edge at a time, so a diagonal through a fence corner is two crossings and is refused
 if either is. A fence with a gap in it would leave its two sides one region, and every reader then
 behaves exactly as if it were not there — which is right, because an animal can walk round.
@@ -73,7 +72,13 @@ from __future__ import annotations
 
 import numpy as np
 
-from core.world.terrain import Terrain
+from core.world.terrain import Terrain, to_next_grid_line
+
+# How far short of a blocked edge a body is stopped, as a fraction of a cell. Small enough to be
+# invisible ecologically and large enough to survive the float32 the position columns are stored in:
+# a cell is 1 world unit in the shipped world, so this is a thousandth of one, against a float32
+# resolution near 20 of about 2e-6.
+WIRE_MARGIN = 1e-3
 
 
 class Barriers:
@@ -104,6 +109,7 @@ class Barriers:
         self._regions = np.zeros(terrain.heights.shape, dtype=np.int32)
         self._n_regions = 1
         self._boxes = _bounding_boxes(self._regions, 1)
+        self._wires = _wire_table(self.blocked_north, self.blocked_west)
         self._regions_revision = self.revision
 
     @property
@@ -148,6 +154,7 @@ class Barriers:
         if self._regions_revision != self.revision:
             self._regions, self._n_regions = _label_regions(self.blocked_north, self.blocked_west)
             self._boxes = _bounding_boxes(self._regions, self._n_regions)
+            self._wires = _wire_table(self.blocked_north, self.blocked_west)
             self._regions.flags.writeable = False
             self._regions_revision = self.revision
 
@@ -211,6 +218,280 @@ class Barriers:
         self.blocked_west[...] = False
         self.revision += 1
 
+    def reach(
+        self,
+        x: np.ndarray,
+        y: np.ndarray,
+        unit_x: np.ndarray,
+        unit_y: np.ndarray,
+        distance: np.ndarray,
+    ) -> np.ndarray:
+        """float64 world units, the arguments' broadcast shape: how far along each straight ray a
+        body gets before a blocked edge stops it, or `distance` where none lies on the ray.
+
+        x, y: where each ray starts, world units, inside the world. unit_x, unit_y: its direction,
+        a unit vector. distance: its length, world units, ending inside the world. Broadcast
+        together, so `Behaviour` can hand one start per animal, `(n, 1)`, for its `(n, k)` rays.
+
+        **The one crossing finder** (#278). `Movement` asks it where a step ends, and `Behaviour`
+        where a candidate heading is read, so the ground an animal scores is exactly the ground it
+        would be standing on. Two finders would be two answers to one question, and a candidate a
+        hair past the point the walk stops would read the far side of the wire.
+
+        **It walks the cell edges one crossing at a time.** A cell is the square centred on an
+        elevation node, so its edges sit on the half-integer lattice (#27): a ray tested only at
+        its ends steps clean over a wire in its middle, and one cutting a pen's corner has both ends
+        in one region. At each crossing it asks `crossing_blocked` about a probe a margin past it,
+        which is unambiguously in the cell being entered.
+
+        **It stops `WIRE_MARGIN` of a cell short of the line, never on it.** A cell owns the
+        half-open span around its centre, so a position exactly on a boundary indexes to the cell
+        *beyond* it, and stopping there would read as already through. Measured before the margin
+        existed, a 39x39 pen lost 3 of 20 penned animals in 100 ticks and gained strangers at the
+        same rate.
+
+        **Only rays that could meet a wire are walked**, found by two box queries on a summed-area
+        table of the blocked edges, each four lookups. A straight ray visits only cells inside the
+        box its two end cells span, and crosses only edges those cells own, so a ray whose box holds
+        no blocked edge cannot meet one. The first query (`near_wire`) asks it of each *start*,
+        with a box as wide as the longest ray, which is per animal rather than per candidate; the
+        second asks it of each surviving ray's own box. Walking every candidate instead is what #169 measured at
+        2.7-7.6 s per tick (docs/spikes/fence-perception.md).
+        """
+        return self._reach(x, y, unit_x, unit_y, distance)[0]
+
+    def _reach(
+        self,
+        x: np.ndarray,
+        y: np.ndarray,
+        unit_x: np.ndarray,
+        unit_y: np.ndarray,
+        distance: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """`reach`, plus where the blocking line lies along each ray (`inf` where none does) and
+        whether it is a line of constant x (`blocked_west`) rather than of constant y, which is
+        what `slide` needs to know to drop the component normal to it."""
+        shape = np.broadcast_shapes(
+            np.shape(x), np.shape(y), np.shape(unit_x), np.shape(unit_y), np.shape(distance)
+        )
+        free = np.array(np.broadcast_to(distance, shape), dtype=np.float64)
+        line = np.full(shape, np.inf)
+        vertical = np.zeros(shape, dtype=np.bool_)
+        if not self.any_blocked or free.size == 0:
+            return free, line, vertical
+        x = np.asarray(x, dtype=np.float64)
+        y = np.asarray(y, dtype=np.float64)
+
+        # Which starts have any wire within the longest ray's reach, at the starts' own shape.
+        near = self.near_wire(x, y, float(free.max()))
+        rays = np.flatnonzero(np.broadcast_to(near, shape) & (free > 0.0))
+        if rays.size == 0:
+            return free, line, vertical
+        at = np.unravel_index(rays, shape)
+
+        def gather(values: np.ndarray) -> np.ndarray:
+            return np.broadcast_to(np.asarray(values, dtype=np.float64), shape)[at]
+
+        ray_x, ray_y = gather(x), gather(y)
+        ray_ux, ray_uy = gather(unit_x), gather(unit_y)
+        length = free.reshape(-1)[rays]
+        # Which of those rays have a wire inside the box their own two end cells span. The end is
+        # clipped into the world, since it may sit a float hair outside it.
+        rows, cols = self.terrain.cell_indices(ray_x, ray_y)
+        end_rows, end_cols = self.terrain.cell_indices(
+            np.clip(ray_x + ray_ux * length, 0.0, self.terrain.world_width),
+            np.clip(ray_y + ray_uy * length, 0.0, self.terrain.world_height),
+        )
+        crossing = self._holds_wire(
+            np.minimum(rows, end_rows),
+            np.maximum(rows, end_rows),
+            np.minimum(cols, end_cols),
+            np.maximum(cols, end_cols),
+        )
+        if crossing.any():
+            walked = rays[crossing]
+            (
+                free.reshape(-1)[walked],
+                line.reshape(-1)[walked],
+                vertical.reshape(-1)[walked],
+            ) = self._walk_to_wire(
+                ray_x[crossing], ray_y[crossing], ray_ux[crossing], ray_uy[crossing],
+                length[crossing],
+            )
+        return free, line, vertical
+
+    def slide(
+        self, x: np.ndarray, y: np.ndarray, end_x: np.ndarray, end_y: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """(first, stop_x, stop_y), float64, the arguments' broadcast shape: a straight step from
+        `(x, y)` to `(end_x, end_y)`, slid along the first wire it meets (#286, option B).
+
+        The path is two straight legs. The first runs along the step to the **bend**, `first`
+        world units out; the second runs from the bend to the stop, along the wire. Where no wire
+        is met the bend is the end and the end is returned exactly, so an animal no wire touches
+        moves bit for bit as in an unfenced world.
+
+        **The rim's rule, carried to the wire.** The world's edge clips a landing point per axis,
+        which is a projection: a step into the rim keeps its component along it. A wire does the
+        same here: at the first blocked crossing the component of the step normal to the wire is
+        dropped, and what is left is walked on along it. That leg runs along one axis, so the only
+        wire it can meet is one across it (a pen's corner, or another fence), and there it stops,
+        since dropping that component too leaves nothing. Its stop is therefore the end with the
+        blocked coordinate replaced, the per-axis clip exactly, cut short only by a corner.
+
+        **The bend is `WIRE_MARGIN` short of the wire measured across it, not along the step.**
+        Measured along the step, a grazing heading stops a margin times the sine of its angle from
+        the line, and an animal sliding along a wire grazes it every tick: within a few the float32
+        position column rounds it onto the line, which indexes to the far side. An animal already
+        closer than that bends where it stands, so nothing ever creeps toward the line.
+        """
+        x, y, end_x, end_y = np.broadcast_arrays(
+            *(np.asarray(v, dtype=np.float64) for v in (x, y, end_x, end_y))
+        )
+        along_x, along_y = end_x - x, end_y - y
+        length = np.hypot(along_x, along_y)
+        moving = length > 0.0
+        unit_x = np.where(moving, along_x / np.where(moving, length, 1.0), 0.0)
+        unit_y = np.where(moving, along_y / np.where(moving, length, 1.0), 0.0)
+        _free, line, vertical = self._reach(x, y, unit_x, unit_y, length)
+        blocked = np.isfinite(line)
+        first = length.copy()
+        stop_x, stop_y = end_x.copy(), end_y.copy()
+        if not blocked.any():
+            return first, stop_x, stop_y
+
+        b = np.flatnonzero(blocked.ravel())
+        bx, by = x.ravel()[b], y.ravel()[b]
+        bux, buy = unit_x.ravel()[b], unit_y.ravel()[b]
+        across_x = vertical.ravel()[b]
+        # How fast the step closes on the wire per world unit along it: never zero for a ray that
+        # crossed the line.
+        closing = np.where(across_x, np.abs(bux), np.abs(buy))
+        bend = np.maximum(line.ravel()[b] - WIRE_MARGIN * self.terrain.cell_size / closing, 0.0)
+        bend_x, bend_y = bx + bux * bend, by + buy * bend
+        # The normal component dropped: the leg along the wire keeps the step's other coordinate.
+        to_x = np.where(across_x, bend_x, end_x.ravel()[b])
+        to_y = np.where(across_x, end_y.ravel()[b], bend_y)
+        leg = np.abs(to_x - bend_x) + np.abs(to_y - bend_y)  # along one axis, so this is its length
+        slides = leg > 0.0
+        safe = np.where(slides, leg, 1.0)
+        leg_ux = np.where(slides, (to_x - bend_x) / safe, 0.0)
+        leg_uy = np.where(slides, (to_y - bend_y) / safe, 0.0)
+        along = self.reach(bend_x, bend_y, leg_ux, leg_uy, leg)
+
+        first.ravel()[b] = bend
+        stop_x.ravel()[b] = np.where(along < leg, bend_x + leg_ux * along, to_x)
+        stop_y.ravel()[b] = np.where(along < leg, bend_y + leg_uy * along, to_y)
+        return first, stop_x, stop_y
+
+    def near_wire(self, x: np.ndarray, y: np.ndarray, within: float) -> np.ndarray:
+        """`bool`, shaped like `x`: whether a blocked edge may lie within `within` world units of
+        each position. Measured per axis in whole cells, so it may say yes for a wire slightly
+        further off, and never no for one inside that range.
+
+        `reach`'s first filter, and `Behaviour`'s before it builds any ray at all: an animal with
+        no wire within one `look_ahead` has no candidate a wire could stop, and most animals in a
+        fenced world are such animals.
+        """
+        if not self.any_blocked:
+            return np.zeros(np.shape(x), dtype=np.bool_)
+        self._refresh_regions()
+        rows, cols = self.terrain.cell_indices(x, y)
+        radius = int(np.ceil(within / self.terrain.cell_size))
+        return self._holds_wire(rows - radius, rows + radius, cols - radius, cols + radius)
+
+    def _holds_wire(
+        self, row_low: np.ndarray, row_high: np.ndarray, col_low: np.ndarray, col_high: np.ndarray
+    ) -> np.ndarray:
+        """`bool`, shaped like the bounds: whether any cell in rows `[row_low, row_high]` and
+        columns `[col_low, col_high]`, inclusive and clipped to the grid, owns a blocked edge."""
+        height, width = self.blocked_north.shape
+        row_low = np.clip(row_low, 0, height)
+        row_high = np.clip(row_high + 1, 0, height)
+        col_low = np.clip(col_low, 0, width)
+        col_high = np.clip(col_high + 1, 0, width)
+        wires = self._wires
+        count = (
+            wires[row_high, col_high]
+            - wires[row_low, col_high]
+            - wires[row_high, col_low]
+            + wires[row_low, col_low]
+        )
+        return np.asarray(count > 0, dtype=np.bool_)
+
+    def _walk_to_wire(
+        self,
+        x: np.ndarray,
+        y: np.ndarray,
+        unit_x: np.ndarray,
+        unit_y: np.ndarray,
+        distance: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """`_reach` for rays that may meet a wire: every cell edge each one crosses, in order.
+
+        The iteration count is per call, not per ray: each pass advances every unfinished ray to
+        its own next crossing and drops the finished ones, so the loop runs as many times as the
+        longest ray needs and each pass costs only what is still walking.
+        """
+        cell = self.terrain.cell_size
+        margin = WIRE_MARGIN * cell
+        world_width, world_height = self.terrain.world_width, self.terrain.world_height
+        end_x = x + unit_x * distance
+        end_y = y + unit_y * distance
+        free = distance.copy()
+        line = np.full_like(distance, np.inf)
+        vertical = np.zeros(distance.shape, dtype=np.bool_)
+        travelled = np.zeros_like(distance)
+        walking = np.arange(distance.size)
+        # A ray of length d crosses at most ceil(d / cell) edges on each axis; +2 covers the
+        # partial cell at each end.
+        passes = 2 * int(np.ceil(float(distance.max()) / cell)) + 2
+
+        for remaining_passes in range(passes, 0, -1):
+            if walking.size == 0:
+                break
+            ux, uy = unit_x[walking], unit_y[walking]
+            d, t = distance[walking], travelled[walking]
+            start_x, start_y = x[walking], y[walking]
+            at_x = start_x + ux * t
+            at_y = start_y + uy * t
+            # Cell edges are the node lattice shifted by half a cell (`Terrain.cell_indices`).
+            to_x_line = to_next_grid_line(at_x + 0.5 * cell, ux, cell)
+            to_edge = np.minimum(to_x_line, to_next_grid_line(at_y + 0.5 * cell, uy, cell))
+            left = d - t
+            # On the last permitted pass, finish in one segment: only reachable if float slivers
+            # at a line consumed passes the bound did not expect.
+            step = left if remaining_passes == 1 else np.minimum(to_edge, left)
+
+            # Asked from the segment's midpoint to a probe just past its end. Neither end of the
+            # segment will do as the first point: each sits on a cell edge, which indexes to the
+            # cell on its far side, so a ray travelling toward lower indices would be asked about
+            # the edge it has just crossed rather than the one ahead. The midpoint is unambiguously
+            # in the cell being crossed, and the probe in the cell being entered. The probe snaps
+            # to the ray's end once past it, so it never leaves the ray, and both are clipped into
+            # the world: a float hair outside it is enough for `cell_indices` to refuse, and the
+            # rim stops everything anyway.
+            middle = t + 0.5 * step
+            probe = t + step + margin
+            past = probe >= d
+            probe_x = np.where(past, end_x[walking], start_x + ux * probe)
+            probe_y = np.where(past, end_y[walking], start_y + uy * probe)
+            refused = self.crossing_blocked(
+                np.clip(start_x + ux * middle, 0.0, world_width),
+                np.clip(start_y + uy * middle, 0.0, world_height),
+                np.clip(probe_x, 0.0, world_width),
+                np.clip(probe_y, 0.0, world_height),
+            )
+            reached = t + np.where(refused, np.maximum(step - margin, 0.0), step)
+            travelled[walking] = reached
+            done = refused | (reached >= d)
+            free[walking[done]] = np.where(refused[done], reached[done], d[done])
+            line[walking[refused]] = (t + step)[refused]
+            vertical[walking[refused]] = (to_x_line <= to_edge)[refused]
+            walking = walking[~done]
+
+        return free, line, vertical
+
     def crossing_blocked(
         self, from_x: np.ndarray, from_y: np.ndarray, to_x: np.ndarray, to_y: np.ndarray
     ) -> np.ndarray:
@@ -245,6 +526,19 @@ class Barriers:
             self.blocked_west[from_row, edge_col] | self.blocked_west[to_row, edge_col]
         )
         return np.asarray(crossed_north | crossed_west, dtype=np.bool_)
+
+
+def _wire_table(blocked_north: np.ndarray, blocked_west: np.ndarray) -> np.ndarray:
+    """`(h + 1, w + 1) int64`, read-only: a summed-area table of the blocked edges, by owning cell.
+
+    `table[r, c]` counts the blocked edges owned by the cells above and left of `(r, c)`, so the
+    count in any box of cells is four lookups. `reach` asks it whether a ray could meet a wire.
+    """
+    owned = blocked_north.astype(np.int64) + blocked_west.astype(np.int64)
+    table = np.zeros((owned.shape[0] + 1, owned.shape[1] + 1), dtype=np.int64)
+    table[1:, 1:] = owned.cumsum(axis=0).cumsum(axis=1)
+    table.flags.writeable = False
+    return table
 
 
 def _bounding_boxes(regions: np.ndarray, count: int) -> np.ndarray:

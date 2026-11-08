@@ -126,7 +126,7 @@ def main() -> None:
         flat_ms = timed(
             lambda: [
                 (d.urgency(population, candidates), d.appeal(population, candidates))
-                for candidates in [Candidates(population, x, y, None)]
+                for candidates in [Candidates(population, x, y)]
                 for d in flat
             ]
         )

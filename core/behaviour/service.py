@@ -165,8 +165,8 @@ class Behaviour(DomainService):
         self.genetics = genetics
         self.terrain = terrain
         self.config = config
-        # Read for which side of every fence each candidate lies on (#169): a candidate the animal
-        # cannot reach offers nothing to any drive.
+        # Read for where a fence stops each candidate heading (#278), so every option lies on
+        # ground the animal can reach.
         self.barriers = barriers
         self._drives: list[Drive] = []
         # A temperature is a bare scale on a utility, so it carries no dimension of its own; so is
@@ -314,39 +314,49 @@ class Behaviour(DomainService):
         Clipped into the world, because a heading near the edge points out of it and the fields a
         drive samples raise outside their bounds. The null option is the animal's own position, so
         "stay put" needs no special case downstream — it is an option proposing no displacement.
+
+        **A heading across a fence is read where the step would go** (#278): to the wire and
+        along it (`Barriers.slide`, which `Movement` walks a step with, #286). That is the rim's
+        rule carried to the wire: an option is scored on ground the animal could actually stand
+        on, so the far side neither pulls it in (#169's defect) nor, read as nothing, pushes it
+        away (#169's gate, measured at half the wire band's share). Every candidate therefore lies
+        on its animal's side of every fence, which is why no drive asks whether one can be reached.
         """
         mask = selection.to_mask()
-        x = self.store.x[mask].astype(np.float64)[:, None]
-        y = self.store.y[mask].astype(np.float64)[:, None]
+        here_x = self.store.x[mask].astype(np.float64)[:, None]
+        here_y = self.store.y[mask].astype(np.float64)[:, None]
         reach = self.config.look_ahead
-        return (
-            np.clip(
-                np.concatenate([x + reach * np.cos(headings), x], axis=1),
-                0.0,
-                self.terrain.world_width,
-            ),
-            np.clip(
-                np.concatenate([y + reach * np.sin(headings), y], axis=1),
-                0.0,
-                self.terrain.world_height,
-            ),
+        x = np.clip(here_x + reach * np.cos(headings), 0.0, self.terrain.world_width)
+        y = np.clip(here_y + reach * np.sin(headings), 0.0, self.terrain.world_height)
+        if self.barriers.any_blocked:
+            x, y = self._slide_along_the_wire(here_x, here_y, x, y)
+        return np.concatenate([x, here_x], axis=1), np.concatenate([y, here_y], axis=1)
+
+    def _slide_along_the_wire(
+        self, here_x: np.ndarray, here_y: np.ndarray, x: np.ndarray, y: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """`(x, y)`, each (n, k), moved to where a step from `here` toward each would end: to the
+        first wire its straight path meets, then along it.
+
+        The step runs to the rim-clipped point, not along the raw heading: the rim is applied
+        first, so a heading that grazes the edge and then a fence is read where both say. Only
+        animals with a wire within one `look_ahead` build rays at all, which keeps a fenced world's
+        cost to the animals near its wires (docs/spikes/fence-perception.md).
+        """
+        near = np.flatnonzero(
+            self.barriers.near_wire(here_x[:, 0], here_y[:, 0], self.config.look_ahead)
         )
+        if near.size == 0:
+            return x, y
+        _first, x[near], y[near] = self.barriers.slide(here_x[near], here_y[near], x[near], y[near])
+        return x, y
 
     def candidates(self, selection: Selection, x: np.ndarray, y: np.ndarray) -> Candidates:
         """The one object every drive scores this call's options through (#258).
 
         x, y: (len(selection), n_options) float64, as `candidate_positions` returns them.
-
-        Marks which candidates lie in the animal's own sealed region (#169). Asked once here and
-        not per drive, because it is the same answer for every one of them. An unfenced world is
-        one region, so nothing is computed and the drives read exactly what they did before.
         """
-        if self.barriers.n_regions == 1:
-            return Candidates(selection, x, y, None)
-        mask = selection.to_mask()
-        here_x = self.store.x[mask].astype(np.float64)[:, None]
-        here_y = self.store.y[mask].astype(np.float64)[:, None]
-        return Candidates(selection, x, y, self.barriers.same_region(here_x, here_y, x, y))
+        return Candidates(selection, x, y)
 
     def utilities(
         self,
@@ -552,7 +562,14 @@ class Behaviour(DomainService):
         heading = self.store.choice_heading[mask].astype(np.float64)
         moving = self.store.choice_moving[mask]
         reach = np.where(moving, self.config.look_ahead, 0.0)
-        return (
-            np.clip(x + reach * np.cos(heading), 0.0, self.terrain.world_width),
-            np.clip(y + reach * np.sin(heading), 0.0, self.terrain.world_height),
-        )
+        target_x = np.clip(x + reach * np.cos(heading), 0.0, self.terrain.world_width)
+        target_y = np.clip(y + reach * np.sin(heading), 0.0, self.terrain.world_height)
+        # Slid along the wire as the candidate was (#286), as the rim clips both: the bearing an
+        # animal steers by is the option it chose, so heading into a wire it is steered along it at
+        # its full pace rather than leaning on it and sliding at the tangential part of its speed.
+        if self.barriers.any_blocked:
+            slid_x, slid_y = self._slide_along_the_wire(
+                x[:, None], y[:, None], target_x[:, None], target_y[:, None]
+            )
+            target_x, target_y = slid_x[:, 0], slid_y[:, 0]
+        return target_x, target_y

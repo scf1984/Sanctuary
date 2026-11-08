@@ -7,9 +7,10 @@ that read costs about 110 ms, so computing it per drive spent a fifth of §2.1's
 recomputing a number already in hand (docs/spikes/option-sampling-cost.md).
 
 **What it is for.** Handing every drive one object rather than bare `x, y`, so a reading more than
-one drive needs is computed on first request and handed to the rest. Whether each candidate can be
-reached at all is the other such reading (#169): every drive asks it, and it is the same answer for
-all of them.
+one drive needs is computed on first request and handed to the rest. Every candidate already lies on
+its animal's side of every fence (`Behaviour.candidate_positions`, #278), so whether it can be
+reached is not a reading this object carries: #169 asked it here, and clipping onto the wire left it
+nothing to answer.
 
 The same holds inside one drive and before any candidate is read, which is why `urgency` is handed
 this object as well as `appeal` (#174). What each animal broadcasts is needed three times per call —
@@ -48,49 +49,19 @@ class Candidates:
     """The candidate positions of one `choose` call, for one selection, and what lies at them.
 
     x, y: (len(selection), n_options) float64 world positions, the point each option would take the
-        animal toward, already clipped into the world. The null option is the last column.
-    reachable: (len(selection), n_options) bool, whether each candidate lies in its animal's own
-        sealed region (`Barriers.regions`), or None when the world is one region and every
-        candidate is. None rather than an all-True block so that an unfenced world computes exactly
-        what it did before fences could seal anything, and pays nothing for them.
+        animal toward, already clipped into the world and onto the near side of any wire. The null
+        option is the last column.
     """
 
-    def __init__(
-        self, selection: Selection, x: np.ndarray, y: np.ndarray, reachable: np.ndarray | None
-    ) -> None:
+    def __init__(self, selection: Selection, x: np.ndarray, y: np.ndarray) -> None:
         self.selection = selection
         self.x = x
         self.y = y
-        self.reachable = reachable
         self._scent: Scent | None = None
         self._broadcast: Broadcast | None = None
         self._perceived: np.ndarray | None = None
         self._genetics: Genetics | None = None
         self._expressed: dict[tuple[int, ...], np.ndarray] = {}
-
-    def only_reachable(self, values: np.ndarray) -> np.ndarray:
-        """`values`, (n, n_options), with every candidate across a fence set to zero (#169).
-
-        **A candidate the animal cannot reach offers nothing.** Before this, one across the wire
-        read whatever lay on the far side, so the animal turned toward it, walked into the fence,
-        was refused by `Movement`, and chose the same way the next tick: a standing pull toward the
-        wire from every drive that reads a field there. A fence has no width, so no `look_ahead` is
-        short enough to stay inside it.
-
-        Every drive applies it, and **where** it applies it is the drive's half of the rule. A drive
-        whose appeal is a perceived amount (food, water, company, a saving) zeroes the *reading*,
-        before `detected` normalises, so its best reachable option still scores 1. Fear and fatigue
-        score the other way round, where zero is the worst option rather than the empty one, so
-        they zero the *appeal*: nothing detected across the wire would otherwise read as perfectly
-        safe, and every frightened penned animal would run at the fence.
-
-        Exact for barriers that seal, which every fence does (`Barriers.enclose`). A ridge is still
-        read through, unpriced: a perception limit recorded in CLAUDE.md §2.5 with its measurement,
-        since walking every candidate costs several times the whole tick.
-        """
-        if self.reachable is None:
-            return values
-        return np.where(self.reachable, values, values.dtype.type(0))
 
     def broadcast(self, scent: Scent) -> Broadcast:
         """`scent.broadcast` of this call's selection, read once and returned read-only.

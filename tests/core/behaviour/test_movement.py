@@ -1130,3 +1130,80 @@ class TestAgilityMustBePaidFor:
                 Barriers(world.terrain),
                 world.water,
             )
+
+
+class TestASlidStepIsPricedAlongTheWire:
+    """#286: a step into a fence at an angle is walked to the wire and then along it. Both legs are
+    the path, so both are charged, climb and wading included, exactly what the same path costs
+    walked as two steps (#113's additivity); and velocity is the displacement that happened."""
+
+    START = (18.25, 20.25)
+    STEP = (4.0, 3.0)
+
+    def world(self, fenced):
+        x = np.arange(GRID, dtype=np.float32)
+        # Rising to the north-east, so both legs climb, with a pool both legs wade through.
+        heights = (0.3 * x[None, :] + 0.2 * x[:, None]).astype(np.float32)
+        depth = np.zeros((GRID, GRID), dtype=np.float32)
+        depth[18:26, 10:30] = 0.7
+        world = World(heights, depth=depth)
+        if fenced:
+            world.movement.barriers.blocked_west[:, 21] = True  # the wire at x = 20.5
+            world.movement.barriers.revision += 1
+        return world
+
+    def path(self):
+        """(bend, stop) as the slide defines them: the bend a margin short of the wire, measured
+        perpendicular to it, on the straight step; the stop at the step's own y."""
+        from core.world.barriers import WIRE_MARGIN
+
+        (x, y), (dx, dy) = self.START, self.STEP
+        to_bend = (20.5 - WIRE_MARGIN - x) / dx
+        bend = (x + dx * to_bend, y + dy * to_bend)
+        return bend, (bend[0], y + dy)
+
+    def spent(self, world, walker, target, length, pace=0.4):
+        world.genetics.set_genes(walker, self.genes(length / pace))
+        before = float(world.energy(walker)[0])
+        world.step_toward(walker, target[0], target[1], pace)
+        return before - float(world.energy(walker)[0])
+
+    @staticmethod
+    def genes(speed):
+        genes = np.zeros((1, len(GENE_NAMES)), dtype=np.float32)
+        genes[:, GENE_NAMES.index("speed")] = speed
+        genes[:, GENE_NAMES.index("size")] = 1.0
+        genes[:, GENE_NAMES.index("agility")] = _NIMBLE
+        return genes
+
+    def test_it_lands_where_the_slide_says_and_carries_what_happened(self):
+        world = self.world(fenced=True)
+        walker = world.place(*self.START, speed=5.0 / 0.4)
+        (_bend, stop) = self.path()
+
+        world.step_toward(walker, self.START[0] + 4.0, self.START[1] + 3.0, pace=0.4)
+
+        x, y, _z = world.position(walker)
+        assert (x[0], y[0]) == (pytest.approx(stop[0], abs=1e-5), pytest.approx(stop[1], abs=1e-5))
+        rows = walker.to_indices()
+        assert world.store.velocity_x[rows][0] == pytest.approx(stop[0] - self.START[0], abs=1e-5)
+        assert world.store.velocity_y[rows][0] == pytest.approx(stop[1] - self.START[1], abs=1e-5)
+
+    def test_it_costs_what_the_same_path_costs_in_two_pieces(self):
+        bend, stop = self.path()
+        fenced = self.world(fenced=True)
+        slider = fenced.place(*self.START, speed=1.0)
+        open_world = self.world(fenced=False)
+        first = open_world.place(*self.START, speed=1.0)
+        second = open_world.place(*bend, speed=1.0)
+
+        whole = self.spent(fenced, slider, (self.START[0] + 4.0, self.START[1] + 3.0), 5.0)
+        to_wire = self.spent(
+            open_world, first, bend, np.hypot(bend[0] - self.START[0], bend[1] - self.START[1])
+        )
+        along_wire = self.spent(open_world, second, stop, stop[1] - bend[1])
+
+        assert whole == pytest.approx(to_wire + along_wire, rel=1e-5)
+        # Not vacuous: the leg along the wire is a real share of the bill, so a slide that walked
+        # it without charging it would fail above.
+        assert along_wire > 0.2 * whole

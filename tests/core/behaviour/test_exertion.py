@@ -331,7 +331,7 @@ def urgency(world, selection):
     mask = selection.to_mask()
     here_x = world.store.x[mask].astype(np.float64)[:, None]
     here_y = world.store.y[mask].astype(np.float64)[:, None]
-    return world.fatigue.urgency(selection, Candidates(selection, here_x, here_y, None))
+    return world.fatigue.urgency(selection, Candidates(selection, here_x, here_y))
 
 
 class TestFatigueReadsBoth:

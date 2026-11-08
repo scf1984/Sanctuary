@@ -1316,37 +1316,63 @@ by" hunger and no animal stands still merely because the drive that won has no m
   crossings, a segment steps clean over a fence in its middle. And a step that lands exactly *on* a
   cell boundary indexes to the cell beyond it, so stopping on the line reads as already through.
   Measured before both were fixed: a 39×39 pen lost 3 of 20 penned animals per 100 ticks and gained
-  strangers at the same rate, while every direct test of the barrier passed. The walk now visits
-  both lattices and stops a thousandth of a cell short of the wire.
+  strangers at the same rate, while every direct test of the barrier passed. A ray is walked over
+  the cell edges, asked at each crossing from the segment's middle (an end sits on a line, which
+  indexes to the far cell), and stopped a thousandth of a cell short of the wire.
+
+  **One crossing finder: `Barriers.reach`** (#278). Where a straight line meets a wire is one
+  question, asked by `Movement`, which cuts each step there before pricing it, and by `Behaviour`,
+  which places candidates there (below). Two finders would be two answers. It walks only rays that
+  two summed-area box queries cannot rule out — any wire within the longest ray of the start, then
+  any in the box the ray's two end cells span — which is what keeps it from the 2.7–7.6 s per tick
+  #169 measured for walking every candidate. Moving the check out of the walk made `Movement.step`
+  cheaper with pens up (210–218 ms to 168–172 ms at 100,000 animals, four pens).
 
   **Measured** (§8.5): over 400 ticks with the population growing from 133 to about 1,200 outside,
   **not one animal crossed in either direction**.
 
-  **A fence seals, so the grid falls into regions, and a candidate in another region offers
-  nothing** — settled in #169 (the owner's option E). `enclose` always draws a closed rectangle, so
-  `Barriers.regions` labels each cell with the sealed region it lies in, recomputed only when
-  `revision` moves (6 ms on 256×256 with four pens). `Behaviour` marks each candidate reachable or
-  not on the one `Candidates` object every drive reads (#258), and **every drive** — hunger,
-  thirst, lust, fear, fatigue and thermal — scores an unreachable candidate at zero. An unfenced
-  world is one region and computes exactly what it did before, bit for bit, and pays nothing; a
-  fenced one pays about 40 ms a tick at 100,000 animals for marking and masking the candidates.
+  **A fence seals, so the grid falls into regions** (#169). `enclose` always draws a closed
+  rectangle, so `Barriers.regions` labels each cell with the sealed region it lies in, recomputed
+  only when `revision` moves (6 ms on 256×256 with four pens). Contact (#276) and scent (#139) ask
+  it; candidates no longer need to.
 
-  The defect it removes is a standing pull toward the wire. A fence has no width, so no
-  `look_ahead` is short enough to stay inside it: in a 20×20 pen 24% of candidates end beyond it,
-  and each read the far side's field, so the animal turned toward food, water or a mate it could
-  never reach, walked into the wire, was refused, and chose the same way the next tick. In #27's
-  fenced run, penned animals stood in the ring of cells just inside the wire at **3.1–4.0×** that
-  ring's share of the pen; with the gate, **0.5–0.7×**
-  ([`docs/spikes/fence-perception.md`](docs/spikes/fence-perception.md)). The gate overshoots
-  into a mild repulsion, because an option worth nothing loses to any option worth something;
-  the world edge avoids that by clipping a candidate onto the rim rather than discarding it, and
-  doing the same at a fence is #278.
+  **A candidate across a wire is read where the wire would stop the animal** — settled in #278 (the
+  owner's decision), replacing #169's gate. A fence has no width, so no `look_ahead` stays inside
+  it: before #169 a candidate beyond the wire read the far side, so the animal turned toward food,
+  water or a mate it could never reach, walked into the wire and chose the same way next tick
+  (wire ring 3.1–4.0× its share of the pen in #27's fenced run). #169 scored such a candidate at
+  zero for every drive, which overshot into a repulsion (0.15–0.80× over six seeds), since an option
+  worth nothing loses to any option worth something. #278 moves the candidate back along its own
+  straight path to `reach`'s stopping point, as the rim clips one onto itself, so every candidate
+  lies in its animal's region and the gate, with its per-drive "zero is what an option offers"
+  rule, was deleted rather than kept as a check that cannot fire (§8.2). Same-seed identical in an
+  unfenced world; **MAJOR** in a fenced one. Cost: placing candidates goes from 27 ms to 86–89 ms
+  with four pens at 100,000 animals, against the 40 ms the gate cost, so `choose()` is unchanged
+  within noise.
 
-  **Zero is what an option offers, not always what it reads.** For a drive that perceives an
-  amount (food, water, company, a thermal saving) the two coincide, and the reading is zeroed
-  before `detected` normalises, so the best option the animal *can* reach still scores 1. Fear and
-  fatigue score the other way round, so they zero the appeal: read literally, "nothing detected
-  across the wire" is *perfectly safe*, and every frightened penned animal would run at the fence.
+  **It does not hold the wire band at 1.0; it pulls**, measured and recorded rather than tuned
+  around (§8.5). Over six seeds the wire ring reads **1.57–3.41× (mean 2.27)**, against
+  1.50–1.99× for the rim band in the same runs: #209's 1.01 at the rim was an indifferent
+  population, and the live rim crowds too. The excess over the rim has a cause that predates #278:
+  `Movement` stops a step dead on the wire where the rim's per-axis clip slides it along, so a wire
+  holds even a population with no drives at 1.21–1.45× against the rim's 0.81–0.97×. Truncating the
+  candidate along its ray then makes every outward option at the wire a near-copy of staying put —
+  #209's fold, at a fence — and the share of penned animals that chose to travel and went nowhere
+  doubles in the ring (7–10% to 14–17%) ([`docs/spikes/fence-perception.md`](docs/spikes/fence-perception.md) §6).
+
+  **So a wire slides, exactly as the rim does** — settled in #286 (the owner's decision, option
+  B+T). At the first blocked crossing a step bends a `WIRE_MARGIN` short of the wire, measured
+  across it, drops the component normal to it and walks the rest along it, stopping short of a
+  corner (`Barriers.slide`). The rule acts in **three** places, and all three are needed:
+  where a step lands (`Movement.step`), where a candidate is read (`candidate_positions`), and the
+  steering target (`chosen_target`). Sliding only the first two left an animal steering into the
+  wire every tick and creeping along it at `speed × sin(angle)`, so the ring stayed at 1.33× with
+  no drives. Both legs are priced exactly (climb and #143's drag, out of what the first leg left),
+  and velocity is the net displacement (#204). Over six seeds the wire ring reads **0.93× the rim
+  band** in the live world (stop: 1.35×) and **0.90 with no drives** against the rim's 0.89. No
+  animal runs laps: the longest single visit covers at most a fifth of the ring. Cost about 45 ms
+  per tick at 100,000 animals with four pens, none unfenced, and same-seed identical unfenced;
+  **MAJOR** in a fenced world (`fence-perception.md` §7).
 
   **Ridges stay unpriced in perception**, and that is a decision with its measurement rather than
   an oversight (#169). A candidate is read where it lands, not along the way, so it does not see a
