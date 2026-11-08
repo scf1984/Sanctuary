@@ -166,6 +166,15 @@ class CostAwareDiffusion:
         )
         self._built_for_revision = -1 if self.barriers is None else self.barriers.revision
 
+    @property
+    def stale(self) -> bool:
+        """Whether a fence has gone up or come down since this operator last spread anything.
+
+        Public for a field spread once and read for ever (`Hydration.reachable`), which has no
+        per-tick `spread` to notice the change for it (#275).
+        """
+        return self.barriers is not None and self.barriers.revision != self._built_for_revision
+
     def spread(self, source: np.ndarray) -> np.ndarray:
         """``(height, width)`` float32: `source` diffused over the grid it is defined on.
 
@@ -189,7 +198,7 @@ class CostAwareDiffusion:
                 f"source must cover the terrain grid {self.terrain.heights.shape}, "
                 f"got {source.shape}"
             )
-        if self.barriers is not None and self.barriers.revision != self._built_for_revision:
+        if self.stale:
             self._rebuild()
 
         field = np.asarray(source, dtype=np.float32)
