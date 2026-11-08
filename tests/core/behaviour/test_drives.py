@@ -1713,13 +1713,14 @@ class TestAllFiveDrivesCompeting:
                 climb_tolerance=CLIMB_TOLERANCE,
             )))
 
-    def _terrified_and_hungry(self, with_predator, predator_x=10.0):
+    def _terrified_and_hungry(self, with_predator, predator_x=10.5):
         world = FearWorld(grid=21, capacity=16)
+        # At the centre of cell (10, 10), the meadow's row (#162).
         prey = world.spawn_as(
             0,
             1,
-            x=np.float32([10.0]),
-            y=np.float32([10.0]),
+            x=np.float32([10.5]),
+            y=np.float32([10.5]),
             energy=np.float32([30.0]),
             health=np.float32([1.0]),
         )
@@ -1729,7 +1730,7 @@ class TestAllFiveDrivesCompeting:
         smellers = prey
         if with_predator:
             predator = world.spawn_as(
-                0, 3, x=np.float32([predator_x] * 3), y=np.float32([10.0] * 3)
+                0, 3, x=np.float32([predator_x] * 3), y=np.float32([10.5] * 3)
             )
             world.genetics.set_genes(predator, gene_rows(*[dangerous()] * 3))
             smellers = prey | predator
@@ -1744,7 +1745,7 @@ class TestAllFiveDrivesCompeting:
 
     def eastward(self, with_predator):
         """Mean cosine of the heading taken over twenty draws: 1 is straight at the meadow."""
-        world, prey = self._terrified_and_hungry(with_predator, predator_x=12.0)
+        world, prey = self._terrified_and_hungry(with_predator, predator_x=12.5)
         row = prey.to_indices()[0]
         progress = []
         for seed in range(20):

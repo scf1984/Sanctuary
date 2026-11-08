@@ -436,21 +436,21 @@ class TestCandidatesStopAtTheWire:
 
     def test_a_candidate_across_the_wire_slides_along_it(self):
         world = World()
-        selection = world.spawn(1, x=np.float32([4.0]), y=np.float32([4.0]))
+        selection = world.spawn(1, x=np.float32([4.5]), y=np.float32([4.5]))
         _headings, open_x, open_y = self.options(world, selection)
-        # A wire between columns 4 and 5 (x = 4.5), half a cell east of the animal.
+        # A wire between columns 4 and 5 (x = 5), half a cell east of the animal.
         world.barriers.blocked_west[:, 5] = True
         world.barriers.revision += 1
 
         _headings, x, y = self.options(world, selection)
 
-        crossing = open_x[0, :NULL] > 4.5
+        crossing = open_x[0, :NULL] > 5.0
         assert 1 < crossing.sum() < N_CANDIDATES, "the wire divides nothing here"
-        assert x[0, :NULL][crossing] == pytest.approx(4.5 - WIRE_MARGIN, abs=1e-12)
+        assert x[0, :NULL][crossing] == pytest.approx(5.0 - WIRE_MARGIN, abs=1e-12)
         assert np.array_equal(y[0, :NULL][crossing], open_y[0, :NULL][crossing])
         assert np.array_equal(x[0, :NULL][~crossing], open_x[0, :NULL][~crossing])
         assert np.array_equal(y[0, :NULL][~crossing], open_y[0, :NULL][~crossing])
-        assert (x[0, NULL], y[0, NULL]) == (4.0, 4.0)
+        assert (x[0, NULL], y[0, NULL]) == (4.5, 4.5)
 
     @pytest.mark.parametrize("seed", range(3))
     def test_every_candidate_lies_on_its_animals_side_of_every_fence(self, seed):
@@ -478,8 +478,8 @@ class TestCandidatesStopAtTheWire:
         steered at the raw point across it, the animal would lean on the wire and slide at only
         the tangential part of its speed, and a population with no drives crowds there."""
         world = World()
-        selection = world.spawn(1, x=np.float32([4.0]), y=np.float32([4.0]))
-        world.barriers.blocked_west[:, 5] = True  # x = 4.5
+        selection = world.spawn(1, x=np.float32([4.5]), y=np.float32([4.5]))
+        world.barriers.blocked_west[:, 5] = True  # x = 5
         world.barriers.revision += 1
         heading = np.pi / 6
         world.travelling(selection, heading)
@@ -489,7 +489,7 @@ class TestCandidatesStopAtTheWire:
 
         target_x, target_y = world.behaviour.chosen_target(selection)
 
-        assert target_x[0] == pytest.approx(4.5 - WIRE_MARGIN, abs=1e-12)
+        assert target_x[0] == pytest.approx(5.0 - WIRE_MARGIN, abs=1e-12)
         # To float32, the precision the stored heading is held at.
         assert target_x[0] == pytest.approx(candidate_x[0, 0], abs=1e-6)
         assert target_y[0] == pytest.approx(candidate_y[0, 0], abs=1e-6)

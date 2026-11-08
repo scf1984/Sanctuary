@@ -449,15 +449,15 @@ def barrier_segments(
     scale_y = screen_height / world_height if world_height > 0 else 0.0
     segments = []
 
-    # A cell centred on a node owns the half-open span around it, so the edge *above* row r sits at
-    # world y = (r - 0.5) * cell. Same for the edge west of column c.
+    # Cell r spans [r, r + 1) cells (#162), so the edge *above* row r sits at world y = r * cell.
+    # Same for the edge west of column c.
     for row, col in zip(*np.nonzero(barriers.blocked_north)):
-        y = (row - 0.5) * cell * scale_y
-        x = (col - 0.5) * cell * scale_x
+        y = row * cell * scale_y
+        x = col * cell * scale_x
         segments.append((int(x), int(y), int(x + cell * scale_x), int(y)))
     for row, col in zip(*np.nonzero(barriers.blocked_west)):
-        x = (col - 0.5) * cell * scale_x
-        y = (row - 0.5) * cell * scale_y
+        x = col * cell * scale_x
+        y = row * cell * scale_y
         segments.append((int(x), int(y), int(x), int(y + cell * scale_y)))
     return segments
 

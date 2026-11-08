@@ -180,9 +180,10 @@ class TestConceiving:
         gametes at the wire would not be an isolation for speciation (#16). The control is
         `test_two_touching_animals_make_one_gestating_row`, at the same spacing."""
         store, species, _, _, conception = make_world()
-        populate(store, species, [(1.25, 1.0), (1.75, 1.0)])
-        # A wire between columns 1 and 2, at x = 1.5.
-        conception.barriers.blocked_west[:, 2] = True
+        # Both inside one contact bucket (`contact_range` 2), so only the wire can part them.
+        populate(store, species, [(0.75, 1.0), (1.25, 1.0)])
+        # A wire between columns 0 and 1, at x = 1.
+        conception.barriers.blocked_west[:, 1] = True
         conception.barriers.revision += 1
 
         conception.conceive(living(store), np.random.default_rng(0))

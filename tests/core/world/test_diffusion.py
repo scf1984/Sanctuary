@@ -151,7 +151,7 @@ class TestTerrainImpedes:
     def test_downhill_carries_further_than_uphill(self):
         """Only *gain* is charged, exactly as §2.5 prices a step: an animal in a valley perceives
         the slope above it less readily than one on the rim perceives the valley floor."""
-        x = np.arange(GRID, dtype=np.float32) * CELL_SIZE
+        x = (np.arange(GRID, dtype=np.float32) + 0.5) * CELL_SIZE
         slope = np.broadcast_to(x * 2.0, (GRID, GRID)).astype(np.float32)
         operator = CostAwareDiffusion(Terrain(slope, CELL_SIZE), config())
 
@@ -177,7 +177,7 @@ class TestTheGradientPointsAtFood:
         field = operator.spread(point_source(column=CENTRE + 5))
 
         # Standing west of the source, looking east.
-        gx, gy = operator.gradient_at(field, np.array([CENTRE * 1.0]), np.array([CENTRE * 1.0]))
+        gx, gy = operator.gradient_at(field, np.array([CENTRE + 0.5]), np.array([CENTRE + 0.5]))
 
         assert gx[0] > 0.0
         assert gy[0] == pytest.approx(0.0, abs=1e-6)
@@ -189,7 +189,7 @@ class TestTheGradientPointsAtFood:
             + point_source(column=CENTRE + 4, strength=8.0)
         )
 
-        gx, _ = operator.gradient_at(field, np.array([CENTRE * 1.0]), np.array([CENTRE * 1.0]))
+        gx, _ = operator.gradient_at(field, np.array([CENTRE + 0.5]), np.array([CENTRE + 0.5]))
 
         assert gx[0] > 0.0
 
@@ -199,7 +199,7 @@ class TestTheGradientPointsAtFood:
             point_source(column=CENTRE - 2) + point_source(column=CENTRE + 8)
         )
 
-        gx, _ = operator.gradient_at(field, np.array([CENTRE * 1.0]), np.array([CENTRE * 1.0]))
+        gx, _ = operator.gradient_at(field, np.array([CENTRE + 0.5]), np.array([CENTRE + 0.5]))
 
         assert gx[0] < 0.0
 
@@ -214,7 +214,7 @@ class TestTheGradientPointsAtFood:
             point_source(column=CENTRE - 5) + point_source(column=CENTRE + 5)
         )
 
-        gx, _ = operator.gradient_at(field, np.array([CENTRE * 1.0]), np.array([CENTRE * 1.0]))
+        gx, _ = operator.gradient_at(field, np.array([CENTRE + 0.5]), np.array([CENTRE + 0.5]))
 
         assert gx[0] < 0.0, "the gradient pointed at the meadow behind the ridge"
 
@@ -229,7 +229,7 @@ class TestTheGradientPointsAtFood:
     def test_the_gradient_is_read_for_a_whole_population_at_once(self):
         operator = CostAwareDiffusion(flat(), config())
         field = operator.spread(point_source(column=CENTRE + 5))
-        x = np.full(32, float(CENTRE))
+        x = np.full(32, CENTRE + 0.5)
         y = np.linspace(CENTRE - 3.0, CENTRE + 3.0, 32)
 
         gx, gy = operator.gradient_at(field, x, y)
@@ -242,7 +242,7 @@ class TestTheGradientPointsAtFood:
         gradient has to be defined there rather than raising or reading off-grid."""
         operator = CostAwareDiffusion(flat(), config())
         field = operator.spread(point_source(row=CENTRE, column=CENTRE))
-        edge = (GRID - 1) * CELL_SIZE
+        edge = GRID * CELL_SIZE
 
         gx, gy = operator.gradient_at(field, np.array([0.0, edge]), np.array([0.0, edge]))
 
