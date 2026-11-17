@@ -198,7 +198,11 @@ by" hunger and no animal stands still merely because the drive that won has no m
   1. Free-list row reuse, so churn does not grow capacity — only a new high-water mark does.
   2. Growth checked at tick boundaries only, never mid-tick, so no vectorized op holds a view into
      an array being resized. This is the real bug risk, more than the stall.
-  3. Preemptive growth during offline catch-up, sized from the high-water mark plus headroom.
+  3. Preemptive growth during offline catch-up, sized from the high-water mark plus headroom —
+     **held in reserve since #32, by measurement** (§8.5). Doubling a 100,000-row store takes
+     16 ms, against roughly 3 s for one tick at that size (#258), and growth happens about
+     log₂(n) times in a run. A 1,500-tick demo catch-up grew once and spent nothing measurable
+     doing it. There is no pause for it to remove.
   4. Chunked paging held in reserve, only if measurement shows real hitches.
 - **Population is emergent, and the only way to know what a world holds is to run it.** Carrying
   capacity is area × primary productivity ÷ per-animal upkeep in the same sense that a thrown
@@ -239,6 +243,26 @@ by" hunger and no animal stands still merely because the drive that won has no m
 - Wake schedule is **configurable per world** and may decay (hourly for a day, then daily, etc.).
 - **The schedule controls when compute happens, not how fast the world moves.** Waking hourly and
   then daily batches the same ticks differently; it must not make the world age more slowly.
+- **There is one execution path, and watching is a short interval on it** — gate 2 on #35, decided
+  by the owner and built in #32 (`scheduler/`). A watched world is not run by a real-time loop. It
+  is caught up by the same executor as an absent one, waking every `watched_interval` seconds
+  instead of on the decaying absence stages. A live loop would be a second path that §2.4 would
+  then require to be indistinguishable from the first. What this costs is immediacy: an
+  intervention lands at the next batch boundary.
+- **Ticks owed are computed from a fixed anchor**, one moment at which both the real clock and the
+  tick were known (`scheduler.Anchor`), never from the gap since the last wake. Summing per-wake
+  gaps rounds at every wake, so a schedule that woke more often would lose more fractions of a
+  tick and the world would age at a rate set by the schedule. The anchor outlives the process: a
+  service that restarts keeps it beside the snapshot, so the world owes its downtime too.
+- **Catch-up is identical to live play, not merely statistically equivalent.** `TickLoop.advance`
+  runs the same systems over the same ticks however they are batched, so one call, single ticks
+  and uneven chunks reach the same state bit for bit (`tests/scheduler/test_catchup.py`). A
+  statistical test is the fallback §2.8 describes for when that stops holding, and if it ever
+  does, something broke. A collapsed world owes nothing more (§2.7), since its ticks are owed to
+  nobody.
+- **The scheduler never reads a clock.** The process serving the world passes `now` in, which
+  keeps the arithmetic testable and keeps the one wall-clock read outside both `core/` and
+  `scheduler/`.
 - **Standing policies** let the player pre-authorize action while away: auto-cull above a threshold,
   hold fences closed, emergency feed. Without these, a crash on day 3 of an absence is an obituary
   rather than a decision.

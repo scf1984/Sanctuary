@@ -29,9 +29,10 @@ viewer = [
 # core/, metrics/, persistence/, worlds/ and api/ are the installable packages (see CLAUDE.md §4).
 # `metrics/` reads `core/` and never the reverse — a world that cannot be observed is a smaller loss
 # than one that cannot run without an observer — so `core/` stays importable standalone. `api/` is
-# what a client installs against (#35), and `worlds/` is the content it opens by name.
+# what a client installs against (#35), `worlds/` is the content it opens by name, and `scheduler/`
+# decides when a served world catches up (#32).
 [tool.setuptools.packages.find]
-include = ["core*", "metrics*", "persistence*", "worlds*", "api*"]
+include = ["core*", "metrics*", "persistence*", "worlds*", "api*", "scheduler*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -66,7 +67,7 @@ ignore_missing_imports = true
 # logic out of app.py into pygame-free modules *so that it could be tested*, and that only pays off
 # if the gate can see whether it is. tools/ is checked by running it.
 [tool.coverage.run]
-source = ["core", "metrics", "persistence", "worlds", "api", "clients"]
+source = ["core", "metrics", "persistence", "worlds", "api", "scheduler", "clients"]
 # app.py is the one exemption, and only because CI cannot import it: the viewer extra is never
 # installed headless (CLAUDE.md §3.2), so `import pygame` fails and it would report a permanent false
 # zero. It is far over the gate's too-small-to-judge cutoff, so the size rule in

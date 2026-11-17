@@ -124,5 +124,5 @@ jobs:
       - run: ruff check .
       # api/ too: it is the contract every client is written against (#35), so a type error in it
       # is a broken promise to code this repository cannot see.
-      - run: mypy core api
+      - run: mypy core api scheduler
 
