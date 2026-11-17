@@ -27,9 +27,12 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Iterator, Protocol
+from typing import TYPE_CHECKING, Iterator, Protocol
 
-from api import Status
+if TYPE_CHECKING:
+    # For annotations only. `api` carries `Progress` to its clients, so importing `api` here at
+    # runtime would be a cycle: api -> worlds -> scheduler -> api.
+    from api.values import Status
 
 
 class Advanceable(Protocol):
@@ -75,7 +78,12 @@ class Anchor:
 
 @dataclass(frozen=True)
 class Progress:
-    """How far one catch-up has got: `done` of `owed` ticks, and where the world now stands."""
+    """How far one catch-up has got: `done` of `owed` ticks, and where the world now stands.
+
+    `api` carries it to clients, because a served world announces every chunk on its event stream
+    (#36). A long absence can take minutes to pay off, and a client showing that wants to say how
+    far it has got.
+    """
 
     done: int
     owed: int

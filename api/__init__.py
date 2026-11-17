@@ -18,6 +18,7 @@ from api.values import (
     Frame,
     GeneReading,
     Ledger,
+    Progress,
     Quote,
     Record,
     Request,
@@ -26,6 +27,9 @@ from api.values import (
     TerrainView,
     WorldInfo,
 )
+
+# Imported after the values it carries, which it reaches through `api.wire`.
+from api.remote import RemoteSession, connect
 
 # The world a client opens when it asks for nothing in particular. Every measurement so far was
 # taken on it, so a view opened with no arguments must still show it.
@@ -46,15 +50,18 @@ __all__ = [
     "Frame",
     "GeneReading",
     "Ledger",
+    "Progress",
     "Quote",
     "Record",
     "Refused",
+    "RemoteSession",
     "Request",
     "Sample",
     "Session",
     "Status",
     "TerrainView",
     "WorldInfo",
+    "connect",
     "create",
     "worlds",
 ]

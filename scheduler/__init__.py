@@ -6,6 +6,6 @@ time in.
 """
 
 from scheduler.catchup import Advanceable, Anchor, CatchUp, Progress
-from scheduler.schedule import Stage, WakeSchedule
+from scheduler.schedule import Pacing, Stage, WakeSchedule
 
-__all__ = ["Advanceable", "Anchor", "CatchUp", "Progress", "Stage", "WakeSchedule"]
+__all__ = ["Advanceable", "Anchor", "CatchUp", "Pacing", "Progress", "Stage", "WakeSchedule"]

@@ -1741,6 +1741,28 @@ It is delivered in stages, so that ecology work is never blocked on infrastructu
 Stage 1 is a hard prerequisite for everything: if `core/` is clean and UI-free, stages 2–4 are
 wrapping work. If it is not, no amount of service code will save it.
 
+**Stage 2 is `service/`** (#36), and these parts of it are settled, the first three by the owner:
+
+- **A client speaks HTTP, plus one server-sent event stream** (gate 1 on #35). Requests carry
+  state, control and interventions: a phone widget is one GET. `GET /events` announces every
+  catch-up chunk as a `Progress`. It is browser-native (`EventSource`) for the game client
+  (#292), and it is one-way because nothing a client says needs a socket.
+- **Standard library only**: `ThreadingHTTPServer`, and one lock held per call and per catch-up
+  chunk, never across a whole catch-up. That is enough for one user and one world. Replacing it
+  sits behind the protocol, where no client can see it.
+- **A served world advances in one place**: the ticker thread, running #32's executor. There is no
+  advance endpoint, and `RemoteSession.advance` raises `Refused`. An open event stream is what
+  "watched" means, and it shortens the wake interval and nothing else. Any request also counts as
+  the player looking, which resets the absence clock that decays the schedule.
+- **One codec, `api.wire`, used by both ends.** A dataclass is encoded from its own definition and
+  tagged with its type's name, so no message shape is written down anywhere twice. Only
+  `api.values`' own types decode. NaN and infinity are refused, since `JSON.parse` rejects them.
+- **A state directory holds the founding and the snapshot.** The founding (`world.json`: the world's
+  name, seed, founders and anchor) is written once and never changes, so it cannot disagree with a
+  newer snapshot. A restart rebuilds the world from it, restores the snapshot, and pays the
+  downtime from the anchor. A snapshot is replaced only once the new one is whole. A hard kill
+  loses everything since the last graceful stop, which is #52's to solve.
+
 ### 3.2 Infrastructure
 
 - **Managed cloud, defined in Terraform.** Compute, managed Postgres, object storage, networking and
