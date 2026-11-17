@@ -13,7 +13,7 @@ import heapq
 
 import numpy as np
 
-from core.world.terrain import Terrain
+from core.world.terrain import Terrain, bilinear_sample
 
 # 8-connected neighbour offsets (row, col): the standard D8 flow model in terrain hydrology.
 _NEIGHBOR_OFFSETS = (
@@ -87,7 +87,12 @@ class Water:
 
     def depth_at(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """Bilinearly interpolated standing-water depth (world units) at world positions."""
-        return _bilinear_sample(self.depth, x, y, self.cell_size)
+        rows, cols = self.depth.shape
+        # Its own extent rather than a Terrain's: `Water` must be rebuildable from its own arrays
+        # for snapshot restore. The grid is the terrain's, so the extent is the same (#162).
+        return bilinear_sample(
+            self.depth, x, y, self.cell_size, cols * self.cell_size, rows * self.cell_size
+        )
 
     def is_drinkable_at(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """Whether a position has standing water a thirsty creature could drink.
@@ -195,35 +200,3 @@ def _flow_accumulation(
         dr, dc = _NEIGHBOR_OFFSETS[idx]
         accumulation[r + dr, c + dc] += accumulation[r, c]
     return accumulation.astype(np.float32)
-
-
-def _bilinear_sample(
-    field: np.ndarray, x: np.ndarray, y: np.ndarray, cell_size: float
-) -> np.ndarray:
-    """Bilinearly interpolate `field` at continuous world positions, matching
-    `Terrain._sample`'s semantics (same grid convention, same out-of-bounds behaviour) without
-    depending on a `Terrain` instance, since `Water` must be reconstructable from its own arrays
-    alone for snapshot restore.
-    """
-    x = np.asarray(x, dtype=np.float64)
-    y = np.asarray(y, dtype=np.float64)
-    rows, cols = field.shape
-    world_width = (cols - 1) * cell_size
-    world_height = (rows - 1) * cell_size
-    in_bounds_x = np.all((x >= 0) & (x <= world_width))
-    in_bounds_y = np.all((y >= 0) & (y <= world_height))
-    if not (in_bounds_x and in_bounds_y):
-        raise ValueError("position outside water field bounds")
-
-    gx = x / cell_size
-    gy = y / cell_size
-    col0 = np.floor(gx).astype(np.int64)
-    row0 = np.floor(gy).astype(np.int64)
-    col1 = np.minimum(col0 + 1, cols - 1)
-    row1 = np.minimum(row0 + 1, rows - 1)
-    fx = gx - col0
-    fy = gy - row0
-
-    top = field[row0, col0] * (1 - fx) + field[row0, col1] * fx
-    bottom = field[row1, col0] * (1 - fx) + field[row1, col1] * fx
-    return top * (1 - fy) + bottom * fy

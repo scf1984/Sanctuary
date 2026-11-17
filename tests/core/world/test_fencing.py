@@ -89,19 +89,19 @@ class TestCrossingQuery:
         barriers = Barriers(flat())
         barriers.blocked_west[:, 6] = True
 
-        assert not barriers.crossing_blocked(*at((5.2, 5.0)), *at((5.4, 5.0)))[0]
+        assert not barriers.crossing_blocked(*at((5.6, 5.5)), *at((5.9, 5.5)))[0]
 
     def test_a_move_across_a_blocked_edge_is_blocked(self):
         barriers = Barriers(flat())
         barriers.blocked_west[:, 6] = True
 
-        assert barriers.crossing_blocked(*at((5.4, 5.0)), *at((5.6, 5.0)))[0]
+        assert barriers.crossing_blocked(*at((5.9, 5.5)), *at((6.1, 5.5)))[0]
 
     def test_a_move_across_an_open_edge_is_not(self):
         barriers = Barriers(flat())
         barriers.blocked_west[:, 6] = True
 
-        assert not barriers.crossing_blocked(*at((7.4, 5.0)), *at((7.6, 5.0)))[0]
+        assert not barriers.crossing_blocked(*at((7.9, 5.5)), *at((8.1, 5.5)))[0]
 
     def test_a_diagonal_is_blocked_if_either_component_edge_is(self):
         """A fence corner has no gap in it; permitting the diagonal would let animals leak through
@@ -109,7 +109,7 @@ class TestCrossingQuery:
         barriers = Barriers(flat())
         barriers.blocked_north[6, :] = True
 
-        assert barriers.crossing_blocked(*at((5.4, 5.4)), *at((5.6, 5.6)))[0]
+        assert barriers.crossing_blocked(*at((5.9, 5.9)), *at((6.1, 6.1)))[0]
 
 
 def ray(start, heading, distance):
@@ -138,16 +138,16 @@ class TestHowFarARayGets:
     def test_an_unfenced_world_lets_every_ray_run_its_full_length(self):
         barriers = Barriers(flat())
 
-        x, y, ux, uy, distance = ray((5.0, 5.0), np.linspace(0.0, 6.0, 7), 4.0)
+        x, y, ux, uy, distance = ray((5.5, 5.5), np.linspace(0.0, 6.0, 7), 4.0)
 
         assert np.array_equal(barriers.reach(x, y, ux, uy, distance), distance)
 
     def test_a_ray_into_the_wire_stops_a_margin_short_of_it(self):
         barriers = Barriers(flat())
-        barriers.blocked_west[:, 6] = True  # the wire at x = 5.5
+        barriers.blocked_west[:, 6] = True  # the wire at x = 6
         barriers.revision += 1
 
-        free = barriers.reach(*ray((4.0, 5.0), 0.0, 4.0))
+        free = barriers.reach(*ray((4.5, 5.5), 0.0, 4.0))
 
         assert free[0] == pytest.approx(1.5 - WIRE_MARGIN, abs=1e-12)
 
@@ -156,14 +156,14 @@ class TestHowFarARayGets:
         barriers.blocked_west[:, 6] = True
         barriers.revision += 1
 
-        assert barriers.reach(*ray((4.0, 5.0), 0.0, 1.2))[0] == 1.2
+        assert barriers.reach(*ray((4.5, 5.5), 0.0, 1.2))[0] == 1.2
 
     def test_a_ray_along_the_wire_is_not_stopped_by_it(self):
         barriers = Barriers(flat())
         barriers.blocked_west[:, 6] = True
         barriers.revision += 1
 
-        assert barriers.reach(*ray((5.3, 2.0), np.pi / 2, 4.0))[0] == 4.0
+        assert barriers.reach(*ray((5.8, 2.5), np.pi / 2, 4.0))[0] == 4.0
 
     def test_a_ray_ending_exactly_on_the_wire_is_stopped_short_of_it(self):
         """A point on the line indexes to the cell beyond it, so arriving there is being through."""
@@ -171,7 +171,7 @@ class TestHowFarARayGets:
         barriers.blocked_west[:, 6] = True
         barriers.revision += 1
 
-        free = barriers.reach(*ray((4.0, 5.0), 0.0, 1.5))
+        free = barriers.reach(*ray((4.5, 5.5), 0.0, 1.5))
 
         assert free[0] == pytest.approx(1.5 - WIRE_MARGIN, abs=1e-12)
 
@@ -179,10 +179,10 @@ class TestHowFarARayGets:
         """Both ends lie outside the pen, in one region, so comparing regions would let it through;
         its straight path still crosses the wire twice."""
         barriers = Barriers(flat())
-        barriers.enclose(5.0, 5.0, 10.0, 10.0)  # wires at 4.5 and 9.5 on both axes
-        # In through the west wire at y = 4.62, out through the south one at x = 4.82.
+        barriers.enclose(5.0, 5.0, 10.0, 10.0)  # wires at 5 and 10 on both axes
+        # In through the west wire at y = 5.12, out through the south one at x = 5.32.
         heading = -np.pi / 9
-        x, y, ux, uy, distance = ray((4.0, 4.8), heading, 2.0)
+        x, y, ux, uy, distance = ray((4.5, 5.3), heading, 2.0)
         assert barriers.same_region(x, y, x + ux * distance, y + uy * distance)[0]
 
         free = barriers.reach(x, y, ux, uy, distance)
@@ -200,8 +200,8 @@ class TestHowFarARayGets:
         barriers.revision += 1
         n = 40
         # Starts well inside a cell, as a body always is: nowhere within the margin of a line.
-        x = np.round(rng.uniform(2.0, 14.0, n)) + 0.25
-        y = np.round(rng.uniform(2.0, 14.0, n)) - 0.25
+        x = np.round(rng.uniform(2.0, 14.0, n)) + 0.75
+        y = np.round(rng.uniform(2.0, 14.0, n)) + 0.25
         heading = rng.uniform(0.0, 2.0 * np.pi, n)
         ux, uy = np.cos(heading), np.sin(heading)
         distance = rng.uniform(0.0, 2.0, n)
@@ -227,7 +227,7 @@ def slid(barriers, start, end):
     return float(first[0]), float(stop_x[0]), float(stop_y[0])
 
 
-def wire_at_x_5_5():
+def wire_at_x_6():
     barriers = Barriers(flat())
     barriers.blocked_west[:, 6] = True
     barriers.revision += 1
@@ -240,35 +240,35 @@ class TestSlidingAlongTheWire:
     per axis. The path is two straight legs, start to bend and bend to stop, and both are walked."""
 
     def test_a_ray_into_the_wire_slides_along_it(self):
-        first, stop_x, stop_y = slid(wire_at_x_5_5(), (4.0, 5.0), (6.0, 7.0))
+        first, stop_x, stop_y = slid(wire_at_x_6(), (4.5, 5.5), (6.5, 7.5))
 
         # The bend is a margin short of the line *perpendicular to it*, on the ray, and the rest of
         # the step keeps only its component along the wire.
         assert first == pytest.approx((1.5 - WIRE_MARGIN) * np.sqrt(2.0), abs=1e-12)
-        assert stop_x == pytest.approx(5.5 - WIRE_MARGIN, abs=1e-12)
-        assert stop_y == 7.0
+        assert stop_x == pytest.approx(6.0 - WIRE_MARGIN, abs=1e-12)
+        assert stop_y == 7.5
 
     def test_a_ray_straight_into_the_wire_stops_where_reach_stops_it(self):
-        first, stop_x, stop_y = slid(wire_at_x_5_5(), (4.0, 5.0), (6.0, 5.0))
+        first, stop_x, stop_y = slid(wire_at_x_6(), (4.5, 5.5), (6.5, 5.5))
 
         assert first == pytest.approx(1.5 - WIRE_MARGIN, abs=1e-12)
-        assert stop_x == pytest.approx(5.5 - WIRE_MARGIN, abs=1e-12)
-        assert stop_y == 5.0
+        assert stop_x == pytest.approx(6.0 - WIRE_MARGIN, abs=1e-12)
+        assert stop_y == 5.5
 
     def test_a_pen_corner_stops_it(self):
         barriers = Barriers(flat())
-        barriers.enclose(5.0, 5.0, 10.0, 10.0)  # wires at 4.5 and 9.5 on both axes
+        barriers.enclose(5.0, 5.0, 10.0, 10.0)  # wires at 5 and 10 on both axes
 
-        _first, stop_x, stop_y = slid(barriers, (9.0, 9.0), (10.5, 10.0))
+        _first, stop_x, stop_y = slid(barriers, (9.5, 9.5), (11.0, 10.5))
 
-        assert stop_x == pytest.approx(9.5 - WIRE_MARGIN, abs=1e-12)
-        assert stop_y == pytest.approx(9.5 - WIRE_MARGIN, abs=1e-12)
+        assert stop_x == pytest.approx(10.0 - WIRE_MARGIN, abs=1e-12)
+        assert stop_y == pytest.approx(10.0 - WIRE_MARGIN, abs=1e-12)
 
     def test_a_ray_nothing_blocks_is_returned_exactly(self):
         """Bit for bit, so an animal no wire touches moves exactly as in an unfenced world."""
-        barriers = wire_at_x_5_5()
-        x, y = at((4.0, 5.0), (7.0, 2.0), (1.0, 1.0))
-        end_x, end_y = at((5.3, 7.1), (9.9, 2.2), (1.0, 1.0))
+        barriers = wire_at_x_6()
+        x, y = at((4.5, 5.5), (7.5, 2.5), (1.5, 1.5))
+        end_x, end_y = at((5.8, 7.6), (10.4, 2.7), (1.5, 1.5))
 
         first, stop_x, stop_y = barriers.slide(x, y, end_x, end_y)
 
@@ -285,8 +285,8 @@ class TestSlidingAlongTheWire:
         barriers.blocked_west[...] = rng.random((17, 17)) < 0.2
         barriers.revision += 1
         n = 60
-        x = np.round(rng.uniform(2.0, 14.0, n)) + 0.25
-        y = np.round(rng.uniform(2.0, 14.0, n)) - 0.25
+        x = np.round(rng.uniform(2.0, 14.0, n)) + 0.75
+        y = np.round(rng.uniform(2.0, 14.0, n)) + 0.25
         heading = rng.uniform(0.0, 2.0 * np.pi, n)
         length = rng.uniform(0.0, 2.0, n)
         ux, uy = np.cos(heading), np.sin(heading)
@@ -440,7 +440,7 @@ class TestSealedRegions:
         barriers = Barriers(flat())
         barriers.enclose(5.0, 5.0, 10.0, 10.0)
 
-        inside, outside, also_inside = (7.0, 7.0), (3.0, 7.0), (9.4, 5.0)
+        inside, outside, also_inside = (7.5, 7.5), (3.5, 7.5), (9.9, 5.5)
 
         assert barriers.same_region(*at(inside, inside), *at(also_inside, outside)).tolist() == [
             True,
@@ -472,7 +472,7 @@ class TestPerceptionRoutesAround:
         unfenced = diffusion.spread(self.source())[10, 11]
         assert unfenced > 0.0
 
-        barriers.enclose(8.5, 0.5, 13.5, 20.5)
+        barriers.enclose(9.0, 1.0, 14.0, 21.0)
 
         assert diffusion.spread(self.source())[10, 11] / unfenced < 1e-4
 
@@ -482,7 +482,7 @@ class TestPerceptionRoutesAround:
         diffusion = self.field(barriers)
         diffusion.spread(self.source())
 
-        barriers.enclose(8.5, 0.5, 13.5, 20.5)
+        barriers.enclose(9.0, 1.0, 14.0, 21.0)
         diffusion.spread(self.source())
 
         assert diffusion._built_for_revision == barriers.revision
@@ -491,7 +491,7 @@ class TestPerceptionRoutesAround:
         barriers = Barriers(flat())
         diffusion = self.field(barriers)
         before = diffusion.spread(self.source())
-        barriers.enclose(8.5, 0.5, 13.5, 20.5)
+        barriers.enclose(9.0, 1.0, 14.0, 21.0)
         diffusion.spread(self.source())
 
         barriers.clear()
@@ -521,20 +521,20 @@ class TestMovementRefusesRatherThanPays:
         living = Selection.from_mask(world.store.alive & (world.store.age >= 0))
         rows = living.to_indices()
         world.store.x[rows] = x
-        world.store.y[rows] = 30.0
+        world.store.y[rows] = 30.5
         world.store.energy[rows] = 5000.0
         world.store.velocity_x[rows] = 0.0
         world.store.velocity_y[rows] = 0.0
         return world, living, rows
 
     def drive_east(self, world, living, rows, ticks):
-        target_x = np.full(rows.size, 60.0)
-        target_y = np.full(rows.size, 30.0)
+        target_x = np.full(rows.size, 60.5)
+        target_y = np.full(rows.size, 30.5)
         for _ in range(ticks):
             world.movement.step(living, target_x, target_y, np.full(rows.size, 5.0))
 
     def test_an_animal_walks_up_to_the_fence_and_stops(self):
-        world, living, rows = self.walker(18.0)
+        world, living, rows = self.walker(18.5)
 
         self.drive_east(world, living, rows, ticks=8)
 
@@ -542,45 +542,45 @@ class TestMovementRefusesRatherThanPays:
         assert set(cols.tolist()) == {20}
 
     def test_it_stops_short_of_the_line_rather_than_on_it(self):
-        """A cell owns the half-open span around its centre, so a position landing exactly on the
+        """A cell owns the half-open span `[c, c + 1)`, so a position landing exactly on the
         boundary indexes to the cell *beyond* it — and the walk puts an animal exactly there on
         every ordinary pass. Stopping on the line reads as already through."""
-        world, living, rows = self.walker(18.0)
+        world, living, rows = self.walker(18.5)
 
         self.drive_east(world, living, rows, ticks=8)
 
-        assert np.all(world.store.x[rows] < 20.5)
+        assert np.all(world.store.x[rows] < 21.0)
 
     def test_a_candidate_toward_the_wire_is_read_exactly_where_the_walk_stops(self):
         """One crossing finder for both (#278): the option an animal scores is the ground it would
         be standing on, not a point a hair to either side of it."""
-        world, living, rows = self.walker(18.0)
+        world, living, rows = self.walker(18.5)
         east = np.zeros((rows.size, 1))
         candidate_x, _y = world.behaviour.candidate_positions(living, east)
 
         self.drive_east(world, living, rows, ticks=8)
 
-        assert candidate_x[:, 0] == pytest.approx(20.5 - WIRE_MARGIN, abs=1e-12)
+        assert candidate_x[:, 0] == pytest.approx(21.0 - WIRE_MARGIN, abs=1e-12)
         assert world.store.x[rows] == pytest.approx(candidate_x[:, 0], abs=1e-5)
 
     def test_a_step_into_the_wire_slides_along_it(self):
         """The wire is the rim's rule (#286): heading into it at an angle, an animal keeps the part
         of its step along the wire, rather than being held there by a step that goes nowhere."""
-        world, living, rows = self.walker(18.0)
-        target_x = np.full(rows.size, 60.0)
-        target_y = np.full(rows.size, 60.0)
+        world, living, rows = self.walker(18.5)
+        target_x = np.full(rows.size, 60.5)
+        target_y = np.full(rows.size, 60.5)
         for _ in range(8):
             world.movement.step(living, target_x, target_y, np.full(rows.size, 5.0))
 
-        assert np.all(world.store.x[rows] < 20.5)
-        assert np.all(world.store.x[rows] > 20.5 - 2.0 * WIRE_MARGIN)
-        # Stopped dead, as before #286, every one of them stands at y = 31.8.
-        assert np.all(world.store.y[rows] > 34.0), "pressed into the wire, not sliding along it"
+        assert np.all(world.store.x[rows] < 21.0)
+        assert np.all(world.store.x[rows] > 21.0 - 2.0 * WIRE_MARGIN)
+        # Stopped dead, as before #286, every one of them stands at y = 32.3.
+        assert np.all(world.store.y[rows] > 34.5), "pressed into the wire, not sliding along it"
 
     def test_a_candidate_at_an_angle_is_read_where_the_step_slides_to(self):
         """What an animal reads and where it goes follow one rule: a step whose displacement is a
         candidate's, from a standstill, lands on that candidate, slid along the wire."""
-        world, living, rows = self.walker(19.0)
+        world, living, rows = self.walker(19.5)
         heading = np.full((rows.size, 1), np.pi / 6)
         candidate_x, candidate_y = world.behaviour.candidate_positions(living, heading)
         look_ahead = world.behaviour.config.look_ahead
@@ -600,14 +600,14 @@ class TestMovementRefusesRatherThanPays:
             np.zeros(rows.size),
         )
 
-        assert candidate_x[:, 0] == pytest.approx(20.5 - WIRE_MARGIN, abs=1e-12)
+        assert candidate_x[:, 0] == pytest.approx(21.0 - WIRE_MARGIN, abs=1e-12)
         assert world.store.x[rows] == pytest.approx(candidate_x[:, 0], abs=1e-5)
         assert world.store.y[rows] == pytest.approx(candidate_y[:, 0], abs=1e-5)
 
     def test_it_is_not_charged_for_the_crossing_it_did_not_make(self):
         """Refused, not priced. An animal that paid to cross a fence would empty its pool against
         the wire and die there, so a fence would read as a killing field rather than a boundary."""
-        world, living, rows = self.walker(18.0)
+        world, living, rows = self.walker(18.5)
         self.drive_east(world, living, rows, ticks=8)
         settled = world.store.energy[rows].copy()
 
@@ -618,7 +618,7 @@ class TestMovementRefusesRatherThanPays:
     def test_an_unfenced_world_lets_the_same_animal_through(self):
         """The control: without the fence this walk crosses that column easily, so the test above
         is measuring the barrier rather than an animal that could not get there anyway."""
-        world, living, rows = self.walker(18.0)
+        world, living, rows = self.walker(18.5)
         world.barriers.clear()
 
         self.drive_east(world, living, rows, ticks=8)

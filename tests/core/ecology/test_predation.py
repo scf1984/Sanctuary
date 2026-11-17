@@ -280,10 +280,11 @@ class TestAFenceStopsAStrike:
         """A pen protects what is in it (#276). The control is
         `TestContactIsWhatDecides.test_both_directions_resolve_from_the_same_pre_strike_pools`,
         where the same two animals at the same spacing do wound each other."""
-        world = World(strike_power=40.0)
+        # A strike range of 2 puts both in one contact bucket, so only the wire can part them.
+        world = World(strike_power=40.0, strike_range=2.0)
         pair = world.spawn(
-            {"x": 4.4, "y": 5.0, "flesh": CARNIVORE},
-            {"x": 4.6, "y": 5.0, "flesh": CARNIVORE},
+            {"x": 4.9, "y": 5.5, "flesh": CARNIVORE},
+            {"x": 5.1, "y": 5.5, "flesh": CARNIVORE},
         )
         world.barriers.blocked_west[:, 5] = True
         world.barriers.revision += 1
@@ -337,7 +338,9 @@ class TestPairingByContact:
         return Barriers(Terrain(np.zeros((11, 11), dtype=np.float32), cell_size=1.0))
 
     def wired(self):
-        """A wire down the whole map between columns 4 and 5, at x = 4.5."""
+        """A wire down the whole map between columns 4 and 5, at x = 5. Contact buckets at
+        range 1 would also part there, so the wired tests pair at range 2, with both sides of
+        the wire inside one bucket (`[4, 6)`), and only the regions can keep them apart."""
         barriers = self.unfenced()
         barriers.blocked_west[:, 5] = True
         barriers.revision += 1
@@ -346,9 +349,9 @@ class TestPairingByContact:
     def test_animals_touching_across_a_wire_do_not_pair(self):
         """A fence is a refusal (§2.5): two animals pressed against opposite sides of it are within
         range of each other and still cannot touch (#276)."""
-        x, y = self.positions((4.4, 4.0), (4.6, 4.0))
+        x, y = self.positions((4.9, 4.5), (5.1, 4.5))
 
-        first, _ = pair_by_contact(x, y, np.array([0, 1]), 1.0, np.random.default_rng(1), self.wired())
+        first, _ = pair_by_contact(x, y, np.array([0, 1]), 2.0, np.random.default_rng(1), self.wired())
 
         assert first.shape[0] == 0
 
@@ -356,10 +359,10 @@ class TestPairingByContact:
     def test_an_animal_at_the_wire_pairs_with_its_own_side(self, seed):
         """Bucketed by region, not filtered afterwards: an animal whose bucket also holds a
         stranger across the wire still finds the neighbour beside it, on every shuffle."""
-        x, y = self.positions((4.1, 4.2), (4.4, 4.2), (4.6, 4.2))
+        x, y = self.positions((4.6, 4.7), (4.9, 4.7), (5.1, 4.7))
 
         first, second = pair_by_contact(
-            x, y, np.array([0, 1, 2]), 1.0, np.random.default_rng(seed), self.wired()
+            x, y, np.array([0, 1, 2]), 2.0, np.random.default_rng(seed), self.wired()
         )
 
         assert sorted(first.tolist() + second.tolist()) == [0, 1]

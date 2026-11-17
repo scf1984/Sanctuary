@@ -470,8 +470,7 @@ def _insolation(terrain: Terrain, climate: Climate, config: PlantsConfig) -> np.
     negative. This is self-shadowing only; a mountain does not cast a shadow onto the valley
     behind it, which would need the terrain line-of-sight work that #24 owns.
     """
-    rows = terrain.heights.shape[0]
-    row_y = np.arange(rows, dtype=np.float64) * terrain.cell_size
+    row_y = terrain.row_y
     # Clamped at the horizon: past a quarter turn the sun has set, and letting the angle run on
     # would bring its cosine back up and make the far pole bright again.
     incidence = np.clip(

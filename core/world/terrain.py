@@ -26,8 +26,9 @@ class TerrainConfig:
     """Parameters for reproducible terrain generation.
 
     width, height: grid resolution in cells. World extent in world units is
-        ``(width - 1) * cell_size`` by ``(height - 1) * cell_size`` — callers derive this from
-        climate-zone variety and animal home range (§2.6), never from a fixed constant here.
+        ``width * cell_size`` by ``height * cell_size``, cell edge to cell edge (#162) — callers
+        derive this from climate-zone variety and animal home range (§2.6), never from a fixed
+        constant here.
     min_elevation, max_elevation: output height range, **world units** — the same unit as x, y,
         cell_size and speed (#112). Required rather than defaulted, because relief only means
         something against the extent above, which only the caller knows: the range this replaced
@@ -72,6 +73,15 @@ class TerrainConfig:
 class Terrain:
     """Owns the world's height field and the slope/aspect derived from it.
 
+    **The world spans cell edge to cell edge** (#162). Cell `(r, c)` is the square
+    `[c, c + 1) x [r, r + 1)` in cells, and its node, where `heights[r, c]` is the elevation, sits
+    at its centre, so every cell is a whole cell. The convention this replaced put the nodes on the
+    world's edge, which left a rim cell holding half a cell of world and a corner a quarter. Every
+    per-cell quantity (growth, soil, carrion, a scent deposit) was then twice as dense per unit
+    area along the rim, and the demo world's rim stood at 2.1-2.3x the interior's standing crop.
+    The reflecting kernels of the forage field and the scent field mirror about the outer edge of
+    a cell, which is now the world's edge as well.
+
     heights: (height, width) float32, world units — the same unit as `cell_size`, so a slope is a
              ratio of two quantities in one unit and `climb_cost` is comparable to
              `transport_cost` (#112).
@@ -106,13 +116,23 @@ class Terrain:
 
     @property
     def world_width(self) -> float:
-        """Extent along x in world units."""
-        return (self.heights.shape[1] - 1) * self.cell_size
+        """Extent along x in world units: every column is one whole cell."""
+        return self.heights.shape[1] * self.cell_size
 
     @property
     def world_height(self) -> float:
-        """Extent along y in world units."""
-        return (self.heights.shape[0] - 1) * self.cell_size
+        """Extent along y in world units: every row is one whole cell."""
+        return self.heights.shape[0] * self.cell_size
+
+    @property
+    def column_x(self) -> np.ndarray:
+        """`(width,) float64`, world units: the x of each column's centre, where its node sits."""
+        return (np.arange(self.heights.shape[1], dtype=np.float64) + 0.5) * self.cell_size
+
+    @property
+    def row_y(self) -> np.ndarray:
+        """`(height,) float64`, world units: the y of each row's centre, where its node sits."""
+        return (np.arange(self.heights.shape[0], dtype=np.float64) + 0.5) * self.cell_size
 
     def cell_indices(self, x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Grid (row, col) of the cell containing each world position.
@@ -134,10 +154,12 @@ class Terrain:
         ):
             raise ValueError("position outside terrain bounds")
 
-        # floor(v + 0.5) rather than np.round: round() is banker's rounding, so a position exactly
-        # on a cell boundary would land in different cells depending on the boundary's parity.
-        cols = np.floor(x / self.cell_size + 0.5).astype(np.int64)
-        rows = np.floor(y / self.cell_size + 0.5).astype(np.int64)
+        # A cell owns the half-open span [c, c + 1), so a position on an interior edge indexes to
+        # the cell beyond it. The far rim is the one edge with no cell beyond, and belongs to the
+        # last cell: the world is closed, so an animal may stand exactly on it.
+        n_rows, n_cols = self.heights.shape
+        cols = np.minimum(np.floor(x / self.cell_size), n_cols - 1).astype(np.int64)
+        rows = np.minimum(np.floor(y / self.cell_size), n_rows - 1).astype(np.int64)
         return rows, cols
 
     def elevation_at(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
@@ -166,9 +188,17 @@ def bilinear_sample(
 ) -> np.ndarray:
     """Bilinearly interpolate a ``(rows, cols)`` grid field at continuous world positions.
 
-    Shared by any grid-shaped field over the terrain grid (elevation, slope, aspect, and
-    `core.world.climate`'s temperature field) so the interpolation and bounds-check logic exists
-    in exactly one place rather than being re-derived per field.
+    Shared by any grid-shaped field over the terrain grid (elevation, slope, aspect, water depth
+    and `core.world.climate`'s temperature field) so the interpolation and bounds-check logic
+    exists in exactly one place rather than being re-derived per field.
+
+    **Values sit at cell centres, and the outer half cell is flat** (#162). Between two centres
+    the field is bilinear; within half a cell of the world's edge there is no centre beyond to
+    interpolate toward, so the reading holds the rim cell's value. A clamp rather than an
+    extrapolation, because an extrapolated elevation or depth could leave the field's own range,
+    and a flat strip is what the reflecting fields assume lies at the edge anyway: a mirror has
+    zero slope across it. Elevation therefore bends only on the lines through cell centres, which
+    is where `Movement`'s walk samples it (#113).
     """
     x = np.asarray(x, dtype=np.float64)
     y = np.asarray(y, dtype=np.float64)
@@ -178,8 +208,9 @@ def bilinear_sample(
         raise ValueError("position outside terrain bounds")
 
     rows, cols = field.shape
-    gx = x / cell_size
-    gy = y / cell_size
+    # Grid coordinates measured from the first centre, clamped onto the span the centres cover.
+    gx = np.clip(x / cell_size - 0.5, 0.0, cols - 1)
+    gy = np.clip(y / cell_size - 0.5, 0.0, rows - 1)
     col0 = np.floor(gx).astype(np.int64)
     row0 = np.floor(gy).astype(np.int64)
     col1 = np.minimum(col0 + 1, cols - 1)
@@ -193,16 +224,17 @@ def bilinear_sample(
 
 
 def to_next_grid_line(position: np.ndarray, direction: np.ndarray, cell_size: float) -> np.ndarray:
-    """(n,) float64 world units: distance along a unit ray to the next node grid line on one axis.
+    """(n,) float64 world units: distance along a unit ray to the next cell edge on one axis.
 
     `inf` where the ray does not move along this axis, so a minimum against the other axis picks
     the crossing that actually happens. A position sitting exactly on a line returns a whole cell
     rather than zero, which is what stops a walk stalling on it.
 
-    Two walks step along a ray one crossing at a time: `Movement`'s over the node lattice, where
-    elevation bends (#113), and `Barriers.reach` over the cell edges, which are this lattice
-    shifted by half a cell (#27). It lives here, beside `cell_indices`, so the two cannot drift
-    apart.
+    Two walks step along a ray one crossing at a time: `Barriers.reach` over the cell edges, where
+    a fence stands (#27), and `Movement`'s over the lines through cell centres, where elevation
+    bends (#113). The centres are the edges shifted by half a cell (#162), so `Movement` asks
+    about a position shifted back by that half. It lives here, beside `cell_indices`, so the two
+    cannot drift apart.
     """
     cells = position / cell_size
     forward = direction > 0.0

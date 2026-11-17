@@ -120,7 +120,7 @@ SENESCENCE = SenescenceConfig(
 )
 CELL_SIZE = 1.0
 # Relief a tenth of extent, the ratio TerrainConfig asks callers to choose (#112).
-RELIEF = (GRID - 1) * CELL_SIZE / 10.0
+RELIEF = GRID * CELL_SIZE / 10.0
 
 
 def world_config(**overrides):
@@ -133,7 +133,7 @@ def world_config(**overrides):
             cell_size=CELL_SIZE,
             seed=7,
         ),
-        climate=ClimateConfig(equator_y=(GRID - 1) * CELL_SIZE / 2, equator_temperature=30.0),
+        climate=ClimateConfig(equator_y=GRID * CELL_SIZE / 2, equator_temperature=30.0),
         plants=PlantsConfig(
             solar_constant=8.0,
             latitude_tilt=0.0,
@@ -308,7 +308,7 @@ def seasonal_world_config():
     seasons and weather spells — what the batching and ordering tests need to exercise."""
     return world_config(
         climate=ClimateConfig(
-            equator_y=(GRID - 1) * CELL_SIZE / 2,
+            equator_y=GRID * CELL_SIZE / 2,
             equator_temperature=30.0,
             seasons=SeasonsConfig(
                 year_length=20,

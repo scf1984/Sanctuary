@@ -31,16 +31,25 @@ by relief".
 **Nothing here moves biomass.** The field says what is *readable* from where; `Plants.graze` is what
 actually removes a mouthful, and it operates on the source rather than on this.
 
-**Known limitation: a rim of one range-length reads slightly rich.** A cell on the boundary has
-fewer directions to leave by, so a walk starting there is confined and revisits nearby source more
-often than an interior walk does. The stationary distribution is still uniform — the operator is
-symmetric and doubly stochastic, so a *uniform* field stays uniform exactly — but before it settles,
-a cell within about one `range` of the edge reads higher than an equivalent interior cell. Measured
-on flat ground with `range = 4`: a source two cells from a corner leaves the corner at 1.036 against
-0.925 at the source's own cell, so a forager in that corner reads no reason to leave it. Filed as
-#140; it is a property of any reflecting boundary rather than of this parameterisation, and
-the alternative — letting signal drain off the map — trades it for a rim that reads spuriously
-*empty*, which is the worse error because the world's edge would then repel.
+**The world's edge reflects, and that is a decision with a known cost** (#140, kept by the
+owner). A cell on the boundary has fewer directions to leave by, so a walk starting there is
+confined and revisits nearby source more often than an interior walk does. A *uniform* field still
+reads uniform exactly, since the operator is symmetric and doubly stochastic, but a patch within
+about two cells of a corner reads strongest in the corner: on flat ground with `range = 4`, a
+source two cells from a corner leaves the corner at 1.12 times its own cell. Every linear reading
+measured on #140 either reads uniform ground flat or keeps such a patch its own peak, never both:
+
+- *Absorbing* (barren ground beyond the edge) keeps every patch its own peak, but reads uniform
+  ground at 0.33 in a corner and 0.57 along an edge. Rim occupancy halved: the edge repels, which
+  is the worse error.
+- *Normalised* (absorbing, divided by the absorbing spread of a uniform field) is flat on uniform
+  ground and behaves like this reflecting walk near a corner, at a cost every tick, so it buys
+  nothing measurable.
+
+Reflecting also matches the scent kernel (#262), so both fields share one rule at the rim, and both
+mirror about the outer edge of a cell, which is the world's edge since #162. Re-measured after
+#162 over 8 seeds × 2,000 ticks, occupancy of the half unit beside an east or west wall reads
+0.79 ± 0.36 of uniform, short of the ~1.1 that #140 set for revisiting the normalised reading.
 
 Terrain never changes, so the per-edge conductance is computed once at construction and every tick
 pays only for the passes. Those are quadratic in `range` (`_passes_for`), which is the one cost of

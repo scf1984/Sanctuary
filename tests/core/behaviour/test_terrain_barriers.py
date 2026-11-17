@@ -83,7 +83,7 @@ MOVEMENT_CONFIG = MovementConfig(
 
 GRID = 41
 CELL_SIZE = 1.0
-WORLD_SPAN = (GRID - 1) * CELL_SIZE
+WORLD_SPAN = GRID * CELL_SIZE  # cell edge to cell edge (#162)
 
 COHORT_SIZE = 150
 # No cohort here has any reason to hurry, and `Movement.pace` reads a zero advantage over resting
@@ -109,7 +109,7 @@ def flat_heights():
 def ridge_heights(peak):
     """A north-south ridge across the middle of the world: elevation depends on x only, so it is a
     wall an animal heading east must climb over and never a hill it can walk around."""
-    x = np.arange(GRID, dtype=np.float64) * CELL_SIZE
+    x = (np.arange(GRID, dtype=np.float64) + 0.5) * CELL_SIZE  # cell centres, where nodes sit
     profile = peak * np.exp(-(((x - WORLD_SPAN / 2.0) / (WORLD_SPAN / 8.0)) ** 2))
     return np.broadcast_to(profile, (GRID, GRID)).astype(np.float32)
 

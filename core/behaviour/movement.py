@@ -619,11 +619,12 @@ class Movement(DomainService):
 
             at_x = x + unit_x * travelled
             at_y = y + unit_y * travelled
-            # Distance along the ray to the next grid line on each axis; an axis the step does not
-            # move along is never crossed, and `inf` drops it out of the minimum below.
+            # Distance along the ray to the next line through cell centres on each axis, where
+            # elevation and depth bend: the cell edges shifted by half a cell (#162). An axis the
+            # step does not move along is never crossed, and `inf` drops it out of the minimum.
             to_boundary = np.minimum(
-                to_next_grid_line(at_x, unit_x, cell_size),
-                to_next_grid_line(at_y, unit_y, cell_size),
+                to_next_grid_line(at_x - 0.5 * cell_size, unit_x, cell_size),
+                to_next_grid_line(at_y - 0.5 * cell_size, unit_y, cell_size),
             )
             left = distance - travelled
             # On the final permitted pass, finish whatever is left in one segment rather than

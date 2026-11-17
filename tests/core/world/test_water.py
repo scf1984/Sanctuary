@@ -144,14 +144,14 @@ class TestQueries:
         water = Water.generate(terrain)
         for row in range(terrain.heights.shape[0]):
             for col in range(terrain.heights.shape[1]):
-                x, y = col * terrain.cell_size, row * terrain.cell_size
+                x, y = terrain.column_x[col], terrain.row_y[row]
                 assert water.depth_at(x, y) == pytest.approx(water.depth[row, col])
 
     def test_is_drinkable_true_in_basin_false_on_rim(self):
         terrain = bowl()
         water = Water.generate(terrain)
-        center_x = (terrain.heights.shape[1] // 2) * terrain.cell_size
-        center_y = (terrain.heights.shape[0] // 2) * terrain.cell_size
+        center_x = terrain.column_x[terrain.heights.shape[1] // 2]
+        center_y = terrain.row_y[terrain.heights.shape[0] // 2]
         assert water.is_drinkable_at(center_x, center_y)
         assert not water.is_drinkable_at(0.0, 0.0)
 

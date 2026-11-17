@@ -193,10 +193,12 @@ class Barriers:
         # row outside. Clipped to the grid, so a rectangle running off the map fences the part of
         # its perimeter that exists rather than raising — a fence against the world's rim is a
         # legitimate thing to draw, and the rim already stops everything anyway.
-        low_col = int(np.clip(np.floor(min_x / cell + 0.5), 0, cols))
-        high_col = int(np.clip(np.floor(max_x / cell + 0.5), 0, cols))
-        low_row = int(np.clip(np.floor(min_y / cell + 0.5), 0, rows))
-        high_row = int(np.clip(np.floor(max_y / cell + 0.5), 0, rows))
+        # Each corner snaps to the cell edge at or below it, which is cell `floor(v / cell)`'s
+        # own west or north edge (#162).
+        low_col = int(np.clip(np.floor(min_x / cell), 0, cols))
+        high_col = int(np.clip(np.floor(max_x / cell), 0, cols))
+        low_row = int(np.clip(np.floor(min_y / cell), 0, rows))
+        high_row = int(np.clip(np.floor(max_y / cell), 0, rows))
         if low_col >= high_col or low_row >= high_row:
             return 0
 
@@ -238,9 +240,9 @@ class Barriers:
         would be standing on. Two finders would be two answers to one question, and a candidate a
         hair past the point the walk stops would read the far side of the wire.
 
-        **It walks the cell edges one crossing at a time.** A cell is the square centred on an
-        elevation node, so its edges sit on the half-integer lattice (#27): a ray tested only at
-        its ends steps clean over a wire in its middle, and one cutting a pen's corner has both ends
+        **It walks the cell edges one crossing at a time.** A cell's edges sit on the integer
+        lattice and its elevation node at its centre (#162), so these are not the lines where
+        elevation bends (#27): a ray tested only at its ends steps clean over a wire in its middle, and one cutting a pen's corner has both ends
         in one region. At each crossing it asks `crossing_blocked` about a probe a margin past it,
         which is unambiguously in the cell being entered.
 
@@ -455,9 +457,9 @@ class Barriers:
             start_x, start_y = x[walking], y[walking]
             at_x = start_x + ux * t
             at_y = start_y + uy * t
-            # Cell edges are the node lattice shifted by half a cell (`Terrain.cell_indices`).
-            to_x_line = to_next_grid_line(at_x + 0.5 * cell, ux, cell)
-            to_edge = np.minimum(to_x_line, to_next_grid_line(at_y + 0.5 * cell, uy, cell))
+            # Cell edges are the integer lattice (`Terrain.cell_indices`).
+            to_x_line = to_next_grid_line(at_x, ux, cell)
+            to_edge = np.minimum(to_x_line, to_next_grid_line(at_y, uy, cell))
             left = d - t
             # On the last permitted pass, finish in one segment: only reachable if float slivers
             # at a line consumed passes the bound did not expect.
