@@ -748,9 +748,10 @@ by" hunger and no animal stands still merely because the drive that won has no m
   operator (#93) and gated by the same acuity threshold. Sampling `Water.is_drinkable_at` at the
   candidate headings was rejected in design: candidates sit one `look_ahead` away and lakes are
   sparse, so a binary reading lets thirst steer only when a candidate lands *on* water — #126 again
-  in a new place. The field is **built once and never rebuilt**, because water is derived from
-  terrain and never advanced; when #165 makes it dynamic this becomes a per-tick system beside
-  `rebuild_forage`.
+  in a new place. The field is **spread once and again only when a fence changes** (#275), because
+  water is derived from terrain and never advanced; when #165 makes it dynamic this becomes a
+  per-tick system beside `rebuild_forage`. The check sits on the read, so the tick a fence lands in
+  and a restored snapshot both see the wire.
 
   **The measured consequence is that the workaround is gone.** With the thirst weight founded like
   every other drive — `(0.6, 1.4)` where it sat at `(0.1, 0.3)` — the demo world runs 900 ticks and

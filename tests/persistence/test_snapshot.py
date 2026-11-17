@@ -82,6 +82,18 @@ class TestARoundTripIsTheSameWorld:
         with np.load(path, allow_pickle=False) as archive:
             assert not [name for name in archive.files if "climate" in name or "temperature" in name]
 
+    def test_a_restored_fence_reaches_the_water_field(self, tmp_path):
+        """Derived and never stored (§3.2), so the wire has to reach it some other way (#275)."""
+        saved = world()
+        saved.barriers.enclose(30.0, 30.0, 50.0, 50.0)
+
+        restored = world()
+        unfenced = restored.hydration.reachable.copy()
+        load(restored, save(saved, tmp_path / "w.npz"))
+
+        assert np.array_equal(restored.hydration.reachable, saved.hydration.reachable)
+        assert not np.array_equal(restored.hydration.reachable, unfenced)
+
     def test_a_world_that_grew_its_store_reloads_at_that_capacity(self, tmp_path):
         """Capacity is taken from the snapshot's own columns rather than being told separately, so
         a world that doubled while running does not need the target world to have doubled too."""
