@@ -1754,6 +1754,24 @@ wrapping work. If it is not, no amount of service code will save it.
   which element of every vectorized draw it receives, so a re-derived list makes a reloaded world
   diverge from the saved one at its first birth. With both, a save and reload continues *bit for
   bit* — which is a stronger promise than §2.2 requires and a much easier one to test.
+
+  **The intervention ledger and the metric history are state too** (schema v6, #31). Without the
+  ledger a reload hands back a fresh budget, and a costly cull can be repeated for free. Without the
+  series every scenario goal and every income reading restarts from nothing, and a series cannot
+  be replayed (§2.2, §4). Three rules come with them:
+
+  - **The pending queue is not stored.** A request that had not reached a tick boundary when the
+    world was saved is dropped. It was a decision about a world that then stopped, and firing it on
+    reload is the retry #26 refuses.
+  - **The recorder is read off the loop, not passed in.** `save` and `load` reach
+    `world.loop.interventions` and `world.loop.metrics`, where the composition root attached them,
+    so `core/` still knows nothing of `metrics/` and there is one answer to "which recorder is this
+    world's". A snapshot and a world must both carry each one or both lack it, or the load is
+    refused: one side would drop it, or the other would keep one from a different world.
+  - **The recorder keeps the previous reading as well as the window**, because conceptions and
+    deaths are differences against it. Cadence needs no state, since it is read off the tick. A
+    recording policy (`MetricsConfig`) is not a rule and is not fingerprinted, so a mismatch is
+    refused by its own check.
 - **The repository is public.** No secret ever enters the repo, the container image, or committed
   Terraform state. Secret scanning blocks merge.
 - CI enforces lint, types, coverage, container builds, **performance regression gates** (throughput

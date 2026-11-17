@@ -6,15 +6,21 @@ import dataclasses
 import hashlib
 import json
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 
-# Bumped whenever what is written changes shape. There is exactly one version, so there is no
+from core.world.interventions import Record
+
+# Bumped whenever what is written changes shape. Only the current version is read, so there is no
 # migration here and none is written: §8.2 forbids machinery without a caller, and a migration
 # from a schema that never shipped would be untestable by construction. What *is* here is the
 # refusal — an unknown version raises rather than being read hopefully, which is what makes the
 # first real migration a change to this module rather than an archaeology exercise.
-SCHEMA_VERSION = 5
+#
+# v6 added the intervention ledger and the metric history (#31). A v5 snapshot is refused rather
+# than read with a fresh budget and an empty series, which is exactly the loss v6 exists to stop.
+SCHEMA_VERSION = 6
 
 # Every array the world cannot recompute. Terrain, water, the cue field and the forage field are
 # all pure functions of the config or of the state below, so storing them would be storing a
@@ -75,6 +81,14 @@ def save(world, path: Path) -> Path:
     One file, arrays and metadata together, because a snapshot split across two is a snapshot that
     can be half-copied — and §3.2 treats losing one as unrecoverable, which makes atomicity of the
     *unit* worth more than the convenience of separate parts.
+
+    **The ledger and the series are reached through the loop**, at `world.loop.interventions` and
+    `world.loop.metrics`, which is where the composition root attaches them. They are not passed
+    in as arguments. `core/` still knows nothing of `metrics/` (§4): this module reads whatever the
+    loop holds through its structural types, and `build_world` still constructs neither. An
+    argument would make a second place for "which recorder belongs to this world", and a caller
+    could save with one and load without it, silently emptying the series. Read off the loop, the
+    world is saved as it is running, and `load` refuses a world that does not match it.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     store = world.store
@@ -89,6 +103,8 @@ def save(world, path: Path) -> Path:
         # seed and repeat its first thousand ticks' worth of draws — not a correctness bug under
         # §2.2, but a repetition nobody asked for and one that would compound with every reload.
         "rng": world.rng.bit_generator.state,
+        "interventions": _ledger(world.loop.interventions),
+        "metrics": _recording(world.loop.metrics),
     }
     arrays = {f"store.{name}": getattr(store, name) for name in _STORE_COLUMNS}
     arrays["row_ids"] = store.row_ids()
@@ -106,6 +122,10 @@ def save(world, path: Path) -> Path:
     # reload would silently undo the one intervention the world was shaped by.
     arrays["barriers.north"] = world.barriers.blocked_north
     arrays["barriers.west"] = world.barriers.blocked_west
+    if world.loop.metrics is not None:
+        arrays.update(
+            {f"metrics.{name}": column for name, column in world.loop.metrics.columns().items()}
+        )
     np.savez(path, meta=np.array(json.dumps(meta)), **arrays)
     return path
 
@@ -141,6 +161,21 @@ def load(world, path: Path) -> None:
         # Bumped so every cached derivation rebuilds against the restored fences rather than
         # against the empty ones the world was assembled with.
         world.barriers.revision += 1
+        if meta["metrics"] is not None:
+            world.loop.metrics.restore(
+                {
+                    name[len("metrics."):]: archive[name]
+                    for name in archive.files
+                    if name.startswith("metrics.")
+                },
+                meta["metrics"]["previous"],
+            )
+
+    if meta["interventions"] is not None:
+        world.loop.interventions.restore(
+            meta["interventions"]["balance"],
+            [Record(**line) for line in meta["interventions"]["history"]],
+        )
 
     world.plants.exported_nutrients = meta["exported_nutrients"]
     world.plants.rebuild_forage()
@@ -154,6 +189,39 @@ def load(world, path: Path) -> None:
     # anything, so the first frame after a load draws where the animals *are* rather than streaking
     # them in from wherever the pre-load world left them.
     world.loop.advance(0)
+
+
+def _ledger(interventions) -> Optional[dict]:
+    """The intervention ledger as plain values, or `None` for a world that has none (#31).
+
+    Balance and history, and **not the pending queue**. A request that had not reached a tick
+    boundary when the world was saved is dropped by the save: it was a decision about a world that
+    then stopped, and firing it on reload is the failure #26 refuses retries for (see
+    `Interventions.restore`). `Record` is all plain values, so it goes through JSON as it is.
+    """
+    if interventions is None:
+        return None
+    return {
+        "balance": interventions.balance,
+        "history": [dataclasses.asdict(record) for record in interventions.history],
+    }
+
+
+def _recording(metrics) -> Optional[dict]:
+    """What the metric recorder holds beside its window, or `None` for a world that records none.
+
+    The window itself goes in the arrays (`MetricHistory.columns`), because it is large. This is
+    the part that is small: the previous reading the first sample after a reload differences its
+    conceptions and deaths against, and the recording policy the window was taken under, which
+    `_refuse_if_foreign` checks. A recorder's config is not a rule and is not in the fingerprint,
+    since a recording never moves an outcome, so it needs its own check.
+    """
+    if metrics is None:
+        return None
+    return {
+        "config": dataclasses.asdict(metrics.config),
+        "previous": metrics.previous_reading,
+    }
 
 
 def _refuse_if_foreign(meta: dict, world) -> None:
@@ -170,4 +238,29 @@ def _refuse_if_foreign(meta: dict, world) -> None:
             f"{meta['fingerprint'][:12]} against this world's {expected[:12]}. A world runs under "
             "the rules it was created with (§2.8) — loading it into a differently-tuned world "
             "would collapse an equilibrium for reasons invisible to the player"
+        )
+    # Both ways round, for both. A snapshot's ledger or series loaded into a world with nowhere to
+    # put it would be silently dropped, and the next save would lose it for good. A world that has
+    # one, loading a snapshot that does not, would keep a ledger or a series from before the load:
+    # a budget nobody spent, and a series that restarts mid-world with its first flows at zero.
+    _refuse_unless_both(meta["interventions"], world.loop.interventions, "an intervention ledger")
+    _refuse_unless_both(meta["metrics"], world.loop.metrics, "a metric history")
+    if meta["metrics"] is not None:
+        recorded = meta["metrics"]["config"]
+        recording = dataclasses.asdict(world.loop.metrics.config)
+        if recorded != recording:
+            raise SnapshotError(
+                f"snapshot's metric history was taken under the recording policy {recorded}, and "
+                f"this world records under {recording}. A series continued under another policy "
+                "is two quantities on one axis, which `MetricsConfig` refuses even to downsample"
+            )
+
+
+def _refuse_unless_both(saved, attached, what: str) -> None:
+    """Raise unless the snapshot and the world either both carry `what` or both lack it."""
+    if (saved is None) != (attached is None):
+        held, lacking = ("snapshot", "world") if attached is None else ("world", "snapshot")
+        raise SnapshotError(
+            f"the {held} carries {what} and the {lacking} does not; loading would either drop "
+            "one or keep one from a different world"
         )

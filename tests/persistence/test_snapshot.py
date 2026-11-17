@@ -12,9 +12,16 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from clients.viewer.demo_world import build_demo_world, demo_world_config
+from clients.viewer.demo_world import (
+    DEMO_BUDGET,
+    DEMO_METRICS,
+    build_demo_world,
+    demo_world_config,
+)
 from core.invariants import default_registry
 from core.world.assembly import build_world
+from core.world.cull import Cull
+from metrics import MetricHistory
 from persistence import SCHEMA_VERSION, SnapshotError, fingerprint, load, save
 
 SEED = 1
@@ -235,6 +242,151 @@ class TestASnapshotBelongsToOneWorld:
 
         with pytest.raises(ValueError, match="free list"):
             load(world(), path)
+
+
+def _cull(built, count=10):
+    """A cull of the first living animal's species, small enough never to be refused."""
+    species = int(built.store.species_id[built.store.alive][0])
+    return Cull(built.ecology, built.store, species_id=species, count=count, survivors=5)
+
+
+class TestTheLedgerSurvivesAReload:
+    """The intervention ledger is the one place the player is accountable (#26), so a world that
+    continued bit for bit everywhere else and reset its budget would let a costly cull be repeated
+    for free."""
+
+    def test_a_spent_balance_stays_spent(self, tmp_path):
+        saved = world()
+        saved.loop.interventions.request(_cull(saved))
+        saved.loop.advance(5)
+        assert saved.loop.interventions.balance < DEMO_BUDGET, "the cull should have been charged"
+
+        restored = world()
+        load(restored, save(saved, tmp_path / "w.npz"))
+
+        assert restored.loop.interventions.balance == saved.loop.interventions.balance
+
+    def test_the_history_remembers_what_was_done(self, tmp_path):
+        """Refusals too: a player back from an absence needs to know what did *not* happen (§2.7)."""
+        saved = world()
+        saved.loop.interventions.request(_cull(saved))
+        saved.loop.interventions.request(_cull(saved, count=10_000))
+        saved.loop.advance(5)
+        assert [record.applied for record in saved.loop.interventions.history] == [True, False]
+
+        restored = world()
+        load(restored, save(saved, tmp_path / "w.npz"))
+
+        assert restored.loop.interventions.history == saved.loop.interventions.history
+
+    def test_a_request_that_had_not_reached_a_boundary_is_dropped(self, tmp_path):
+        """Firing it on reload would act on a decision the player made about a world that then
+        stopped — the failure #26 refuses retries for."""
+        saved = world()
+        saved.loop.interventions.request(_cull(saved))
+
+        restored = world()
+        restored.loop.interventions.request(_cull(restored))
+        load(restored, save(saved, tmp_path / "w.npz"))
+        restored.loop.advance(1)
+
+        assert restored.loop.interventions.history == []
+        assert restored.loop.interventions.balance == DEMO_BUDGET
+
+    def test_a_ledger_cannot_be_loaded_into_a_world_without_one(self, tmp_path):
+        """It would be silently dropped, and the next save would lose it for good (§8.7)."""
+        saved = run(10)
+        unledgered = world()
+        unledgered.loop.interventions = None
+
+        with pytest.raises(SnapshotError, match="intervention ledger"):
+            load(unledgered, save(saved, tmp_path / "w.npz"))
+
+    def test_a_world_with_a_ledger_cannot_load_a_snapshot_without_one(self, tmp_path):
+        """It would keep whatever balance it was built with, which is a free budget."""
+        saved = run(10)
+        saved.loop.interventions = None
+
+        with pytest.raises(SnapshotError, match="intervention ledger"):
+            load(world(), save(saved, tmp_path / "w.npz"))
+
+
+# Half a cadence past a sample, so a reload lands between two, and late enough that the founders
+# have begun to breed and die: on this seed the first conception is recorded at tick 80.
+SAVED_AT = 5 * DEMO_METRICS.every_n_ticks + DEMO_METRICS.every_n_ticks // 2
+
+
+class TestTheMetricHistorySurvivesAReload:
+    """Scenario goals and ecosystem-value income both read the recorded series (#292, #26), and it
+    cannot be regenerated: the simulation is non-deterministic (§2.2) and a series is recorded,
+    never recomputed (§4)."""
+
+    def test_the_series_continues_exactly_as_an_unsaved_one(self, tmp_path):
+        """Saved off-cadence, so the first sample after the reload has to land on the cadence and
+        difference its conceptions and deaths against the reading before the save."""
+        cadence = DEMO_METRICS.every_n_ticks
+        saved = run(SAVED_AT)
+        restored = world()
+        load(restored, save(saved, tmp_path / "w.npz"))
+        assert restored.loop.metrics.samples == saved.loop.metrics.samples
+
+        saved.loop.advance(4 * cadence)
+        restored.loop.advance(4 * cadence)
+
+        assert restored.loop.metrics.samples == saved.loop.metrics.samples
+        assert [sample.tick for sample in restored.loop.metrics.samples] == list(
+            range(cadence, SAVED_AT + 4 * cadence + 1, cadence)
+        )
+
+    def test_the_first_sample_after_a_reload_reports_real_flows(self, tmp_path):
+        """The control for the test above: a recorder that forgot its previous reading reports
+        zero conceptions and deaths, which reads as a world in which nothing happened."""
+        saved = run(SAVED_AT)
+        restored = world()
+        load(restored, save(saved, tmp_path / "w.npz"))
+
+        to_next_sample = DEMO_METRICS.every_n_ticks - SAVED_AT % DEMO_METRICS.every_n_ticks
+        saved.loop.advance(to_next_sample)
+        restored.loop.advance(to_next_sample)
+
+        first = restored.loop.metrics.samples[-1]
+        assert first.conceptions + first.deaths > 0, "nothing happened to difference against"
+        assert (first.conceptions, first.deaths) == (
+            saved.loop.metrics.samples[-1].conceptions,
+            saved.loop.metrics.samples[-1].deaths,
+        )
+
+    def test_a_history_cannot_be_loaded_into_a_world_that_records_none(self, tmp_path):
+        saved = run(DEMO_METRICS.every_n_ticks)
+        unrecorded = world()
+        unrecorded.loop.metrics = None
+
+        with pytest.raises(SnapshotError, match="metric history"):
+            load(unrecorded, save(saved, tmp_path / "w.npz"))
+
+    def test_a_recording_world_cannot_load_a_snapshot_without_a_history(self, tmp_path):
+        """Its series would restart empty mid-world, and its first flows would read zero."""
+        saved = run(DEMO_METRICS.every_n_ticks)
+        saved.loop.metrics = None
+
+        with pytest.raises(SnapshotError, match="metric history"):
+            load(world(), save(saved, tmp_path / "w.npz"))
+
+    def test_a_different_recording_policy_is_refused(self, tmp_path):
+        """A series sampled every 20 ticks continued every 10 is two quantities on one axis — the
+        reason `MetricsConfig` discards rather than downsamples."""
+        saved = run(DEMO_METRICS.every_n_ticks)
+        restored = world()
+        restored.loop.metrics = MetricHistory(
+            restored.store,
+            restored.genetics,
+            restored.plants,
+            restored.genes.vocabulary,
+            dataclasses.replace(DEMO_METRICS, every_n_ticks=DEMO_METRICS.every_n_ticks // 2),
+        )
+
+        with pytest.raises(SnapshotError, match="recording policy"):
+            load(restored, save(saved, tmp_path / "w.npz"))
 
 
 def _rewrite_meta(path: Path, **changes) -> None:

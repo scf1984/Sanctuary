@@ -119,6 +119,20 @@ class Interventions:
         """
         self._pending.append(intervention)
 
+    def restore(self, balance: float, history: list[Record]) -> None:
+        """Replace the accounting with a saved one (#31), and **drop whatever is queued**.
+
+        Balance and history together, because they are one accounting: restoring either alone
+        would leave a balance its own history cannot reconcile. The queue is not restored because
+        it was never saved. A request that had not reached a tick boundary is a decision about a
+        world that then stopped, and firing it into the reloaded one is the failure
+        `apply_pending` refuses retries for. Anything queued *here* before the load is dropped for
+        the same reason, since it was asked of the world the load just replaced.
+        """
+        self.balance = float(balance)
+        self.history = list(history)
+        self._pending = []
+
     @property
     def pending(self) -> int:
         """How many requests are waiting for the next boundary."""
