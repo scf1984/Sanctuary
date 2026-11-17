@@ -13,7 +13,7 @@ margin, so the test fails on a regression to chance encounters rather than on no
 
 import numpy as np
 
-from clients.viewer.demo_world import build_demo_world
+from worlds.demo import build_demo_world
 
 SEEDS = range(16)
 # Pair separation, world units. Inside the 15-57 units #251 observed between bottlenecked pairs

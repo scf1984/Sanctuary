@@ -1,8 +1,8 @@
 """Recorded metric series, drawn as small charts over the world view (#39).
 
 The viewer answers "why did this population crash" (§3.3), and a position snapshot cannot: the
-crash is a shape in *time*. `metrics.MetricHistory` records that shape (#30) and this module turns
-it into pixels.
+crash is a shape in *time*. The world records that shape (#30), `Session.history()` hands it over,
+and this module turns it into pixels.
 
 **Nothing here reads `core/` or reduces anything.** A chart is handed a list of numbers that
 already crossed the metric boundary, which is what keeps this drawable against a series that
@@ -145,28 +145,39 @@ def _describe(chart: Chart) -> str:
     return f"now {series[-1]:.3g}   ({series.min():.3g} - {series.max():.3g})"
 
 
-def world_charts(history, gene: Optional[str]) -> list[Chart]:
+def world_charts(
+    samples: Sequence, gene: Optional[str], gene_names: Sequence[str]
+) -> list[Chart]:
     """The panel's contents: population, condition, and one gene's mean and spread.
 
-    history: a `metrics.MetricHistory`. Typed loosely on purpose — this module reads only
-        `series`, `gene_series` and `samples`, which is the whole of what a socket would carry
-        (§3.1), and naming the class would tie a client to a Python object it will not always have.
+    samples: `Session.history()`, oldest first. Each chart picks one recorded field out of them,
+        which is choosing what to draw rather than reducing anything.
     gene: which gene to plot, or `None` to show population and condition alone. Chosen by the
         viewer rather than fixed here, because *which* trait is under selection is the question
         being asked and it changes run to run.
+    gene_names: the vocabulary (`WorldInfo.gene_names`), so that a gene the world does not have
+        is refused even before the first sample exists, rather than drawn as an empty chart that
+        reads as "nothing happened" (§8.7).
 
     Population and energy are always shown because a trait series is unreadable without them: a
     mean speed that climbs while the population halves is a bottleneck, and the same climb while
     the population holds is selection.
     """
-    ticks = history.series("tick")
+    ticks = [sample.tick for sample in samples]
     charts = [
-        Chart("living", ticks, history.series("living")),
-        Chart("median energy", ticks, history.series("median_energy")),
+        Chart("living", ticks, [sample.living for sample in samples]),
+        Chart("median energy", ticks, [sample.median_energy for sample in samples]),
     ]
     if gene is not None:
-        charts.append(Chart(f"{gene} mean", ticks, history.gene_series(gene)))
+        if gene not in gene_names:
+            raise KeyError(f"'{gene}' is not a gene of this world")
+        column = list(gene_names).index(gene)
         charts.append(
-            Chart(f"{gene} spread", ticks, history.gene_series(gene, "expressed_spread"))
+            Chart(f"{gene} mean", ticks, [sample.expressed_mean[column] for sample in samples])
+        )
+        charts.append(
+            Chart(
+                f"{gene} spread", ticks, [sample.expressed_spread[column] for sample in samples]
+            )
         )
     return charts

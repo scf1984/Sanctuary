@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from clients.viewer.demo_world import (
+from worlds.demo import (
     DEMO_BUDGET,
     DEMO_METRICS,
     build_demo_world,

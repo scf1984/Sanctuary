@@ -62,7 +62,7 @@ from dataclasses import replace
 
 import numpy as np
 
-from clients.viewer.demo_world import build_demo_world, demo_world_config
+from worlds.demo import build_demo_world, demo_world_config
 from core.ecology import conception as conception_module
 from core.ecology import predation as predation_module
 from core.genetics.distance import centroid_between

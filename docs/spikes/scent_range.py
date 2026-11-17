@@ -33,7 +33,7 @@ from pathlib import Path
 
 import numpy as np
 
-from clients.viewer.demo_world import build_demo_world, demo_world_config
+from worlds.demo import build_demo_world, demo_world_config
 from core.ecology.cues import CueField, CueFieldConfig, _axis_operator
 from core.selection import Selection
 from core.world.assembly import build_world

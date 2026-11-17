@@ -155,18 +155,27 @@ class Interventions:
         self.history.extend(records)
         return records
 
-    def _resolve(self, intervention: Intervention, store: EntityStore, tick: int) -> Record:
-        """Charge and apply one intervention, or record why not. Never raises for a refusal.
+    def refusal_of(self, intervention: Intervention) -> Optional[str]:
+        """Why `intervention` would be refused against the world and the balance as they are now,
+        or None if it would be applied.
 
         The budget is checked *after* the intervention's own precondition, so a player who cannot
         afford something is told the interesting reason first — "that would wipe out the species"
         is more useful than "you cannot afford it", and the second is true of everything once the
         budget is empty.
+
+        Public because a quote (#35) must give the same answer the boundary will, from the same
+        check. A second copy of this rule in `api/` would be a price that drifts from the charge.
         """
         refusal = intervention.refusal()
+        if refusal is None and intervention.cost() > self.balance:
+            refusal = f"costs {intervention.cost():g} against a balance of {self.balance:g}"
+        return refusal
+
+    def _resolve(self, intervention: Intervention, store: EntityStore, tick: int) -> Record:
+        """Charge and apply one intervention, or record why not. Never raises for a refusal."""
+        refusal = self.refusal_of(intervention)
         cost = intervention.cost()
-        if refusal is None and cost > self.balance:
-            refusal = f"costs {cost:g} against a balance of {self.balance:g}"
         if refusal is not None:
             return Record(tick=tick, name=intervention.name, cost=0.0, refusal=refusal)
 

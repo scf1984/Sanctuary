@@ -122,5 +122,7 @@ jobs:
       # python_version), so running them once on the floor is the configured behaviour rather than
       # an arbitrary choice of leg.
       - run: ruff check .
-      - run: mypy core
+      # api/ too: it is the contract every client is written against (#35), so a type error in it
+      # is a broken promise to code this repository cannot see.
+      - run: mypy core api
 

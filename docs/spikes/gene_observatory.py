@@ -30,7 +30,7 @@ from pathlib import Path
 
 import numpy as np
 
-from clients.viewer.demo_world import demo_world_config
+from worlds.demo import demo_world_config
 from core.world.assembly import build_world
 
 # Enough pairs that a percentile is stable, few enough that sampling them every interval is free

@@ -1,13 +1,17 @@
 """Thin pygame wiring for the diagnostic world view (CLAUDE.md §3.3).
 
-All the logic worth testing lives in render.py, playback.py and demo_world.py, every one of them
-pygame-free; this module owns only the window, the event loop, and one call into each of those per
-frame. That split is load-bearing rather than tidy: this module is uncollectable in CI, which
+All the logic worth testing lives in render.py, charts.py, export.py and playback.py, every one of
+them pygame-free; this module owns only the window, the event loop, and one call into each of those
+per frame. That split is load-bearing rather than tidy: this module is uncollectable in CI, which
 never installs the viewer extra, so anything that lives here is untestable by construction — which
 is how the world builder's `EntityStore` call stayed broken through a whole release (#110).
 Rendering technology: pygame (CLAUDE.md §3.3), chosen over matplotlib because pause/step/speed
 need a real per-frame event loop and immediate-mode blitting rather than a plotting library's
 redraw-the-whole-figure model.
+
+**Everything it knows about the world comes through `api`** (#35). It holds a `Session` and the
+values the session hands back, and nothing else. That is what lets the same view run against a
+world in another process once #36 exists.
 """
 
 from __future__ import annotations
@@ -18,28 +22,25 @@ from pathlib import Path
 import numpy as np
 import pygame
 
+import api
 from clients.viewer.charts import stack_charts, world_charts
-from clients.viewer.demo_world import DEFAULT_WORLD, WORLDS, build_named_world
 from clients.viewer.export import export_history
-from core.world.cull import Cull
-from core.world.fence import Fence
-from persistence import SnapshotError, load, save
 from clients.viewer.playback import Playback
 from clients.viewer.render import (
     CONDITION_MODES,
     FIELD_LAYERS,
     apply_water_overlay,
-    describe_entity,
-    elevation_shading,
-    live_positions,
-    pick_entity,
     barrier_segments,
     casing_color,
-    drag_rectangle,
     condition_colors,
+    describe_entity,
+    drag_rectangle,
+    elevation_shading,
     field_overlay,
-    layer_references,
+    live_positions,
+    pick_entity,
     screen_to_world,
+    species_colors,
     world_to_screen,
 )
 
@@ -101,10 +102,10 @@ def _draw_panel(screen, font, lines: tuple[str, ...]) -> None:
         y += surface.get_height()
 
 
-def _draw_charts(screen, font, history, gene) -> None:
+def _draw_charts(screen, font, samples, gene, gene_names) -> None:
     """Blit the metric panel bottom-left. Layout only — `charts.py` decides where a point goes,
     because that module is collectable in CI and this one is not (#110)."""
-    charts = world_charts(history, gene)
+    charts = world_charts(samples, gene, gene_names)
     width, chart_height = _CHART_SIZE
     image, labels = stack_charts(charts, width, chart_height)
     if not image.size:
@@ -117,115 +118,115 @@ def _draw_charts(screen, font, history, gene) -> None:
         screen.blit(font.render(detail, True, _PANEL_TEXT), (width + 16, y + 14))
 
 
-def _cull(world, species_id: int) -> str:
+def _cull(session: api.Session, entity_id: int) -> str:
     """Queue a cull of the selected animal's species, and say what will be attempted.
 
     Only *queued* — it lands at the next tick boundary and may be refused there (§2.7's rule, or an
-    empty budget), which is why the outcome is read back out of the history rather than reported
+    empty budget), which is why the outcome is read back out of the ledger rather than reported
     here. Saying "done" now would be reporting something that has not happened.
     """
-    world.loop.interventions.request(
-        Cull(world.ecology, world.store, species_id, _CULL_SIZE, _CULL_SURVIVORS)
+    report = session.inspect(entity_id)
+    if report is None:
+        return f"entity {entity_id} is gone, so there is no species to cull"
+    session.request(
+        api.CullRequest(species_id=report.species, count=_CULL_SIZE, survivors=_CULL_SURVIVORS)
     )
-    return f"cull of {_CULL_SIZE} from species {species_id} queued"
+    return f"cull of {_CULL_SIZE} from species {report.species} queued"
 
 
-def _last_outcome(world) -> str:
+def _last_outcome(ledger: api.Ledger) -> str:
     """The most recent intervention's result, for the status line. Empty until one has run.
 
     The status line is the only place a viewer can tell the player anything, and a refusal that
     reached nobody is the failure §2.7's whole design exists to avoid.
     """
-    history = world.loop.interventions.history
-    if not history:
+    if not ledger.records:
         return ""
-    last = history[-1]
-    return f"{last.name}: {last.refusal or f'done, {world.loop.interventions.balance:g} left'}"
+    last = ledger.records[-1]
+    return f"{last.name}: {last.refusal or f'done, {ledger.balance:g} left'}"
 
 
-def _drag_to_world(world, start, end) -> tuple[float, float, float, float]:
-    """The two screen corners of a drag, as world-unit corners for `Fence`.
+def _drag_to_world(info: api.WorldInfo, start, end) -> tuple[float, float, float, float]:
+    """The two screen corners of a drag, as world-unit corners for a fence.
 
     Clamped into the world, because a drag that leaves the window is an ordinary thing a player
-    does and `Fence` normalises the corners itself — so the clamp is about staying inside the map,
+    does and the fence normalises the corners itself — so the clamp is about staying inside the map,
     not about which corner came first.
     """
     xs, ys = screen_to_world(
         np.array([start[0], end[0]], dtype=np.float64),
         np.array([start[1], end[1]], dtype=np.float64),
-        world.terrain.world_width,
-        world.terrain.world_height,
+        info.width,
+        info.height,
         *_SCREEN_SIZE,
     )
-    xs = np.clip(xs, 0.0, world.terrain.world_width)
-    ys = np.clip(ys, 0.0, world.terrain.world_height)
+    xs = np.clip(xs, 0.0, info.width)
+    ys = np.clip(ys, 0.0, info.height)
     return float(xs[0]), float(ys[0]), float(xs[1]), float(ys[1])
 
 
-def _export(world, slot: str) -> str:
+def _export(session: api.Session, slot: str, tick: int) -> str:
     """Write the recorded history beside the working directory, and say where it went.
 
     Returns the message rather than printing it: the status line is the only place a viewer can
     tell the user anything, and a `print` behind a game window is a message nobody reads (§8.7
     applies to success too — an export that says nothing is one the user repeats).
     """
-    stem = f"{slot}-tick{world.loop.tick_count}"
     try:
-        csv_path, _ = export_history(world.loop.metrics, _EXPORT_DIRECTORY, stem)
+        csv_path, _ = export_history(session.history(), _EXPORT_DIRECTORY, f"{slot}-tick{tick}")
     except ValueError as refused:
         return str(refused)
     return f"wrote {csv_path} (+ .json)"
 
 
-def _save(world, slot: str) -> str:
+def _save(session: api.Session, slot: str) -> str:
     """Write the world to its slot, and say where it went."""
-    path = save(world, _SAVE_DIRECTORY / f"{slot}.npz")
-    return f"saved {path} at tick {world.loop.tick_count}"
+    path = session.save(str(_SAVE_DIRECTORY / f"{slot}.npz"))
+    return f"saved {path} at tick {session.status().tick}"
 
 
-def _restore(world, slot: str) -> str:
+def _restore(session: api.Session, slot: str) -> str:
     """Load the slot into the running world, or say why not.
 
-    In place, so the viewer's services, its recorder and its overlay references all keep pointing
-    at the world that now holds the loaded state. A `SnapshotError` is reported rather than raised
-    because refusing a load is a normal outcome — a snapshot taken under different rules (§2.8) is
-    exactly what that error exists to prevent, and the status line is the only place a viewer can
-    say so.
+    A refusal is reported rather than raised because refusing a load is a normal outcome — a
+    snapshot taken under different rules (§2.8) is exactly what it exists to prevent, and the
+    status line is the only place a viewer can say so.
     """
     path = _SAVE_DIRECTORY / f"{slot}.npz"
-    if not path.exists():
-        return f"no save at {path}"
     try:
-        load(world, path)
-    except SnapshotError as refused:
+        status = session.load(str(path))
+    except api.Refused as refused:
         return f"refused: {refused}"
-    return f"loaded {path} at tick {world.loop.tick_count}"
+    return f"loaded {path} at tick {status.tick}"
 
 
-def run(seed: int = 0, n_entities: int = 200, world_name: str = DEFAULT_WORLD) -> None:
+def run(seed: int = 0, n_entities: int = 200, world_name: str = api.DEFAULT_WORLD) -> None:
     pygame.init()
     screen = pygame.display.set_mode(_SCREEN_SIZE)
     pygame.display.set_caption(f"Sanctuary -- {world_name} world")
     font = pygame.font.SysFont(None, 20)
     clock = pygame.time.Clock()
 
-    world = build_named_world(world_name, seed, n_entities)
+    session = api.create(world_name, seed=seed, founders=n_entities)
+    info = session.describe()
     slot = f"{world_name}-seed{seed}"
     playback = Playback(ticks_per_second=1.0)
 
     # Terrain and water never change, so this is rendered once and every overlay is blended onto
     # a copy of it rather than recomputing the hillshade.
-    terrain_rgb = apply_water_overlay(elevation_shading(world.terrain), world.water)
-    # Fixed for the run, deliberately: a ramp that rescales itself hides the slow decline this
-    # view exists to show. See `render.layer_references`.
-    references = layer_references(world)
+    terrain = session.terrain()
+    terrain_rgb = apply_water_overlay(elevation_shading(terrain), terrain.water_depth.to_numpy())
+
+    # Two frames, blended between (§2.1: the renderer interpolates between ticks). Kept here
+    # rather than asked of the world, because how a view smooths motion is the view's business.
+    previous = current = session.frame()
 
     layer_index = 0
     condition_index = 0
     fencing_from: tuple[int, int] | None = None
     selected: int | None = None
     charts_shown = True
-    gene_names = world.genes.vocabulary.names
+    gene_names = info.gene_names
     gene_index = gene_names.index("speed") if "speed" in gene_names else len(gene_names)
     exported = ""
     background = _scaled_surface(terrain_rgb, _SCREEN_SIZE)
@@ -265,20 +266,20 @@ def run(seed: int = 0, n_entities: int = 200, world_name: str = DEFAULT_WORLD) -
                     # changes run to run, so it is a key rather than a constant.
                     gene_index = (gene_index + 1) % (len(gene_names) + 1)
                 elif event.key == pygame.K_e:
-                    exported = _export(world, slot)
+                    exported = _export(session, slot, current.tick)
                 elif event.key == pygame.K_x and selected is not None:
                     # Only meaningful with an animal selected: a cull names a *species*, and
                     # clicking one is how the player says which. Silently doing nothing without a
                     # selection is better than culling an arbitrary species (§8.7 cuts both ways —
                     # the loud failure here would be culling the wrong thing).
-                    exported = _cull(world, int(world.store.species_id[selected]))
+                    exported = _cull(session, selected)
                 elif event.key == pygame.K_s:
-                    exported = _save(world, slot)
+                    exported = _save(session, slot)
                 elif event.key == pygame.K_l:
-                    exported = _restore(world, slot)
-                    # The loaded world's positions are nothing like the ones on screen, and the
-                    # renderer blends two snapshots (§3.3, #119). Redrawing the background is the
-                    # cheapest way to be sure the overlay matches the field that just arrived.
+                    exported = _restore(session, slot)
+                    # The loaded world's animals are nothing like the ones on screen, so there is
+                    # nothing to blend from, and the overlay must match the field that just arrived.
+                    previous = current = session.frame()
                     redraw_background = True
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
                 fencing_from = event.pos
@@ -287,60 +288,53 @@ def run(seed: int = 0, n_entities: int = 200, world_name: str = DEFAULT_WORLD) -
                 # boundary, and a client reaching into the world would be the second mutation path
                 # §2.7 exists to forbid. The refusal — a box thinner than a cell, or an empty
                 # balance — comes back through the status line like every other outcome.
-                corners = _drag_to_world(world, fencing_from, event.pos)
-                world.loop.interventions.request(Fence(world.barriers, *corners))
+                session.request(api.FenceRequest(*_drag_to_world(info, fencing_from, event.pos)))
                 fencing_from = None
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                # Pick against the *living*, so a gestating row and a freed one are both
-                # unselectable — the first has not been born and the second is not there (#119).
-                alive = world.store.alive & (world.store.age >= 0)
-                rows = np.flatnonzero(alive)
+                # Pick against the frame on screen, which holds only the living: a gestating young
+                # and a dead animal are both unselectable, because neither is in it (#119).
                 wx, wy = screen_to_world(
                     np.array([event.pos[0]], dtype=np.float64),
                     np.array([event.pos[1]], dtype=np.float64),
-                    world.terrain.world_width,
-                    world.terrain.world_height,
+                    info.width,
+                    info.height,
                     *_SCREEN_SIZE,
                 )
                 selected = pick_entity(
                     float(wx[0]),
                     float(wy[0]),
-                    world.store.x[alive],
-                    world.store.y[alive],
-                    rows,
+                    current.x.to_numpy(),
+                    current.y.to_numpy(),
+                    current.ids.to_numpy(),
                     _PICK_RADIUS,
                 )
 
         n_ticks, alpha = playback.advance(elapsed_seconds)
         if n_ticks > 0:
-            world.loop.advance(n_ticks)
+            status = session.advance(n_ticks)
+            previous, current = current, session.frame()
+        else:
+            status = session.status()
 
         layer = _LAYER_CYCLE[layer_index]
         # The fields move once per tick, not once per frame, so the overlay is rebuilt on a tick
         # boundary rather than every pass — a smoothscale to the window size per frame would cost
         # far more than the field read that motivates it.
         if redraw_background or (n_ticks > 0 and layer is not None):
-            rgb = (
-                terrain_rgb
-                if layer is None
-                else field_overlay(terrain_rgb, world, layer, references)
-            )
+            rgb = terrain_rgb if layer is None else field_overlay(terrain_rgb, session.field(layer))
             background = _scaled_surface(rgb, _SCREEN_SIZE)
             redraw_background = False
 
         screen.blit(background, (0, 0))
 
-        x, y, _z, drawn = live_positions(
-            world.loop.previous_positions,
-            world.loop.previous_row_ids,
-            world.loop.current_positions,
-            world.loop.current_row_ids,
-            alpha,
+        x, y, _z = live_positions(previous, current, alpha)
+        px, py = world_to_screen(x, y, info.width, info.height, *_SCREEN_SIZE)
+        mode = CONDITION_MODES[condition_index]
+        colors = (
+            species_colors(current.species.to_numpy())
+            if mode == "species"
+            else condition_colors(session.condition(mode).values.to_numpy())
         )
-        px, py = world_to_screen(
-            x, y, world.terrain.world_width, world.terrain.world_height, *_SCREEN_SIZE
-        )
-        colors = condition_colors(world, drawn, CONDITION_MODES[condition_index])
         casing = casing_color()
         for screen_x, screen_y, color in zip(px.tolist(), py.tolist(), colors.tolist()):
             # Cased, so the mark reads against terrain that ranges from near-black valley to pale
@@ -350,10 +344,7 @@ def run(seed: int = 0, n_entities: int = 200, world_name: str = DEFAULT_WORLD) -
             pygame.draw.circle(screen, color, (screen_x, screen_y), _ENTITY_RADIUS - 1)
 
         for x0, y0, x1, y1 in barrier_segments(
-            world.barriers,
-            world.terrain.world_width,
-            world.terrain.world_height,
-            *_SCREEN_SIZE,
+            session.barriers(), info.cell_size, info.width, info.height, *_SCREEN_SIZE
         ):
             pygame.draw.line(screen, _FENCE_COLOR, (x0, y0), (x1, y1), 3)
 
@@ -368,30 +359,32 @@ def run(seed: int = 0, n_entities: int = 200, world_name: str = DEFAULT_WORLD) -
             _draw_charts(
                 screen,
                 font,
-                world.loop.metrics,
+                session.history(),
                 None if gene_index == len(gene_names) else gene_names[gene_index],
+                gene_names,
             )
         if selected is not None:
-            _draw_panel(screen, font, describe_entity(world, selected))
+            _draw_panel(screen, font, describe_entity(selected, session.inspect(selected)))
 
-        status = (
+        outcome = _last_outcome(session.ledger())
+        status_line = (
             # Collapse first and unmissable: a run that has ended must not read as one that is
             # merely paused (§2.7). Everything after it is still true and still worth showing —
             # the charts are how you find out *why* it ended.
-            ("*** COLLAPSED -- every animal is dead *** | " if world.loop.collapsed else "")
+            ("*** COLLAPSED -- every animal is dead *** | " if status.collapsed else "")
             + f"{'PAUSED' if playback.paused else 'playing'} | "
-            f"speed x{playback.speed:g} | tick {world.loop.tick_count} | "
-            f"[tab] {layer or 'terrain'} | [v] {CONDITION_MODES[condition_index]}"
+            f"speed x{playback.speed:g} | tick {status.tick} | "
+            f"[tab] {layer or 'terrain'} | [v] {mode}"
             f" | [c] charts [g] trait [e] export"
             f" | right-drag to fence"
             f" [s] save [l] load [x] cull | click an animal to inspect"
             + (f" | {exported}" if exported else "")
-            + (f" | {_last_outcome(world)}" if _last_outcome(world) else "")
+            + (f" | {outcome}" if outcome else "")
         )
         # On a dark strip rather than straight onto terrain. White text over a pale peak is
         # unreadable, and the status line is the only place this view can tell the player anything
         # -- including that a cull was refused. Text carries meaning, so it gets a surface.
-        text = font.render(status, True, (255, 255, 255))
+        text = font.render(status_line, True, (255, 255, 255))
         backing = pygame.Surface((text.get_width() + 12, text.get_height() + 6))
         backing.set_alpha(180)
         backing.fill((20, 20, 15))
@@ -405,5 +398,5 @@ def run(seed: int = 0, n_entities: int = 200, world_name: str = DEFAULT_WORLD) -
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Sanctuary diagnostic world view")
-    parser.add_argument("--world", choices=tuple(WORLDS), default=DEFAULT_WORLD)
+    parser.add_argument("--world", choices=api.worlds(), default=api.DEFAULT_WORLD)
     run(world_name=parser.parse_args().world)

@@ -1,18 +1,15 @@
-"""The world the diagnostic viewer looks at: a real assembled world, not a scatter of markers.
+"""The demo and temperate worlds: real assembled worlds, small enough to watch.
 
-**Separate from `app.py` because `app.py` imports pygame at module scope.** CI installs `.[dev]`
-and never the viewer extra — deliberately, since a run that never installs pygame is a standing
-check that the core is runnable headless (CLAUDE.md §3) — so nothing importing `app.py` is
-collectable there. World-building sitting inside that module is precisely why its `EntityStore`
-call could go a whole gene-matrix release without `n_genes` and without anyone noticing (#110):
-the one entry point that runs the simulation as a program was the one module no test could load.
-The rule `render.py` already states — pygame lives in `app.py` and nowhere else — earns its keep
-only if everything worth testing stays on this side of it.
+**Content, not client code** (#35). These worlds were written for the diagnostic viewer and
+lived beside it until `api/` became the only thing a client may import. Every line here is
+`core/` config, which a client is no longer allowed to touch, so a client now asks for a world *by
+name* and `api.create` builds it from here. Snapshots and evolved starting states are content in
+the same sense (§2.5, #101), and that is why the home is a package of its own rather than `api/`:
+the boundary holds the contract, and this holds the ecology.
 
-This module is now **config and nothing else**. `core.world.assembly.build_world` (#115) does the
-wiring, so the viewer cannot drift into a second assembly disagreeing with the settled tick order —
-which is what §7.2 exists to prevent, and what the previous version of this file was explicitly
-waiting for.
+This module is **config and nothing else**. `core.world.assembly.build_world` (#115) does the
+wiring, so nothing here can drift into a second assembly that disagrees with the settled tick
+order, which is what §7.2 exists to prevent.
 
 **These numbers are one world, not defaults.** Nothing else should import them. A world tuned for
 watching — small enough to fill a window, warm enough that plants grow, populated enough that
