@@ -6,8 +6,8 @@ population still evolving" without holding a reference to anything inside `core/
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
-from typing import Optional
+from dataclasses import asdict, dataclass, fields
+from typing import Mapping, Optional
 
 import numpy as np
 
@@ -205,6 +205,60 @@ class MetricHistory:
             **self._phenotype(living),
         )
 
+    @property
+    def previous_reading(self) -> Optional[tuple[int, int]]:
+        """`(ids issued, rows occupied)` at the last sample, or `None` before the first one.
+
+        Exposed so a snapshot can carry it (#31). It is the one piece of the recorder's state that
+        the window cannot reconstruct: occupancy is in the last sample, but ids issued is not, and
+        without both the first sample after a reload reports flows of zero.
+        """
+        return self._previous
+
+    def columns(self) -> dict[str, np.ndarray]:
+        """The recorded window as one array per `Sample` field, oldest first, for a snapshot.
+
+        Arrays rather than a list of dicts because the window is large: 2,000 samples × two
+        per-gene tuples on the demo world is several megabytes of JSON. Scalars are `(n,)` and the
+        per-gene fields `(n, n_genes)`. Both are float64 or int64, which hold every value a
+        `Sample` holds exactly.
+
+        `gene_names` is left out. It is the vocabulary on every sample, and the vocabulary is part
+        of the config a snapshot is fingerprinted against, so `restore` takes it from there.
+        """
+        width = len(self.vocabulary.names)
+        out = {}
+        for field in fields(Sample):
+            if field.name == "gene_names":
+                continue
+            # Keyed on the declared type, so a field of a type nobody mapped raises here rather
+            # than being written in whatever dtype NumPy happens to infer.
+            dtype = _COLUMN_DTYPES[str(field.type)]
+            values = np.array([getattr(s, field.name) for s in self.samples], dtype=dtype)
+            if str(field.type).startswith("tuple"):
+                values = values.reshape(len(self.samples), width)
+            out[field.name] = values
+        return out
+
+    def restore(
+        self, columns: Mapping[str, np.ndarray], previous: Optional[tuple[int, int]]
+    ) -> None:
+        """Replace the window and the previous reading with saved ones (#31).
+
+        Nothing about the cadence is restored, because nothing about it is held: `record_if_due`
+        reads the tick it is handed. The tick counter comes back with the world, and the window
+        therefore stays on the cadence.
+        """
+        names = [field.name for field in fields(Sample) if field.name != "gene_names"]
+        self.samples = [
+            Sample(
+                gene_names=self.vocabulary.names,
+                **{name: _plain(columns[name][row]) for name in names},
+            )
+            for row in range(len(columns["tick"]))
+        ]
+        self._previous = None if previous is None else (int(previous[0]), int(previous[1]))
+
     def _flows(self, issued: int, occupied: int) -> tuple[int, int]:
         """(conceptions, deaths) since the previous sample, from the two counters alone.
 
@@ -265,3 +319,14 @@ class MetricHistory:
             raise KeyError(f"'{gene}' is not in gene vocabulary v{self.vocabulary.version}")
         column = self.vocabulary.index_of(gene)
         return [getattr(sample, field_name)[column] for sample in self.samples]
+
+
+# The dtype each `Sample` field is stored in by `MetricHistory.columns`, keyed by its declared type.
+# The module uses postponed annotations, so `field.type` is the annotation as written.
+_COLUMN_DTYPES = {"int": np.int64, "float": np.float64, "tuple[float, ...]": np.float64}
+
+
+def _plain(value: np.ndarray):
+    """A stored cell back as the plain value a `Sample` holds: an int, a float, or a tuple."""
+    plain = value.tolist()
+    return tuple(plain) if isinstance(plain, list) else plain
