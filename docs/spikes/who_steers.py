@@ -31,7 +31,7 @@ import dataclasses
 
 import numpy as np
 
-from clients.viewer.demo_world import demo_world_config
+from worlds.demo import demo_world_config
 from core.selection import Selection
 from core.world.assembly import build_world
 

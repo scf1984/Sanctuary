@@ -19,7 +19,7 @@ import dataclasses
 
 import numpy as np
 
-from clients.viewer.demo_world import demo_world_config
+from worlds.demo import demo_world_config
 from core.world.climate import Climate
 from core.world.terrain import Terrain
 

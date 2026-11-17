@@ -9,7 +9,7 @@ landing exactly on the line and indexing to the far side of it.
 import numpy as np
 import pytest
 
-from clients.viewer.demo_world import build_demo_world
+from worlds.demo import build_demo_world
 from core.genetics.registry import Unit
 from core.selection import Selection
 from core.world.barriers import WIRE_MARGIN, Barriers

@@ -13,7 +13,7 @@ within about a thousand ticks. Run with the invariant harness on, so both guards
 
 import pytest
 
-from clients.viewer.demo_world import demo_world_config
+from worlds.demo import demo_world_config
 from core.world.assembly import build_world
 
 # Comfortably past every observed extinction (ticks 408-689 for these seeds before the fix). A

@@ -1,15 +1,12 @@
-"""Headless coverage of the world the viewer assembles and of the frame path that draws it.
+"""Headless coverage of the named worlds: that each config is one a world can be built from.
 
-This file must stay importable **without pygame**, which is the whole point of it: CI installs
-`.[dev]` and never the viewer extra, deliberately, so that the core is provably runnable headless.
-`app.py` imports pygame at module scope, so a test that reached into it would be uncollectable in
-CI — which is exactly how a `TypeError` in `_build_demo_world` survived unnoticed since the gene
-matrix landed (#110). World-building lives in `clients.viewer.demo_world` for that reason, and
-these tests import it directly.
+These worlds were the viewer's and moved to `worlds/` when `api/` became the only thing a client
+may import (#35). The viewer's frame path over them is tested in
+`tests/clients/viewer/test_frame_path.py`, through the boundary.
 
-Since #115 that module is config only — `core.world.assembly.build_world` does the wiring — so what
-these tests cover is the viewer's *world config* being one a world can actually be built from, and
-the frame path still reading it correctly now that entities move.
+Since #115 this is config only — `core.world.assembly.build_world` does the wiring — so what these
+tests cover is the *world config* being one a world can actually be built from, and holding the
+properties each world was tuned for.
 """
 
 import dataclasses
@@ -17,7 +14,7 @@ import dataclasses
 import numpy as np
 import pytest
 
-from clients.viewer.demo_world import (
+from worlds.demo import (
     DEFAULT_WORLD,
     build_demo_world,
     build_named_world,
@@ -25,13 +22,11 @@ from clients.viewer.demo_world import (
     demo_world_config,
     temperate_world_config,
 )
-from clients.viewer.render import live_positions, species_colors, world_to_screen
 from core.genetics.speciation import interbreeding_probability
 from core.invariants import default_registry
 from core.selection import Selection
 from core.world.assembly import build_world
 
-_SCREEN = (640, 480)
 
 
 class TestBuildDemoWorld:
@@ -268,68 +263,3 @@ class TestChoosingAWorld:
         world = build_named_world(DEFAULT_WORLD, seed=3, n_entities=10)
 
         assert world.config == demo_world_config(n_entities=10, seed=3)
-
-
-class TestFramePath:
-    def test_one_frames_worth_of_rendering_runs_headlessly(self):
-        """Everything `run()` does per frame except the pygame calls themselves.
-
-        The bug this file exists for was not in any of these functions — each is unit-tested —
-        but in the seam between the world and them, which nothing exercised. Chaining them over a
-        real demo world is what makes a shape, dtype or signature drift fail here rather than at
-        the first keypress.
-        """
-        world = build_demo_world(seed=4, n_entities=40)
-        world.loop.advance(1)
-
-        x, y, _z, drawn = live_positions(
-            world.loop.previous_positions,
-            world.loop.previous_row_ids,
-            world.loop.current_positions,
-            world.loop.current_row_ids,
-            0.5,
-        )
-        px, py = world_to_screen(
-            x, y, world.terrain.world_width, world.terrain.world_height, *_SCREEN
-        )
-        colors = species_colors(world.store.species_id[drawn])
-
-        n_live = int(world.store.alive.sum())
-        assert px.shape == py.shape == (n_live,)
-        assert ((0 <= px) & (px < _SCREEN[0])).all()
-        assert ((0 <= py) & (py < _SCREEN[1])).all()
-        assert colors.shape == (n_live, 3)
-        # Every founder is given a species, so none falls back to the unset-species gray.
-        assert (world.store.species_id[world.store.alive] >= 0).all()
-
-    def test_a_death_removes_an_entity_from_the_frame(self):
-        """End-to-end proof that the ghost is gone (#119).
-
-        Releases a row directly rather than waiting for starvation to arrive on its own schedule;
-        the point is that the *frame path* stops drawing it, not that any particular system caused
-        it. Capacity-wide rendering was accidentally correct only because the demo world allocated
-        exactly its capacity and never released a row.
-        """
-        world = build_demo_world(seed=4, n_entities=40)
-        world.loop.advance(1)
-        before = int(world.store.alive.sum())
-        capacity_before = world.store.capacity
-
-        doomed = world.store.row_ids()[world.store.alive][:1]
-        world.store.release(doomed)
-        world.loop.advance(1)
-
-        x, _y, _z, drawn = live_positions(
-            world.loop.previous_positions,
-            world.loop.previous_row_ids,
-            world.loop.current_positions,
-            world.loop.current_row_ids,
-            0.5,
-        )
-
-        assert int(drawn.sum()) == before - 1
-        assert len(x) == before - 1
-        # A death frees a row, it does not shrink the store — the drawn set narrows and the
-        # capacity does not. Compared against the capacity *before*, not against the
-        # population: a store now carries a breeding reserve (#127), so the two differ.
-        assert world.store.capacity == capacity_before

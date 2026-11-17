@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from clients.viewer.demo_world import build_demo_world
+from worlds.demo import build_demo_world
 from core.selection import Selection
 
 TICKS = 2000

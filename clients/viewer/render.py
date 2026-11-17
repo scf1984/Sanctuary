@@ -1,23 +1,21 @@
 """Pure rendering math: terrain shading, water tinting, species colour, tick interpolation.
 
-Kept free of any rendering library so it is testable without a display (CLAUDE.md §3.2: the
-viewer is read-only and its coupling to the core must stay narrow). `app.py` is the only module
-that touches pygame; everything here is plain NumPy in, NumPy out.
+Kept free of any rendering library so it is testable without a display. `app.py` is the only
+module that touches pygame; everything here is plain NumPy in, NumPy out.
+
+**It reads nothing but what `api` hands it** (#35). What a number *means* ecologically (how hungry
+an animal is, what a full biomass cell is) is decided behind the boundary and arrives as a value.
+This module decides only how that value looks.
 """
 
 from __future__ import annotations
 
 import colorsys
-from typing import TYPE_CHECKING, Optional
+from typing import Optional
 
 import numpy as np
 
-from core.selection import Selection
-from core.world.terrain import Terrain
-from core.world.water import Water
-
-if TYPE_CHECKING:  # pragma: no cover - import cycle at runtime only
-    from core.world.assembly import World
+import api
 
 # Diagonal lighting from the upper-left, the conventional default for cartographic relief
 # shading. Expressed in Terrain.aspect's own convention (radians, counterclockwise from +x) so
@@ -37,7 +35,7 @@ _ELEVATION_COLORS = np.array(
 )
 
 _WATER_COLOR = np.array([40.0, 90.0, 200.0])
-# Depth (world units, as `Water.depth` reports) at which standing water reaches its most
+# Depth (world units, as `TerrainView.water_depth` reports) at which standing water reaches its most
 # saturated tint; deeper water clips to
 # the same color rather than growing darker without bound.
 _WATER_REFERENCE_DEPTH = 3.0
@@ -53,12 +51,12 @@ _LAYER_COLORS = {
     "potential_growth": np.array([245.0, 180.0, 40.0]),  # amber
 }
 
-FIELD_LAYERS: tuple[str, ...] = tuple(_LAYER_COLORS)
+FIELD_LAYERS: tuple[str, ...] = api.FIELD_LAYERS
 """The world fields that can be drawn, in the order a viewer should cycle them.
 
-Derived from the colour table rather than written out beside it, so a layer can never be offered
-without a tint or tinted without being offered (CLAUDE.md §4: a rule declared as data must be the
-thing that is consulted).
+The boundary decides which fields exist, and this module only tints them. A test holds the colour
+table to exactly that list, so a layer can never be offered without a tint or tinted without being
+offered (CLAUDE.md §4: a rule declared as data must be the thing that is consulted).
 
 **Only one is drawn at a time**, which is why these five tints need no mutual CVD separation: they
 are never on screen together, and the readout names the active one. What each *does* need is to
@@ -69,21 +67,6 @@ hypsometric greens and browns and from the water's blue.
 something was killed (#179). Red is the documented alarm hue and nothing else in this view uses
 it, so a spreading red patch is unambiguous — which is the whole point of being able to see
 predation happen at all.
-"""
-
-_LAYER_SOURCE = {
-    "biomass": ("plants", "biomass"),
-    "carrion": ("carrion", "mass"),
-    "soil_nutrients": ("plants", "soil_nutrients"),
-    "moisture": ("plants", "moisture"),
-    "potential_growth": ("plants", "potential_growth"),
-}
-"""Where each layer's array lives on a built world: `(service attribute, field attribute)`.
-
-One table rather than a naming convention, because the fields genuinely live on different services
-and `getattr(plants, layer)` stopped being true the moment a layer came from anywhere but `Plants`.
-Declared beside the colours and consulted by `field_layer`, so a layer offered without a source
-raises at the first frame rather than drawing the wrong field (§8.7).
 """
 
 # Validated as an ordinal ramp against this viewer's own terrain (mean #6a6a64) with the dataviz
@@ -113,8 +96,12 @@ CONDITION_RAMP = np.array(
 # gives every dot two tones, and at least one of the two separates from whatever is behind it.
 _CASING_COLOR = np.array([252, 252, 251], dtype=np.uint8)
 
-CONDITION_MODES: tuple[str, ...] = ("species", "hunger", "thirst", "age")
+CONDITION_MODES: tuple[str, ...] = ("species", *api.CONDITIONS)
 """What an entity's colour can encode, in the order a viewer should cycle them.
+
+`species` is the viewer's own: it colours by an id the frame already carries. Every other mode is
+a deficit `Session.condition` computes, because what "hungry" is measured against is a fact of the
+world rather than of the view.
 
 **Every mode but the first is a deficit, and they all darken toward death.** Hunger is the energy
 an animal is short of, thirst is the water it has lost, age is how far through a life it is. Read
@@ -136,7 +123,7 @@ _UNSET_SPECIES_COLOR = np.array([128, 128, 128], dtype=np.uint8)
 _GOLDEN_RATIO_CONJUGATE = 0.6180339887498949
 
 
-def elevation_shading(terrain: Terrain) -> np.ndarray:
+def elevation_shading(terrain: api.TerrainView) -> np.ndarray:
     """Hypsometric-tinted, hillshaded terrain color, (height, width, 3) uint8.
 
     Color comes from a fixed low-to-high ramp over the terrain's own elevation range; brightness
@@ -144,7 +131,7 @@ def elevation_shading(terrain: Terrain) -> np.ndarray:
     — the concrete failure mode (CLAUDE.md's Why: "creatures walking through ridges" is invisible
     without this) that motivates this being anything more than a flat colormap.
     """
-    heights = terrain.heights.astype(np.float64)
+    heights = terrain.elevation.to_numpy().astype(np.float64)
     span = heights.max() - heights.min()
     normalized = (heights - heights.min()) / span if span > 0 else np.zeros_like(heights)
 
@@ -159,7 +146,7 @@ def elevation_shading(terrain: Terrain) -> np.ndarray:
     return np.clip(shaded, 0.0, 255.0).astype(np.uint8)
 
 
-def _hillshade(terrain: Terrain) -> np.ndarray:
+def _hillshade(terrain: api.TerrainView) -> np.ndarray:
     """Relative brightness, (height, width) float64 in [0.3, 1.0], from slope and aspect.
 
     Standard hillshade formula (zenith/azimuth form), floored at 0.3 rather than 0 so that
@@ -167,21 +154,22 @@ def _hillshade(terrain: Terrain) -> np.ndarray:
     not an artistic render.
     """
     zenith = np.pi / 2.0 - _LIGHT_ALTITUDE
-    slope = terrain.slope.astype(np.float64)
-    aspect = terrain.aspect.astype(np.float64)
+    slope = terrain.slope.to_numpy().astype(np.float64)
+    aspect = terrain.aspect.to_numpy().astype(np.float64)
     cos_incidence = np.cos(zenith) * np.cos(slope) + np.sin(zenith) * np.sin(slope) * np.cos(
         aspect - _LIGHT_AZIMUTH
     )
     return 0.3 + 0.7 * np.clip(cos_incidence, 0.0, 1.0)
 
 
-def apply_water_overlay(base_rgb: np.ndarray, water: Water) -> np.ndarray:
-    """`base_rgb` (height, width, 3) uint8 with standing water blended in over `water.depth`.
+def apply_water_overlay(base_rgb: np.ndarray, depth: np.ndarray) -> np.ndarray:
+    """`base_rgb` (height, width, 3) uint8 with standing water blended in over `depth`, a
+    (height, width) grid in world units.
 
     Blend strength grows with depth up to `_WATER_REFERENCE_DEPTH`, so a shallow puddle still
     reads as water without every lake looking identically saturated regardless of how deep it is.
     """
-    depth = water.depth.astype(np.float64)
+    depth = np.asarray(depth, dtype=np.float64)
     alpha = np.clip(depth / _WATER_REFERENCE_DEPTH, 0.0, 1.0) * 0.85
     alpha = np.where(depth > 0.0, np.maximum(alpha, 0.5), 0.0)
     blended = base_rgb.astype(np.float64) * (1.0 - alpha[..., None]) + _WATER_COLOR * alpha[
@@ -204,8 +192,8 @@ def apply_field_overlay(
     **`reference` is supplied, never measured off `field`.** That is the whole point of the
     parameter. Normalising against the field's current range would rescale the ramp every frame,
     so a world slowly starving to death would render identically to a lush one — which is exactly
-    the failure §3.3 says this instrument exists to catch. The caller computes the scale once from
-    the world's own physics (`plant_overlay_references`) and holds it for the run.
+    the failure §3.3 says this instrument exists to catch. The scale comes from the world's own
+    physics, as `FieldView.reference`, and is fixed for the session.
     """
     if reference <= 0.0:
         raise ValueError(f"reference must be positive, got {reference}")
@@ -220,112 +208,22 @@ def apply_field_overlay(
     return np.clip(blended, 0.0, 255.0).astype(np.uint8)
 
 
-def layer_references(world) -> dict[str, float]:
-    """The value at which each layer's tint saturates, in that layer's own unit.
-
-    Computed once, when the viewer starts, and then held for the run, because a scale that moves is
-    a scale that hides change (see `apply_field_overlay`). The config values are constants for the
-    life of the world. `potential_growth` is not since #159 — it follows the season and the weather —
-    so the reference is the field at the tick the viewer opened on. A warmer season can read past
-    1.0 and is clipped, which is the change the fixed scale exists to show.
-
-    The numbers are chosen so that **1.0 means something ecological**, not merely "the largest
-    value seen so far":
-
-    - `biomass` — `potential_growth.max() / senescence_rate`, the standing crop a cell settles at
-      when soil never limits it. `grow()` adds `min(potential_growth, affordable)` and removes
-      `biomass × senescence_rate`, so with nutrients to spare those balance exactly there. A cell
-      therefore reads full when it is as green as its own light, warmth and water allow, and reads
-      dark when something else — nutrients, or grazing — is holding it below that.
-    - `carrion` — `strike_power`, the most one strike can take out of an equally-sized victim.
-      A cell reads full when a specialist predator has made a kill in it.
-
-      **This was `founder_energy` — a whole body — and rendering the view proved it wrong.** No
-      single strike deposits a whole body: damage is `strike_power × size ratio × animal_share ** p`
-      and the shipped world settles near a 0.3 flesh allocation, so a typical strike leaves 5.8
-      energy units and the busiest cell measured 23.3. Against 180 that is 13% alpha at the
-      *brightest* cell — a layer that is always empty, for a mechanic that is running. Scaled to
-      the force limit instead, the same cell reads 39% and a kill is something the eye can find.
-    - `soil_nutrients` — the per-cell pool every cell started with. Above 1.0 is ground that has
-      accumulated more than its original share, below is ground that has given it up.
-    - `moisture` — 1.0, since it is already a fraction.
-    - `potential_growth` — its own maximum at the tick the viewer opened on.
-    """
-    plants = world.plants
-    light_ceiling = float(plants.potential_growth.max())
-    if light_ceiling <= 0.0:
-        raise ValueError(
-            "no cell can grow anything: potential growth is zero across the whole grid, so there "
-            "is no scale to draw a biomass ramp against"
-        )
-    if plants.config.initial_soil_nutrients <= 0.0:
-        raise ValueError(
-            "initial_soil_nutrients is zero, so a soil ramp has nothing to normalise against"
-        )
-
-    return {
-        "biomass": light_ceiling / plants.config.senescence_rate,
-        "carrion": world.config.predation.strike_power,
-        "soil_nutrients": plants.config.initial_soil_nutrients,
-        "moisture": 1.0,
-        "potential_growth": light_ceiling,
-    }
-
-
-def field_layer(world, layer: str) -> np.ndarray:
-    """The `(height, width)` array a named layer draws, fetched from wherever it lives.
-
-    Fetched per frame rather than held, because these fields change every tick — biomass is grazed
-    and regrows, carrion is deposited and rots.
-    """
-    service, field = _LAYER_SOURCE[layer]
-    return getattr(getattr(world, service), field)
-
-
-def field_overlay(
-    base_rgb: np.ndarray, world, layer: str, references: dict[str, float]
-) -> np.ndarray:
-    """`base_rgb` with one named world field blended in. `layer` must be one of `FIELD_LAYERS`.
-
-    `references` comes from `layer_references` and is passed in rather than recomputed, so that the
-    scale is fixed for the run even though the field under it changes every tick.
-    """
+def field_overlay(base_rgb: np.ndarray, view: api.FieldView) -> np.ndarray:
+    """`base_rgb` with one world field blended in, tinted by its layer and scaled by the reference
+    the world reported for it. The scale is never measured here (see `apply_field_overlay`)."""
     return apply_field_overlay(
-        base_rgb, field_layer(world, layer), references[layer], _LAYER_COLORS[layer]
+        base_rgb, view.values.to_numpy(), view.reference, _LAYER_COLORS[view.layer]
     )
 
 
-def condition_colors(world, drawn: np.ndarray, mode: str) -> np.ndarray:
-    """(n_drawn, 3) uint8: one colour per drawn entity, encoding `mode`.
+def condition_colors(deficit: np.ndarray) -> np.ndarray:
+    """(n, 3) uint8: one colour per animal, from its deficit in [0, 1] (`Session.condition`).
 
-    `drawn` is the occupancy mask `live_positions` returned, so this selects exactly the rows being
-    painted — never capacity, which would colour corpses (#119).
-
-    Every mode but `species` is a **deficit quantised to `CONDITION_RAMP`**, so darker always
-    means closer to death and every colour on screen is a validated ramp step. See
-    `CONDITION_MODES` for why it is the deficit rather than the reserve.
-
-    Hunger is measured against `HungerConfig.satiation_energy` — the pool level the drive itself
-    treats as "wants nothing" — rather than against the population's current maximum, for the
-    reason `apply_field_overlay` gives about references: a scale read off the population rescales
-    every frame, so a starving herd and a fed one would render identically.
+    **Quantised to `CONDITION_RAMP`**, so darker always means closer to death and every colour on
+    screen is a validated ramp step. See `CONDITION_MODES` for why it is the deficit rather than
+    the reserve. Clipped again here, because indexing off the end of the ramp is this module's
+    failure to prevent whatever arrives.
     """
-    if mode == "species":
-        return species_colors(world.store.species_id[drawn])
-
-    if mode == "hunger":
-        deficit = 1.0 - world.store.energy[drawn] / world.config.hunger.satiation_energy
-    elif mode == "thirst":
-        deficit = world.store.dehydration[drawn]
-    elif mode == "age":
-        # Against the oldest an animal in this world has ever been, which is the only scale the
-        # world offers: there is no lifespan gene and no death clock (§2.5), so "old" is a fact
-        # about the population rather than a constant anybody chose.
-        oldest = max(int(world.store.age.max()), 1)
-        deficit = world.store.age[drawn] / oldest
-    else:
-        raise ValueError(f"unknown condition mode {mode!r}; expected one of {CONDITION_MODES}")
-
     step = np.clip(
         (np.clip(deficit, 0.0, 1.0) * len(CONDITION_RAMP)).astype(np.int64),
         0,
@@ -363,57 +261,46 @@ def _color_for_id(species_id: int) -> np.ndarray:
 
 
 def live_positions(
-    previous: tuple[np.ndarray, np.ndarray, np.ndarray],
-    previous_row_ids: np.ndarray,
-    current: tuple[np.ndarray, np.ndarray, np.ndarray],
-    current_row_ids: np.ndarray,
-    alpha: float,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Where to draw each live entity this frame, blended between two tick-boundary snapshots.
+    previous: api.Frame, current: api.Frame, alpha: float
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Where to draw each animal in `current` this frame, blended from where it was in `previous`.
 
     `alpha` in [0, 1]: 0 renders exactly at `previous`, 1 exactly at `current`. Tick size is a
     simulation concern and must stay independent of how smooth this looks (CLAUDE.md §2.1), so
     this is the only place frame-rate-driven blending happens.
 
-    Returns `(x, y, z, drawn)`: three `(n_live,)` arrays of world-unit coordinates, plus the
-    `(capacity,)` bool mask that selected them, so a caller can filter any other column — species
-    id, energy, a future overlay — onto exactly the same rows.
+    Returns `(x, y, z)`, each `(n,)` world units in `current`'s order, so any other column handed
+    over with that frame (species, a condition) lines up with it.
 
-    **Occupancy is an argument, not an afterthought.** `EntityStore.release` clears `alive` and the
-    id mapping but deliberately leaves `x`, `y` and `z` untouched, since `allocate` overwrites
-    whatever its caller seeds. A snapshot of positions is therefore full *capacity*, not
-    population, and drawing it whole paints every row that has ever been used — a corpse frozen at
-    the spot it died, in its species colour, forever (#119). That was invisible only because
-    nothing had ever died: the demo world allocated exactly its capacity and never bred.
-
-    Two distinct rows are excluded, and one id array answers both because ids are never reused:
-
-    - **Not occupied now** (`current_row_ids < 0`) — nothing to draw.
-    - **Not the same entity as at `previous`** — there is no position to blend *from*. Such a row
-      is drawn at its current position instead. This covers a newborn in a fresh row, whose
-      previous entry holds nothing meaningful, *and* a newborn in a recycled one, whose previous
-      entry holds its predecessor's death site — the second is why this compares ids rather than an
-      `alive` flag, which reads True at both ends of that interval and hides the reuse entirely.
-      Without it a newborn streaks across the screen from wherever the last occupant fell.
+    **Blended by id, because ids are never reused** (§2.3). An animal in both frames moves smoothly
+    from one position to the other. One that is new in `current` has no position to blend from and
+    is drawn where it is, whether it was just born or the client never saw it. This is #119's rule.
+    It used to be enforced by comparing row ids, because a recycled row hid a newborn behind its
+    predecessor's death site. A frame carries no rows at all, so that mistake cannot be made here.
     """
     if not 0.0 <= alpha <= 1.0:
         raise ValueError("alpha must be in [0, 1]")
 
-    drawn = current_row_ids >= 0
-    # Blend only where the row held this same entity at both ends of the interval. Elsewhere the
-    # previous coordinate belongs to somebody else, so `alpha` is replaced by 1 and the entity is
-    # drawn where it is now.
-    continuous = current_row_ids[drawn] == previous_row_ids[drawn]
-    blend = np.where(continuous, alpha, 1.0)
+    current_ids = current.ids.to_numpy()
+    previous_ids = previous.ids.to_numpy()
+    now = [axis.to_numpy().astype(np.float64) for axis in (current.x, current.y, current.z)]
+    if not previous_ids.size or not current_ids.size:
+        return now[0], now[1], now[2]
 
-    previous_x, previous_y, previous_z = (axis[drawn] for axis in previous)
-    current_x, current_y, current_z = (axis[drawn] for axis in current)
-    return (
-        previous_x + (current_x - previous_x) * blend,
-        previous_y + (current_y - previous_y) * blend,
-        previous_z + (current_z - previous_z) * blend,
-        drawn,
+    # For each current animal, where (if anywhere) it sits in the previous frame: one sort and one
+    # binary search, rather than a dictionary built per frame.
+    order = np.argsort(previous_ids)
+    slot = np.minimum(
+        np.searchsorted(previous_ids, current_ids, sorter=order), previous_ids.size - 1
     )
+    source = order[slot]
+    blend = np.where(previous_ids[source] == current_ids, alpha, 1.0)
+
+    blended = []
+    for before, after in zip((previous.x, previous.y, previous.z), now):
+        start = before.to_numpy().astype(np.float64)[source]
+        blended.append(start + (after - start) * blend)
+    return blended[0], blended[1], blended[2]
 
 
 def drag_rectangle(
@@ -433,7 +320,12 @@ def drag_rectangle(
 
 
 def barrier_segments(
-    barriers, world_width: float, world_height: float, screen_width: int, screen_height: int
+    barriers: api.BarrierView,
+    cell_size: float,
+    world_width: float,
+    world_height: float,
+    screen_width: int,
+    screen_height: int,
 ) -> list[tuple[int, int, int, int]]:
     """`(x0, y0, x1, y1)` pixel segments, one per blocked edge, for drawing a fence.
 
@@ -444,21 +336,20 @@ def barrier_segments(
     Returns segments rather than blitting, so the layout stays testable without a display, and so
     the caller decides colour and width (§3.3).
     """
-    cell = barriers.terrain.cell_size
     scale_x = screen_width / world_width if world_width > 0 else 0.0
     scale_y = screen_height / world_height if world_height > 0 else 0.0
     segments = []
 
     # Cell r spans [r, r + 1) cells (#162), so the edge *above* row r sits at world y = r * cell.
     # Same for the edge west of column c.
-    for row, col in zip(*np.nonzero(barriers.blocked_north)):
-        y = row * cell * scale_y
-        x = col * cell * scale_x
-        segments.append((int(x), int(y), int(x + cell * scale_x), int(y)))
-    for row, col in zip(*np.nonzero(barriers.blocked_west)):
-        x = col * cell * scale_x
-        y = row * cell * scale_y
-        segments.append((int(x), int(y), int(x), int(y + cell * scale_y)))
+    for row, col in zip(*np.nonzero(barriers.blocked_north.to_numpy())):
+        y = row * cell_size * scale_y
+        x = col * cell_size * scale_x
+        segments.append((int(x), int(y), int(x + cell_size * scale_x), int(y)))
+    for row, col in zip(*np.nonzero(barriers.blocked_west.to_numpy())):
+        x = col * cell_size * scale_x
+        y = row * cell_size * scale_y
+        segments.append((int(x), int(y), int(x), int(y + cell_size * scale_y)))
     return segments
 
 
@@ -501,15 +392,14 @@ def pick_entity(
     y: float,
     entity_x: np.ndarray,
     entity_y: np.ndarray,
-    rows: np.ndarray,
+    ids: np.ndarray,
     radius: float,
 ) -> Optional[int]:
-    """The store row of the entity nearest `(x, y)`, or None if nothing is within `radius`.
+    """The id of the animal nearest `(x, y)`, or None if nothing is within `radius`.
 
-    entity_x, entity_y, rows: parallel arrays over whatever population the caller chose to make
-    selectable — the living, in practice. **`rows` is returned rather than an index into those
-    arrays**, because the caller has already filtered and the two numbers are different: handing
-    back a position index would inspect whichever animal happened to occupy that row.
+    entity_x, entity_y, ids: parallel arrays, a frame's columns in practice. **The id is returned
+    rather than an index into those arrays**, because the index means nothing once the next frame
+    arrives in a different order, and the id still names the same animal.
 
     None rather than a nearest-anything, so clicking empty ground clears the panel instead of
     leaving the last animal selected — which would be a readout quietly describing something the
@@ -521,63 +411,50 @@ def pick_entity(
     nearest = int(np.argmin(gap))
     if gap[nearest] > radius:
         return None
-    return int(rows[nearest])
+    return int(ids[nearest])
 
 
-def describe_entity(world: "World", row: int) -> tuple[str, ...]:
-    """A readable dump of one entity, line by line, for the viewer to blit (§3.3, #195).
+def describe_entity(entity_id: int, report: Optional[api.EntityReport]) -> tuple[str, ...]:
+    """A readable dump of one animal, line by line, for the viewer to blit (§3.3, #195).
 
     Returns text rather than a structure because the formatting *is* the part worth testing: this
-    module is collectable in CI and `app.py` is not, so anything that decides what a number means
-    has to live here (#110). `app.py` draws the lines and nothing else.
+    module is collectable in CI and `app.py` is not, so anything that decides how a number reads
+    has to live here (#110). What the numbers *are* is `Session.inspect`'s.
 
     Shows each gene's **stored and expressed value side by side**, which is the only way the
     expression mode is visible at all — a magnitude gene folding across zero and a unit-interval
     gene squashing are both invisible from either number alone.
     """
-    store = world.store
-    if not store.alive[row]:
-        return (f"row {row}", "empty — this row holds no entity",)
+    if report is None:
+        return (f"entity {entity_id}", "gone — no animal holds this id any more")
 
-    selection = Selection.from_indices(np.array([row], dtype=np.int64), store.capacity)
-    age = int(store.age[row])
     lines = [
-        f"entity {int(store.row_ids()[row])}   species {int(store.species_id[row])}   row {row}",
+        f"entity {report.id}   species {report.species}",
         (
-            # A negative age is the gestation clock (#20), not a corrupt row.
-            f"gestating — born in {-age} ticks"
-            if age < 0
-            else f"age {age} ticks"
+            # A negative age is the gestation clock (#20), not a corrupt reading.
+            f"gestating — born in {-report.age} ticks"
+            if report.age < 0
+            else f"age {report.age} ticks"
         ),
-        f"energy {float(store.energy[row]):.1f}"
-        f"   upkeep {float(world.ecology.upkeep(selection)[0]):.3f}/tick"
-        f"   exertion {float(store.exertion[row]):.3f}",
-        f"position ({float(store.x[row]):.1f}, {float(store.y[row]):.1f},"
-        f" {float(store.z[row]):.1f})",
+        f"energy {report.energy:.1f}   upkeep {report.upkeep:.3f}/tick"
+        f"   exertion {report.exertion:.3f}",
+        f"position ({report.x:.1f}, {report.y:.1f}, {report.z:.1f})",
         # Speed against top speed and pace against `walking_pace` are the two readings momentum and
         # haste are only visible through (#203, #204): an animal held below its own pace is being
         # limited by agility or by an empty pool, and neither shows in a position.
-        f"speed {float(np.hypot(store.velocity_x[row], store.velocity_y[row])):.2f}"
-        f" of {float(world.movement.top_speed(selection)[0]):.2f} top"
-        f"   urge {float(store.choice_urge[row]):+.3f}"
-        f" → pace {float(world.movement.pace(selection, store.choice_urge[[row]])[0]):.2f}",
+        f"speed {report.speed:.2f} of {report.top_speed:.2f} top"
+        f"   urge {report.urge:+.3f} → pace {report.pace:.2f}",
         "",
     ]
 
-    contributions = {
-        name: float(values[0]) for name, values in world.behaviour.breakdown(selection).items()
-    }
-    total = sum(contributions.values())
-    ranked = sorted(contributions.items(), key=lambda item: -item[1])
+    total = sum(share.contribution for share in report.drives)
     lines.append("drives, by share of the last decision:")
-    for name, value in ranked:
-        share = value / total if total > 0 else 0.0
-        lines.append(f"  {name:<10} {value:8.3f}  {100 * share:5.1f}%")
+    for share in report.drives:
+        fraction = share.contribution / total if total > 0 else 0.0
+        lines.append(f"  {share.name:<10} {share.contribution:8.3f}  {100 * fraction:5.1f}%")
     lines.append("")
 
-    stored = world.genetics.genes_at(np.array([row], dtype=np.int64))[0]
-    expressed = world.genetics.expressed_at(np.array([row], dtype=np.int64))[0]
     lines.append("genes — expressed, and as stored:")
-    for i, gene in enumerate(world.config.genes):
-        lines.append(f"  {gene.name:<22} {float(expressed[i]):10.4f}  {float(stored[i]):10.4f}")
+    for gene in report.genes:
+        lines.append(f"  {gene.name:<22} {gene.expressed:10.4f}  {gene.stored:10.4f}")
     return tuple(lines)

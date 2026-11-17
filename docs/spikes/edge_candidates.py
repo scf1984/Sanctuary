@@ -24,7 +24,7 @@ Variants, all applied to the same evenly spaced, jittered headings:
 
 import numpy as np
 
-from clients.viewer.demo_world import build_demo_world
+from worlds.demo import build_demo_world
 from core.behaviour.service import Behaviour
 from core.selection import Selection
 

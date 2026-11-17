@@ -8,7 +8,7 @@ whole argument for draining the queue before a tick's systems rather than after.
 
 import pytest
 
-from clients.viewer.demo_world import build_demo_world
+from worlds.demo import build_demo_world
 from core.selection import Selection
 from core.world.cull import Cull
 from core.world.interventions import Interventions, Record

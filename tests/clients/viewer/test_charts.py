@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from clients.viewer.charts import Chart, draw_chart, plot_points, stack_charts, world_charts
-from clients.viewer.demo_world import build_demo_world
+import api
 
 
 class TestChart:
@@ -127,36 +127,49 @@ class TestStackCharts:
         assert labels == []
 
 
+@pytest.fixture(scope="module")
+def session():
+    session = api.create("demo", seed=1, founders=60)
+    session.advance(60)
+    return session
+
+
 class TestWorldCharts:
-    """The panel's contents, against a real recorded history — the one place this module meets
-    `metrics` and the only thing it needs from it is three read methods."""
+    """The panel's contents, against a real recorded history handed over by a session."""
 
-    def world(self, ticks=60):
-        built = build_demo_world(seed=1, n_entities=60)
-        built.loop.advance(ticks)
-        return built
+    def charts(self, session, gene):
+        return world_charts(session.history(), gene, session.describe().gene_names)
 
-    def test_population_and_condition_are_always_shown(self):
+    def test_population_and_condition_are_always_shown(self, session):
         """A trait series is unreadable without them: a mean speed climbing while the population
         halves is a bottleneck, and the same climb while it holds is selection."""
-        charts = world_charts(self.world().loop.metrics, gene=None)
+        assert [chart.label for chart in self.charts(session, None)] == ["living", "median energy"]
 
-        assert [chart.label for chart in charts] == ["living", "median energy"]
+    def test_naming_a_gene_adds_its_mean_and_its_spread(self, session):
+        labels = [chart.label for chart in self.charts(session, "speed")]
 
-    def test_naming_a_gene_adds_its_mean_and_its_spread(self):
-        charts = world_charts(self.world().loop.metrics, gene="speed")
+        assert labels[2:] == ["speed mean", "speed spread"]
 
-        assert [chart.label for chart in charts][2:] == ["speed mean", "speed spread"]
+    def test_every_chart_is_plotted_against_the_recorded_ticks(self, session):
+        ticks = [sample.tick for sample in session.history()]
 
-    def test_every_chart_is_plotted_against_the_recorded_ticks(self):
-        history = self.world().loop.metrics
-
-        charts = world_charts(history, gene="speed")
-
-        for chart in charts:
-            assert list(chart.ticks) == history.series("tick")
+        for chart in self.charts(session, "speed"):
+            assert list(chart.ticks) == ticks
             assert len(chart.values) == len(chart.ticks)
 
-    def test_an_unknown_gene_is_refused_by_the_history_rather_than_drawn_empty(self):
+    def test_a_gene_series_is_that_genes_recorded_mean(self, session):
+        column = session.describe().gene_names.index("speed")
+        samples = session.history()
+
+        mean = self.charts(session, "speed")[2]
+
+        assert list(mean.values) == [sample.expressed_mean[column] for sample in samples]
+
+    def test_an_unknown_gene_is_refused_rather_than_drawn_empty(self, session):
         with pytest.raises(KeyError, match="wingspan"):
-            world_charts(self.world().loop.metrics, gene="wingspan")
+            self.charts(session, "wingspan")
+
+    def test_an_unknown_gene_is_refused_even_before_anything_is_recorded(self):
+        """Otherwise the mistake shows up as an empty chart, which reads as "nothing happened"."""
+        with pytest.raises(KeyError, match="wingspan"):
+            world_charts((), "wingspan", ("speed", "size"))

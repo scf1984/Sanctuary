@@ -76,7 +76,7 @@ def write_json(samples: Sequence, path: Path) -> Path:
     return path
 
 
-def export_history(history, directory: Path, stem: str) -> tuple[Path, Path]:
+def export_history(samples: Sequence, directory: Path, stem: str) -> tuple[Path, Path]:
     """Write both formats under `directory`, named `<stem>.csv` and `<stem>.json`.
 
     Both rather than a choice, because the cost of writing the second is nothing against the cost
@@ -88,6 +88,6 @@ def export_history(history, directory: Path, stem: str) -> tuple[Path, Path]:
     """
     directory.mkdir(parents=True, exist_ok=True)
     return (
-        write_csv(history.samples, directory / f"{stem}.csv"),
-        write_json(history.samples, directory / f"{stem}.json"),
+        write_csv(samples, directory / f"{stem}.csv"),
+        write_json(samples, directory / f"{stem}.json"),
     )

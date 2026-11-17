@@ -1,7 +1,8 @@
 """Click an animal and see what it is (#195).
 
-Test-first (§8.1): picking is arithmetic and the panel is a pure function of a world and a row, so
-both contracts were writable before the implementation.
+Test-first (§8.1): picking is arithmetic and the panel is a pure function of a report, so both
+contracts were writable before the implementation. What the report *holds* is `Session.inspect`'s,
+and is tested with the api.
 
 Asserted on *what the panel says*, never on its exact layout — a test pinning the character
 positions of a diagnostic readout is a maintenance cost wearing the costume of safety (§8.1).
@@ -10,19 +11,22 @@ positions of a diagnostic readout is a maintenance cost wearing the costume of s
 import numpy as np
 import pytest
 
-from clients.viewer.demo_world import demo_world_config
+import api
 from clients.viewer.render import describe_entity, pick_entity, screen_to_world
-from core.world.assembly import build_world
 
 SCREEN = (900, 900)
 
 
-def world():
-    return build_world(demo_world_config(40, 3), seed=3)
+def session():
+    return api.create("demo", seed=3, founders=40)
 
 
-def text(world, row):
-    return "\n".join(describe_entity(world, row))
+def first_id(s):
+    return int(s.frame().ids.to_numpy()[0])
+
+
+def text(s, entity_id):
+    return "\n".join(describe_entity(entity_id, s.inspect(entity_id)))
 
 
 class TestScreenToWorld:
@@ -77,46 +81,48 @@ class TestPicking:
 
         assert pick_entity(0.0, 0.0, empty, empty, np.array([], dtype=np.int64), 5.0) is None
 
-    def test_it_returns_the_row_it_was_given_not_a_position_index(self):
-        """The caller filters to the living before picking, so the array index and the store row
-        are different numbers — returning the wrong one would inspect somebody else."""
+    def test_it_returns_the_id_it_was_given_not_a_position_index(self):
+        """The index into this frame's arrays means nothing once the next frame arrives in a
+        different order. The id still names the same animal."""
         x = np.array([10.0, 20.0])
         y = np.array([10.0, 20.0])
 
         assert pick_entity(20.0, 20.0, x, y, np.array([7, 41], dtype=np.int64), 5.0) == 41
 
 
-class TestTheatPanel:
+class TestThePanel:
     def test_it_reports_speed_against_top_speed_and_urge_against_pace(self):
         """The two readings momentum and haste are only visible through (#203, #204). A position
         cannot say whether an animal is being held below its own pace by agility or by an empty
         pool, and "why did this population crash" is what the panel exists to answer (§3.3).
         """
-        w = world()
-        row = int(np.flatnonzero(w.store.alive)[0])
-        w.loop.advance(5)
+        s = session()
+        s.advance(5)
+        entity = first_id(s)
 
-        line = next(line for line in describe_entity(w, row) if line.startswith("speed "))
+        line = next(
+            line for line in describe_entity(entity, s.inspect(entity)) if line.startswith("speed ")
+        )
 
         assert "top" in line
         assert "urge" in line and "pace" in line
 
-    def test_it_names_the_species_and_the_row(self):
-        w = world()
-        row = int(np.flatnonzero(w.store.alive)[0])
+    def test_it_names_the_entity_and_its_species(self):
+        s = session()
+        entity = first_id(s)
 
-        readout = text(w, row)
+        readout = text(s, entity)
 
         assert "species" in readout.lower()
-        assert str(w.store.species_id[row]) in readout
+        assert str(entity) in readout
+        assert str(s.inspect(entity).species) in readout
 
     def test_it_reports_energy_and_what_the_animal_costs_to_keep(self):
         """`Ecology.upkeep` is exposed separately from `drain` precisely so a viewer can ask what
         an animal costs without spending it."""
-        w = world()
-        row = int(np.flatnonzero(w.store.alive)[0])
+        s = session()
 
-        readout = text(w, row).lower()
+        readout = text(s, first_id(s)).lower()
 
         assert "energy" in readout
         assert "upkeep" in readout
@@ -124,64 +130,65 @@ class TestTheatPanel:
     def test_it_shows_every_drive_with_its_share_of_the_decision(self):
         """"62% of that heading was hunger" is strictly more informative than a winner's name —
         `Behaviour.breakdown`'s own words, and the reason it returns contributions."""
-        w = world()
-        w.loop.advance(2)
-        row = int(np.flatnonzero(w.store.alive & (w.store.age >= 0))[0])
+        s = session()
+        s.advance(2)
+        entity = first_id(s)
 
-        readout = text(w, row).lower()
+        readout = text(s, entity).lower()
 
-        for drive in w.behaviour.drive_names:
-            assert drive in readout
+        for share in s.inspect(entity).drives:
+            assert share.name in readout
 
     def test_it_shows_genes_with_both_the_stored_and_expressed_value(self):
         """The expression mode is invisible otherwise: a magnitude gene folding across zero and a
         unit-interval gene squashing are only legible when both numbers are on screen."""
-        w = world()
-        row = int(np.flatnonzero(w.store.alive)[0])
+        s = session()
+        entity = first_id(s)
+        lines = describe_entity(entity, s.inspect(entity))
 
-        readout = text(w, row)
-
-        assert "diet_animal_derived" in readout
-        assert "size" in readout
-        # Two numbers per gene line, so the reading and the storage can be compared.
-        gene_line = next(line for line in describe_entity(w, row) if "diet_animal_derived" in line)
+        assert any("diet_animal_derived" in line for line in lines)
+        assert any("size" in line for line in lines)
+        gene_line = next(line for line in lines if "diet_animal_derived" in line)
         assert len(gene_line.split()) >= 3
 
     def test_a_gestating_animal_is_named_as_one(self):
         """A negative age is the gestation clock (#20), not a corrupt row, and a panel that showed
         "age -14" would read as a bug."""
-        w = world()
-        row = int(np.flatnonzero(w.store.alive)[0])
-        w.store.age[row] = -14
+        s = session()
+        entity = first_id(s)
+        row = int(np.flatnonzero(s._world.store.row_ids() == entity)[0])
+        s._world.store.age[row] = -14
 
-        readout = text(w, row).lower()
+        readout = text(s, entity).lower()
 
-        assert "gestating" in readout or "unborn" in readout
+        assert "gestating" in readout
         assert "14" in readout
 
     def test_a_born_animal_is_not_called_gestating(self):
-        w = world()
-        row = int(np.flatnonzero(w.store.alive)[0])
-        w.store.age[row] = 300
+        s = session()
+        entity = first_id(s)
+        row = int(np.flatnonzero(s._world.store.row_ids() == entity)[0])
+        s._world.store.age[row] = 300
 
-        readout = text(w, row).lower()
+        readout = text(s, entity).lower()
 
         assert "gestating" not in readout
         assert "300" in readout
 
-    def test_a_free_row_says_so_rather_than_describing_a_corpse(self):
-        """`release` leaves x, y and the columns untouched (#119), so a freed row still reads like
-        an animal. Describing one would be the ghost bug in a different costume."""
-        w = world()
-        row = int(np.flatnonzero(w.store.alive)[0])
-        w.store.release(w.store.row_ids()[[row]])
+    def test_a_dead_animal_says_so_rather_than_describing_a_corpse(self):
+        """`release` leaves a row's columns untouched (#119), so a freed row still reads like an
+        animal. By id, the selected animal is gone, and the panel says that."""
+        s = session()
+        entity = first_id(s)
+        s._world.store.release(np.array([entity], dtype=np.int64))
 
-        readout = text(w, row).lower()
+        readout = text(s, entity).lower()
 
-        assert "empty" in readout or "free" in readout
+        assert "gone" in readout
+        assert "energy" not in readout
 
     def test_every_line_is_a_string(self):
-        w = world()
-        row = int(np.flatnonzero(w.store.alive)[0])
+        s = session()
+        entity = first_id(s)
 
-        assert all(isinstance(line, str) for line in describe_entity(w, row))
+        assert all(isinstance(line, str) for line in describe_entity(entity, s.inspect(entity)))

@@ -10,7 +10,7 @@ import json
 import numpy as np
 import pytest
 
-from clients.viewer.demo_world import build_demo_world
+from worlds.demo import build_demo_world
 from core.selection import Selection
 from metrics import MetricHistory, MetricsConfig
 

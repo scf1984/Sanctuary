@@ -1814,13 +1814,13 @@ which owned it, and it governs every future overlay (#39) rather than the entity
 `EntityStore.release` clears `alive` and the id mapping but deliberately leaves `x`, `y` and `z`
 untouched, since `allocate` overwrites whatever its caller seeds. A snapshot is therefore full
 *capacity*, not population, and rendering it whole draws a corpse frozen at its death site, in its
-species colour, forever. `TickLoop` consequently snapshots `row_ids` at the same instant as
-positions, and the renderer's entry point takes both — the mistake is unrepresentable rather than
-merely documented.
+species colour, forever. **Since #35 a client never sees a row at all**: `Session.frame()` holds
+only the living, by id, so a released row has nothing to contribute and the mistake is
+unrepresentable on the client side rather than merely documented.
 
 **The viewer plots time as well as space** — #39. A position snapshot cannot show a crash, because
 a crash is a shape in *time*: `clients/viewer/charts.py` draws the series `metrics.MetricHistory`
-records (#30), stacked bottom-left, with population and condition always present and one gene's
+records (#30), as `Session.history()` hands them over, stacked bottom-left, with population and condition always present and one gene's
 mean and spread beside them on a key. Which trait is under selection is the question being asked
 and it changes run to run, so it is a keypress rather than a constant.
 
@@ -1893,14 +1893,13 @@ recorded, which is the same shape that would come off a socket. Per-gene columns
 rather than positional, because a positional column silently means a different gene the first time
 the vocabulary is widened, which §2.3 makes an additive and expected event.
 
-**Occupancy is identity, not a flag.** Ids are never reused, so comparing two id snapshots
-distinguishes the three cases an `alive` bit cannot: a row still holding the same entity (blend
-it), a row now empty (drop it), and **a row freed and handed to a newborn inside the interval**
-(draw it where it is now). The third is why this is an id comparison: `alive` reads True at both
-ends of that interval and hides the swap entirely, so the newborn would streak in from wherever
-its predecessor fell. §2.1 puts death before reproduction *within* a tick precisely so freed rows
-are reusable immediately, which makes that the ordinary path once #20 and #21 land, not an edge
-case.
+**Occupancy is identity, not a flag.** Ids are never reused, so a client blends two frames by
+matching ids: an animal in both moves smoothly, an animal missing from the second has died and is
+dropped, and an animal new in the second is drawn where it is. The third case is why this has to be
+identity. A newborn routinely takes a row freed earlier in the same tick (§2.1 puts death before
+reproduction precisely so that it can), and anything keyed by row, `alive` bit or not, would blend
+the newborn from wherever its predecessor fell. Matching by id is also order-independent, which a
+frame needs because the world lists animals in row order and that order shifts as rows are reused.
 
 ---
 
@@ -1916,6 +1915,7 @@ core/        simulation. no rendering, no wall clock, no I/O. importable standal
 persistence/ snapshots, world config, intervention history
 scheduler/   offline wake schedules, catch-up execution, standing policies
 metrics/     biodiversity and population statistics, warnings
+worlds/      named world definitions: content, opened by name. never imported by a client.
 api/         boundary between core and any client. the only thing clients may import.
 service/     process wrapper around api/. protocol, sessions, world lifecycle.
 clients/     diagnostic viewer, dashboard. never import core internals, only api.
@@ -1929,12 +1929,28 @@ Rules:
   what §3.1's stage 1 rests on. `TickLoop` therefore names its recorder by a structural type
   (`MetricRecorder`) rather than importing one, and `build_world` does not construct it — the
   composition root attaches it afterwards, because a recorder reads a *finished* world.
-- **A metric crossing this boundary is a plain value, never an array view.** §3.1 puts the
+- **`clients/` imports `api` and nothing else behind the boundary** (#35):
+  `tests/clients/test_clients_import_only_api.py` fails on any import of `core`, `persistence`,
+  `metrics` or `worlds` under `clients/`. A world definition counts, because it is core config: a
+  client asks for a world by name and never builds one. Everything a client holds is a value from
+  `api.values` or the `Session` that returned it. An intervention is a request made of data, which
+  the session turns into the core object.
+- **Anything crossing this boundary is a plain value, never an array view.** §3.1 puts the
   simulation on a shared machine with clients asking for view information, so anything returned is
-  something a client may hold across a tick and send over a socket: floats, ints, and lists of them.
+  something a client may hold across a tick and send over a socket: None, bools, ints, floats,
+  strings, tuples and frozen dataclasses of those, and **`api.Column`**: an array packed as
+  little-endian bytes with its dtype and shape, always a copy. The column is the owner's amendment
+  on #35. This rule said "floats, ints, and lists of them" until then, and lists were measured at
+  ~100 ms and 4.6 MB a frame for 100,000 animals' positions in JSON against ~9 ms and 2.1 MB
+  packed. That is a tenth of §2.1's tick per watcher frame, on the one shape every client depends
+  on. `tests/api/test_values.py` walks every public `Session` read and fails on anything else.
   Equally, **statistics are computed on the core side, never in a client** — a histogram reduced in
   `clients/` cannot cross a socket, and it puts a pass over the whole gene matrix on the wrong side
-  of the boundary. The client draws what it is handed.
+  of the boundary. The client draws what it is handed. The deficit a condition colour shows and
+  the reference a field overlay saturates at are both world facts, so `Session` computes them.
+- **Entities cross the boundary by id, never by row** (§2.3, #35). A row is recycled within a
+  tick, and an id is never reused, so an id is the only number a client can hold and still mean
+  the same animal by.
 - **A series is recorded as the world runs, never recomputed on request.** The simulation is
   non-deterministic (§2.2), so a replay answers a different question than the one asked; and a
   metric that only exists while somebody is watching has a hole in it for every absence, which
