@@ -106,16 +106,17 @@ import order or from whatever sequence a test happened to use. Settled order, ow
 |---|---|---|
 | 0 | climate | writes the tick's weather before anything reads temperature — plant growth, drinking and upkeep all do. It is a function of the tick, not a step that integrates anything, so its position decides only *which* tick's sky the others see (#159) |
 | 1 | plant growth | consumes nutrients returned last tick; a one-tick lag is invisible on a field |
-| 2 | cue field rebuild | must precede any sensing, or animals smell **last tick's** world |
+| 2 | cue field, forage field, then carrion scent rebuild | every field an animal senses is rebuilt before anything senses it, or animals smell **last tick's** world. Forage became a step of its own, rather than something each reader rebuilt, in #170; carrion scent arrived with #179 |
 | 3 | drive scoring / option sampling | |
 | 4 | movement | acts on this tick's decision, not a stale one |
 | 5 | exertion recovery | immediately **after** movement, the only thing that adds to the column: the tick's effort is spent and then the tick's rest is taken. Whatever reads `exertion` therefore always reads a recovered value, never a raw one (#107) |
 | 6 | feeding, then drinking | you eat and drink where you arrived, not where you left |
-| 7 | dehydration, then metabolic upkeep | **after feeding**: an animal standing on a full meadow must not be killed by upkeep it could have paid. "Died on top of food" reads as a bug even when the arithmetic is right, and "died of thirst in a lake" reads the same way. Water loss precedes upkeep so the tick's bill reflects the tick's dryness (#156) |
-| 8 | death and decomposition | starvation is only meaningful once the tick's upkeep is charged |
-| 9 | age increment | closes a whole tick of living, and runs **before** births — see below |
-| 10 | reproduction | **after death**, so rows freed this tick are immediately reusable and a world at capacity can still breed |
-| 11 | speciation | periodicity undecided; see #115 |
+| 7 | predation | **after feeding**, because a strike feeds the attacker nothing directly (§2.5): the carrion it lays is grazed through `Feeding` from the next tick on. **Before death**, so a wound that empties a pool is reaped the same tick by `Death`, with no kill rule of its own (#179) |
+| 8 | dehydration, then metabolic upkeep | **after feeding**: an animal standing on a full meadow must not be killed by upkeep it could have paid. "Died on top of food" reads as a bug even when the arithmetic is right, and "died of thirst in a lake" reads the same way. Water loss precedes upkeep so the tick's bill reflects the tick's dryness (#156) |
+| 9 | death, then decomposition | starvation is only meaningful once the tick's upkeep is charged. Decomposition rots the carrion field once a tick, after the tick's strikes have laid their carrion (#179) |
+| 10 | age increment | closes a whole tick of living, and runs **before** births — see below |
+| 11 | reproduction (`conception`) | **after death**, so rows freed this tick are immediately reusable and a world at capacity can still breed |
+| 12 | speciation | periodicity undecided; see #115 |
 
 Two rules the order exists to enforce, which outlive any particular sequence:
 
@@ -134,11 +135,11 @@ than running wherever import order put it (§4 forbids a rule declared as data t
 `build_world` is the only place a store, its services and a loop are wired together — a second
 assembly is what §7.2 exists to prevent, and the viewer's world is now config handed to this one.
 
-`TICK_ORDER` holds the **implemented prefix** of the table, in the table's relative order. Feeding
-(#19), death and decomposition (#21), reproduction (#20) and speciation (#16) have no system yet
-and are absent rather than stubbed (§8.2), so the assembled world runs without eating, dying or
-breeding. Movement, by contrast, now acts for **every** animal rather than for one drive's winners:
-#114 replaced the argmax over drives with a sampled heading, so there is no longer a subset "driven
+`TICK_ORDER` holds the **implemented prefix** of the table, in the table's relative order. Every
+step but speciation (#16) has a system. Speciation is absent rather than stubbed (§8.2), so the
+assembled world eats, drinks, hunts, dies and breeds, but never splits. Reproduction runs as
+`conception`: a young is allocated as a row with a negative age and born when `Aging` brings it to
+zero (#20). Movement acts for **every** animal rather than for one drive's winners: #114 replaced the argmax over drives with a sampled heading, so there is no longer a subset "driven
 by" hunger and no animal stands still merely because the drive that won has no mechanic. That was
 #126, and it is closed by the encoding rather than by a special case.
 
