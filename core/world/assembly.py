@@ -14,8 +14,8 @@ as data and then not consulting it, which is why the tuple sequences rather than
 
 The reasoning behind each position lives in CLAUDE.md §2.1, not here — it is a decision of
 consequence and belongs where decisions are recorded (§8.6). What belongs here is the fact that
-**this is the implemented prefix of that order, in that order.** Two settled steps have no system
-yet and are absent rather than stubbed (§8.2):
+**this is the implemented prefix of that order, in that order.** One settled step has no system
+yet and is absent rather than stubbed (§8.2):
 
 | settled step | inserted by |
 |---|---|
@@ -32,11 +32,12 @@ populations the loop distinguishes — `living()` is what *acts*, and excludes t
 negative age; `gestating_or_living()` is what `Aging` advances, because ageing an unborn row toward
 zero is precisely how gestation is timed (#20).
 
-**Decomposition is not in this step**, despite §2.1 naming it there. An animal's nutrient debt is
-exactly its energy and starvation empties that, so a starved carcass is worth nothing and there is
-no mass for a carrion field to hold (#21). What actually closes §2.5's loop is `Ecology.spend`
-returning the nutrients an animal burns to the cell it is standing in — respiration, every tick,
-for every spender — and that is a property of the pool rather than a step in the order.
+**Decomposition rots carrion, and only a strike makes carrion.** An animal's nutrient debt is
+exactly its energy and starvation empties that, so a starved carcass is worth nothing and `Death`
+deposits no mass (#21). What a strike takes from its victim is what lies on the ground, so
+`Predation` is the field's only source (#179, #185). Most of §2.5's loop closes elsewhere:
+`Ecology.spend` returns the nutrients an animal burns to the cell it is standing in — respiration,
+every tick, for every spender — and that is a property of the pool rather than a step in the order.
 
 **Movement acts for every animal** (#114). `Behaviour` does not pick a winning drive. Each drive
 scores the same set of candidate positions, the utilities are summed, and every living animal
