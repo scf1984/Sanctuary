@@ -1582,6 +1582,13 @@ by" hunger and no animal stands still merely because the drive that won has no m
   species by a single action), terraforming, introducing species, and standing policies.
 - Metrics — biodiversity, population trends, inter-species interaction — are a secondary surface,
   suitable for a dashboard client or a phone widget.
+- **Scenarios are layered on the sandbox, never instead of it** (#292, the owner's decision). A
+  scenario is a world plus a goal, such as keeping two lineages apart until they split without
+  losing either, and the free world goes on running underneath it. Pure sandbox was declined
+  because it gives a first session no reason to exist. Objectives-only was declined because it is
+  not stewardship. **A goal is a check against recorded metrics (#30, #161), never a prediction**:
+  §2.3 rules out computing what a world will do, so a scenario can only ask what it did.
+  Competitions (#41) are a separate thing: statistical, over replicates (§2.2).
 - **An intervention is recorded data applied at a tick boundary, never a mutation from outside** —
   settled in #26, which owns the framework. Every part of that sentence is load-bearing:
 
@@ -1774,6 +1781,16 @@ supporting it, and a heavier GUI toolkit (Qt, etc.) buys nothing this diagnostic
 Terrain and water render once, as a static NumPy RGB array blitted per generation; only entity
 positions and the status readout update every frame.
 
+**The game client is a browser client, talking to the thin service (#36) — not pygame** (#292, the
+owner's decision). The two clients are different instruments, and the choice of one does not bind
+the other. The viewer stays pygame for the reasons above. The game is mostly widgets: panels,
+tooltips, histograms, a priced toolbar and onboarding. pygame has none of those, and the web
+client and phone widget that §3.1 heads for would have to be built anyway. The cost, accepted
+deliberately: #36 comes before any game-client work, and everything #35 returns has to be
+serialisable *in practice* from the first slice, not just in principle. In-process pygame through
+`api/` was declined, and so was pygame first with the browser later, which would mean two game
+clients whose UX lessons do not carry over in code.
+
 **A position snapshot is never read without the occupancy that qualifies it** — decided in #119,
 which owned it, and it governs every future overlay (#39) rather than the entity dots alone.
 `EntityStore.release` clears `alive` and the id mapping but deliberately leaves `x`, `y` and `z`
@@ -1922,10 +1939,12 @@ Not yet decided. Do not assume answers — ask.
   explicit consent, or read-only. This decides how long old rule sets and their pinning tests must
   be carried, so it is a cost question as much as a design one.
 - The concrete intervention catalogue and what each costs, and **what generates the player's
-  intervention currency** — settled only in the negative so far: not plain time-ticks. Whatever
-  generates it is what the game rewards, so it is a design decision rather than a number. Candidates
-  and their consequences are recorded on #26. Any income defined on ecosystem state waits on the
-  metric definitions below.
+  intervention currency**. The *direction* is settled on #26: **ecosystem value**, income that
+  scales with how rich and stable the world is. Plain time-ticks, discovery-and-naming and a fixed
+  endowment were rejected there, with reasons. The *formula* is still open, so the entry stays here
+  until income ships (§7.3). Three of its four terms wait on #16 and #193, so the playable slice
+  (#292) starts from population and its stability and adds the rest as they land. The floor that
+  keeps a declining world recoverable is undesigned, and belongs on #26.
 - **The remaining half of the metric definitions.** Species count and Shannon entropy over species
   abundance are still open, and they are deferred *with* #16 — with one species they read 1 and 0
   forever, so there is nothing yet to argue about and nothing to test an argument against. #30 owns
