@@ -27,6 +27,7 @@ apart in anything but the sky (§2.1).
 from __future__ import annotations
 
 import dataclasses
+import math
 
 from core.behaviour.drives import (
     FatigueConfig,
@@ -58,6 +59,7 @@ from core.world.climate import ClimateConfig, SeasonsConfig
 from core.world.terrain import TerrainConfig
 from core.world.interventions import Interventions
 from metrics import MetricHistory, MetricsConfig
+from scheduler.schedule import Pacing, Stage, WakeSchedule
 
 _GRID = 80
 _CELL_SIZE = 1.0
@@ -802,6 +804,19 @@ WORLDS = {"demo": build_demo_world, "temperate": build_temperate_world}
 # Every measurement so far runs on the demo world, so it is what opens when nothing is asked for.
 DEFAULT_WORLD = "demo"
 
+# How a served demo world keeps time (#32, #36). One tick per real second is §2.1's live rate.
+# While watched it wakes every second, so a viewer sees each tick as it happens. Away, it decays as
+# §2.4's own example does: hourly for a day, then daily. The temperate world differs from the demo
+# only in its sky (#261), so it keeps time the same way.
+DEMO_PACING = Pacing(
+    ticks_per_second=1.0,
+    schedule=WakeSchedule(
+        watched_interval=1.0,
+        absent=(Stage(until=86_400.0, interval=3_600.0), Stage(until=math.inf, interval=86_400.0)),
+    ),
+)
+PACING = {"demo": DEMO_PACING, "temperate": DEMO_PACING}
+
 
 def build_named_world(name: str, seed: int, n_entities: int) -> World:
     """Build the world called `name`, refusing loudly rather than falling back to the demo world
@@ -813,3 +828,12 @@ def build_named_world(name: str, seed: int, n_entities: int) -> World:
             f"unknown world {name!r}; choose one of: {', '.join(WORLDS)}"
         ) from None
     return build(seed, n_entities)
+
+
+def pacing_for(name: str) -> Pacing:
+    """How the world called `name` keeps time when it is served. Refuses an unknown name, as
+    `build_named_world` does."""
+    try:
+        return PACING[name]
+    except KeyError:
+        raise ValueError(f"unknown world {name!r}; choose one of: {', '.join(PACING)}") from None

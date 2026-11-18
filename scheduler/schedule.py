@@ -70,3 +70,25 @@ class WakeSchedule:
         if watched:
             return self.watched_interval
         return next(stage.interval for stage in self.absent if away < stage.until)
+
+
+@dataclass(frozen=True)
+class Pacing:
+    """A world's clock against real time: how many ticks one real second is worth, and when it
+    wakes to pay them.
+
+    ticks_per_second: §2.1's live rate, a ratio-table entry (baseline 1), tuned with that table
+        and never on its own. Positive.
+    schedule: when the world wakes. It moves when compute happens and never how much (§2.4).
+
+    Per world (§2.4), and never one of its rules. Neither number changes what the world does,
+    only when it is done, which is why neither enters the config fingerprint a snapshot is
+    checked against (§3.2).
+    """
+
+    ticks_per_second: float
+    schedule: WakeSchedule
+
+    def __post_init__(self) -> None:
+        if not self.ticks_per_second > 0:
+            raise ValueError(f"ticks_per_second must be positive, got {self.ticks_per_second}")

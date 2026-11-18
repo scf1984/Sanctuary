@@ -11,10 +11,10 @@ the only number a client can hold across ticks and still mean the same animal by
 sees a row at all. That makes #119's corpse-at-its-death-site bug unrepresentable on the client
 side, rather than a rule it has to remember.
 
-Two types are carried rather than defined here: `metrics.Sample` and
-`core.world.interventions.Record`. Both are already frozen and plain, and each is owned by the
-issue that defines what it measures (#30, #26). A copy here would be a second definition free to
-drift from the first (§2.1).
+Three types are carried rather than defined here: `metrics.Sample`,
+`core.world.interventions.Record` and `scheduler.Progress`. Each is already frozen and plain, and
+each is owned by the issue that defines what it reports (#30, #26, #32). A copy here would be a
+second definition free to drift from the first (§2.1).
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ import numpy as np
 
 from core.world.interventions import Record
 from metrics import Sample
+from scheduler.catchup import Progress
 
 __all__ = [
     "BarrierView",
@@ -39,6 +40,7 @@ __all__ = [
     "Frame",
     "GeneReading",
     "Ledger",
+    "Progress",
     "Quote",
     "Record",
     "Request",

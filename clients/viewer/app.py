@@ -9,15 +9,22 @@ Rendering technology: pygame (CLAUDE.md §3.3), chosen over matplotlib because p
 need a real per-frame event loop and immediate-mode blitting rather than a plotting library's
 redraw-the-whole-figure model.
 
-**Everything it knows about the world comes through `api`** (#35). It holds a `Session` and the
-values the session hands back, and nothing else. That is what lets the same view run against a
-world in another process once #36 exists.
+**Everything it knows about the world comes through `api`** (#35). It holds a session and the
+values the session hands back, and nothing else, which is what lets the same view run against a
+world in another process: `--connect URL` opens one the service is serving (#36).
+
+**A served world is watched, never driven.** Over the protocol the view holds the world's event
+stream open, which is what makes the service wake on its short interval (gate 2 on #35), and it
+fetches a frame each time the stream says the world moved. Pause, step and speed do nothing,
+because the world isn't the view's to run (#32). Everything else is the same code path.
 """
 
 from __future__ import annotations
 
 import argparse
+import threading
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 import pygame
@@ -180,9 +187,25 @@ def _export(session: api.Session, slot: str, tick: int) -> str:
 
 
 def _save(session: api.Session, slot: str) -> str:
-    """Write the world to its slot, and say where it went."""
-    path = session.save(str(_SAVE_DIRECTORY / f"{slot}.npz"))
+    """Write the world to its slot, and say where it went, or why not: a served world saves its
+    own snapshot and refuses to be saved by a client."""
+    try:
+        path = session.save(str(_SAVE_DIRECTORY / f"{slot}.npz"))
+    except api.Refused as refused:
+        return f"refused: {refused}"
     return f"saved {path} at tick {session.status().tick}"
+
+
+def _watch(session: api.RemoteSession, moved: threading.Event) -> None:
+    """Hold a served world's event stream open, and flag every catch-up chunk.
+
+    On a thread of its own, because the stream blocks between events and the view must keep
+    drawing. Holding it open is also what makes the world *watched*: the service shortens its wake
+    interval for as long as a stream is open (#36), so this one call is both the notification and
+    the attendance.
+    """
+    for _progress in session.events():
+        moved.set()
 
 
 def _restore(session: api.Session, slot: str) -> str:
@@ -200,17 +223,35 @@ def _restore(session: api.Session, slot: str) -> str:
     return f"loaded {path} at tick {status.tick}"
 
 
-def run(seed: int = 0, n_entities: int = 200, world_name: str = api.DEFAULT_WORLD) -> None:
+def run(
+    seed: int = 0,
+    n_entities: int = 200,
+    world_name: str = api.DEFAULT_WORLD,
+    connect: Optional[str] = None,
+) -> None:
+    remote = connect is not None
+    session = api.connect(connect) if connect is not None else api.create(
+        world_name, seed=seed, founders=n_entities
+    )
+    info = session.describe()
+    slot = f"{info.name}-seed{info.seed}"
+    playback = Playback(ticks_per_second=1.0)
+
     pygame.init()
     screen = pygame.display.set_mode(_SCREEN_SIZE)
-    pygame.display.set_caption(f"Sanctuary -- {world_name} world")
+    pygame.display.set_caption(
+        f"Sanctuary -- {info.name} world" + (f" served at {connect}" if remote else "")
+    )
     font = pygame.font.SysFont(None, 20)
     clock = pygame.time.Clock()
 
-    session = api.create(world_name, seed=seed, founders=n_entities)
-    info = session.describe()
-    slot = f"{world_name}-seed{seed}"
-    playback = Playback(ticks_per_second=1.0)
+    moved = threading.Event()
+    if isinstance(session, api.RemoteSession):
+        threading.Thread(target=_watch, args=(session, moved), name="watch", daemon=True).start()
+    # When the frame on screen arrived, and how long the one before it took to come. A served
+    # world's frames arrive when the service wakes, so they are blended over the gap actually
+    # observed rather than over an interval this view would have to be told.
+    arrived_ms = previous_gap_ms = 1_000
 
     # Terrain and water never change, so this is rendered once and every overlay is blended onto
     # a copy of it rather than recomputing the hillshade.
@@ -231,6 +272,7 @@ def run(seed: int = 0, n_entities: int = 200, world_name: str = api.DEFAULT_WORL
     exported = ""
     background = _scaled_surface(terrain_rgb, _SCREEN_SIZE)
     redraw_background = False
+    readings_key: Optional[tuple] = None
 
     running = True
     while running:
@@ -281,6 +323,7 @@ def run(seed: int = 0, n_entities: int = 200, world_name: str = api.DEFAULT_WORL
                     # nothing to blend from, and the overlay must match the field that just arrived.
                     previous = current = session.frame()
                     redraw_background = True
+                    readings_key = None
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
                 fencing_from = event.pos
             elif event.type == pygame.MOUSEBUTTONUP and event.button == 3 and fencing_from:
@@ -309,12 +352,44 @@ def run(seed: int = 0, n_entities: int = 200, world_name: str = api.DEFAULT_WORL
                     _PICK_RADIUS,
                 )
 
-        n_ticks, alpha = playback.advance(elapsed_seconds)
-        if n_ticks > 0:
-            status = session.advance(n_ticks)
-            previous, current = current, session.frame()
+        if remote:
+            n_ticks = 0
+            if moved.is_set():
+                moved.clear()
+                arrival = session.frame()
+                if arrival.tick != current.tick:
+                    n_ticks = arrival.tick - current.tick
+                    previous, current = current, arrival
+                    now_ms = pygame.time.get_ticks()
+                    previous_gap_ms, arrived_ms = max(now_ms - arrived_ms, 1), now_ms
+            alpha = min(1.0, (pygame.time.get_ticks() - arrived_ms) / previous_gap_ms)
         else:
-            status = session.status()
+            n_ticks, alpha = playback.advance(elapsed_seconds)
+            if n_ticks > 0:
+                session.advance(n_ticks)
+                previous, current = current, session.frame()
+
+        mode = CONDITION_MODES[condition_index]
+        # Everything below the positions changes at most once a tick, so it is read once a tick
+        # rather than once a frame. Over the protocol that is the difference between a request a
+        # second and several hundred.
+        if readings_key != (current.tick, mode, selected):
+            if readings_key is None or readings_key[0] != current.tick:
+                status = session.status()
+                fence_segments = barrier_segments(
+                    session.barriers(), info.cell_size, info.width, info.height, *_SCREEN_SIZE
+                )
+                samples = session.history()
+                outcome = _last_outcome(session.ledger())
+            colors = (
+                species_colors(current.species.to_numpy())
+                if mode == "species"
+                else condition_colors(session.condition(mode).values.to_numpy())
+            )
+            panel = (
+                describe_entity(selected, session.inspect(selected)) if selected is not None else ()
+            )
+            readings_key = (current.tick, mode, selected)
 
         layer = _LAYER_CYCLE[layer_index]
         # The fields move once per tick, not once per frame, so the overlay is rebuilt on a tick
@@ -329,12 +404,6 @@ def run(seed: int = 0, n_entities: int = 200, world_name: str = api.DEFAULT_WORL
 
         x, y, _z = live_positions(previous, current, alpha)
         px, py = world_to_screen(x, y, info.width, info.height, *_SCREEN_SIZE)
-        mode = CONDITION_MODES[condition_index]
-        colors = (
-            species_colors(current.species.to_numpy())
-            if mode == "species"
-            else condition_colors(session.condition(mode).values.to_numpy())
-        )
         casing = casing_color()
         for screen_x, screen_y, color in zip(px.tolist(), py.tolist(), colors.tolist()):
             # Cased, so the mark reads against terrain that ranges from near-black valley to pale
@@ -343,9 +412,7 @@ def run(seed: int = 0, n_entities: int = 200, world_name: str = api.DEFAULT_WORL
             pygame.draw.circle(screen, casing, (screen_x, screen_y), _ENTITY_RADIUS)
             pygame.draw.circle(screen, color, (screen_x, screen_y), _ENTITY_RADIUS - 1)
 
-        for x0, y0, x1, y1 in barrier_segments(
-            session.barriers(), info.cell_size, info.width, info.height, *_SCREEN_SIZE
-        ):
+        for x0, y0, x1, y1 in fence_segments:
             pygame.draw.line(screen, _FENCE_COLOR, (x0, y0), (x1, y1), 3)
 
         if fencing_from:
@@ -359,21 +426,24 @@ def run(seed: int = 0, n_entities: int = 200, world_name: str = api.DEFAULT_WORL
             _draw_charts(
                 screen,
                 font,
-                session.history(),
+                samples,
                 None if gene_index == len(gene_names) else gene_names[gene_index],
                 gene_names,
             )
-        if selected is not None:
-            _draw_panel(screen, font, describe_entity(selected, session.inspect(selected)))
+        if panel:
+            _draw_panel(screen, font, panel)
 
-        outcome = _last_outcome(session.ledger())
+        clock_text = (
+            f"served at {connect}"
+            if remote
+            else f"{'PAUSED' if playback.paused else 'playing'} | speed x{playback.speed:g}"
+        )
         status_line = (
             # Collapse first and unmissable: a run that has ended must not read as one that is
             # merely paused (§2.7). Everything after it is still true and still worth showing —
             # the charts are how you find out *why* it ended.
             ("*** COLLAPSED -- every animal is dead *** | " if status.collapsed else "")
-            + f"{'PAUSED' if playback.paused else 'playing'} | "
-            f"speed x{playback.speed:g} | tick {status.tick} | "
+            + f"{clock_text} | tick {status.tick} | "
             f"[tab] {layer or 'terrain'} | [v] {mode}"
             f" | [c] charts [g] trait [e] export"
             f" | right-drag to fence"
@@ -399,4 +469,8 @@ def run(seed: int = 0, n_entities: int = 200, world_name: str = api.DEFAULT_WORL
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Sanctuary diagnostic world view")
     parser.add_argument("--world", choices=api.worlds(), default=api.DEFAULT_WORLD)
-    run(world_name=parser.parse_args().world)
+    parser.add_argument(
+        "--connect", metavar="URL", help="view a world the service is serving, e.g. http://127.0.0.1:8765"
+    )
+    arguments = parser.parse_args()
+    run(world_name=arguments.world, connect=arguments.connect)
