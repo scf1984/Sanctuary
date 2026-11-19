@@ -1461,6 +1461,15 @@ by" hunger and no animal stands still merely because the drive that won has no m
     to a third in another, with within-pool spread following it. An absolute threshold would read
     that as divergence. The species' *measured* spread was the other way to be relative, and it
     fails: it includes the substructure a split detects, so it grows as two demes drift apart.
+  - **The step is the species' mean mutability, never the couple's own** (#304). Founders'
+    mutability varies threefold, so a per-couple step made the least mutable couples count one
+    distance as more steps. At founding they were 78% fertile against 100% for the most mutable,
+    a fertility tax on low mutability nobody designed. Over seeds 1–10 at tick 3,000 it left 4 of
+    10 demo worlds under 600 animals. With the species' step it is 1 of 10, the same as with every
+    couple fully fertile (`speciation-signature.md`). The threshold still follows the mutability
+    a lineage evolves, but every couple in a species reads distance on one ruler. `Conception`
+    takes each species' mean over everyone it may breed. A split check takes it over the two
+    groups it compares, which together are the species.
   - **Ordinary couples are fully fertile.** Fertility is 1 up to an ordinary within-species
     distance (`SpeciationConfig.ordinary`) and falls linearly to 0 at the `threshold`. The demo
     world derives the ordinary distance as 1.8 steps per gene at mutation–drift balance

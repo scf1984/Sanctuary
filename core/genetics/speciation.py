@@ -129,6 +129,30 @@ def mutation_step(genetics: Genetics, rows: np.ndarray) -> np.ndarray:
     return genetics.heritable_columns_at(np.asarray(rows, dtype=np.int64), column)[:, 0]
 
 
+def species_mutation_step(genetics: Genetics, population: Selection) -> np.ndarray:
+    """(n_species,) float64: each species' mean expressed `mutability` over `population`.
+
+    This is the ruler a couple's distance is read against, and it is the *species'*, never the
+    couple's own (#304). Founders' mutability varies threefold, so a per-couple step made the least
+    mutable couples count the same distance as more steps: at founding on the demo world they were
+    78% fertile against 100% for the most mutable, a fertility tax on low mutability nobody
+    designed, which left 4 of 10 demo worlds stalled after the opening crash. One ruler per species
+    makes every couple in it read distance alike, and is still relative to how mutable that
+    lineage has evolved to be, which is why the threshold is counted in steps at all.
+
+    A species with no member in `population` gets 0, which `interbreeding_probability` reads as
+    "no step to count in". Nothing breeds in it, so nothing reads it.
+    """
+    rows = population.to_indices()
+    species = genetics.species_ids_at(rows).astype(np.int64)
+    n_species = genetics.species.n_species
+    totals = np.bincount(
+        species, weights=mutation_step(genetics, rows).astype(np.float64), minlength=n_species
+    )
+    counts = np.bincount(species, minlength=n_species)
+    return np.divide(totals, counts, out=np.zeros(n_species), where=counts > 0)
+
+
 def split_gap(ordinary: float, threshold: float) -> float:
     """The centroid gap, in mutation steps, at which a typical cross-group pair reaches `threshold`.
 
@@ -157,7 +181,8 @@ def has_diverged(
 
     ordinary, threshold: dimensionless, in mutation steps (see `SpeciationConfig`). The centroids
         must sit `split_gap(ordinary, threshold)` steps apart, a step being the two populations'
-        mean expressed mutability: the gap at which `interbreeding_probability` has already reached
+        mean expressed mutability -- the species' own ruler, since `a` and `b` are the two halves
+        of one species, and the one `interbreeding_probability` reads (#304): the gap at which `interbreeding_probability` has already reached
         zero for a typical cross pair, so the two cannot disagree into "incompatible but not yet
         split" or "split but still fertile".
     columns: the vocabulary indices distance reads (the signature block in every world so far).
@@ -205,6 +230,7 @@ def interbreeding_probability(
     ordinary: float,
     threshold: float,
     columns: np.ndarray,
+    species_step: np.ndarray,
 ) -> np.ndarray:
     """(len(a),) float32 in [0, 1]: how readily each paired (a[i], b[i]) couple can produce young.
 
@@ -216,8 +242,8 @@ def interbreeding_probability(
       the isolation is a fact of the world, not something re-derived from where two individuals
       happen to sit each tick.
     - **distance** -- within one species, a couple up to `ordinary` mutation steps apart is fully
-      fertile, and compatibility falls linearly to 0 at `threshold`, the step being the couple's
-      mean expressed mutability. This is the gradual degradation issue #16 asks for: a
+      fertile, and compatibility falls linearly to 0 at `threshold`, the step being the species'
+      mean expressed mutability (`species_mutation_step`), never the couple's own (#304). This is the gradual degradation issue #16 asks for: a
       sub-population approaching a split breeds with the parent stock ever more rarely, so the
       hard species gate that follows has almost nothing left to remove. Ordinary couples pay
       nothing for it, because a falloff from zero distance would tax every birth in the world to
@@ -225,12 +251,14 @@ def interbreeding_probability(
 
     Linear between the two because nothing measured yet justifies a curve (CLAUDE.md §8.5).
 
-    A couple with no mutability at all has no step to count in. Two identical genomes are then
+    A species with no mutability at all has no step to count in. Two identical genomes are then
     compatible and any difference is infinitely many steps, which is the limit the formula
     approaches rather than a special case invented for it.
 
     ordinary, threshold: mutation steps, with `0 <= ordinary < threshold` (`SpeciationConfig`
         validates the pair).
+    species_step: (n_species,) float64, indexed by species id: `species_mutation_step` over the
+        population the couples were drawn from.
     """
     if not 0.0 <= ordinary < threshold:
         raise ValueError(
@@ -238,12 +266,15 @@ def interbreeding_probability(
         )
 
     distance = between(genetics, a, b, columns).astype(np.float64)
-    step = 0.5 * (mutation_step(genetics, a).astype(np.float64) + mutation_step(genetics, b))
+    species_a = genetics.species_ids_at(a)
+    same_species = species_a == genetics.species_ids_at(b)
+    # A cross-species couple is refused below whatever it reads, so a's species is as good a ruler
+    # as any for it.
+    step = species_step[species_a]
     steps = np.divide(
         distance, step, out=np.where(distance > 0.0, np.inf, 0.0), where=step > 0.0
     )
     compatibility = np.clip((threshold - steps) / (threshold - ordinary), 0.0, 1.0)
-    same_species = genetics.species_ids_at(a) == genetics.species_ids_at(b)
     return np.where(same_species, compatibility, 0.0).astype(np.float32)
 
 
@@ -344,10 +375,17 @@ class Speciation:
             dtype=np.int64,
         )
 
-    def compatibility(self, a: np.ndarray, b: np.ndarray) -> np.ndarray:
-        """`interbreeding_probability` at this world's threshold, over its distance genes."""
+    def compatibility(self, a: np.ndarray, b: np.ndarray, population: Selection) -> np.ndarray:
+        """`interbreeding_probability` at this world's threshold, over its distance genes, with
+        each species' step read over `population`, the breeders the couples were drawn from."""
         return interbreeding_probability(
-            self.genetics, a, b, self.config.ordinary, self.config.threshold, self.columns
+            self.genetics,
+            a,
+            b,
+            self.config.ordinary,
+            self.config.threshold,
+            self.columns,
+            species_mutation_step(self.genetics, population),
         )
 
     def speciate(self, population: Selection, tick: int) -> None:
