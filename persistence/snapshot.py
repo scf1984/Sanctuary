@@ -20,7 +20,10 @@ from core.world.interventions import Record
 #
 # v6 added the intervention ledger and the metric history (#31). A v5 snapshot is refused rather
 # than read with a fresh budget and an empty series, which is exactly the loss v6 exists to stop.
-SCHEMA_VERSION = 6
+#
+# v7 added the lineage (#16): which species split from which. A v6 world could never have split,
+# but reading one would still be reading a file that does not say so.
+SCHEMA_VERSION = 7
 
 # Every array the world cannot recompute. Terrain, water, the cue field and the forage field are
 # all pure functions of the config or of the state below, so storing them would be storing a
@@ -105,6 +108,10 @@ def save(world, path: Path) -> Path:
         "rng": world.rng.bit_generator.state,
         "interventions": _ledger(world.loop.interventions),
         "metrics": _recording(world.loop.metrics),
+        # Which species split from which (#16). The masks say what species exist and the ids say
+        # who belongs to each, but neither says where a species came from, and nothing can
+        # recompute it. JSON object keys are strings, so the ids are written as pairs.
+        "lineage": sorted(world.speciation.lineage.parents().items()),
     }
     arrays = {f"store.{name}": getattr(store, name) for name in _STORE_COLUMNS}
     arrays["row_ids"] = store.row_ids()
@@ -153,6 +160,7 @@ def load(world, path: Path) -> None:
             archive["free_rows"],
         )
         world.species.restore(archive["species_masks"])
+        world.speciation.lineage.restore(dict(meta["lineage"]))
         world.plants.biomass[...] = archive["plants.biomass"]
         world.plants.soil_nutrients[...] = archive["plants.soil_nutrients"]
         world.carrion.mass[...] = archive["carrion.mass"]

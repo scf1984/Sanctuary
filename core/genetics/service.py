@@ -212,6 +212,13 @@ class Genetics(DomainService):
         """`heritable`, for row indices in the order given."""
         return self._phenotype(np.asarray(rows, dtype=np.int64), None, aged=False)
 
+    def heritable_columns_at(self, rows: np.ndarray, columns: np.ndarray) -> np.ndarray:
+        """`heritable_at`, building only `columns`: what genetic distance reads (#16), which is the
+        signature block and not the whole vocabulary."""
+        return self._phenotype(
+            np.asarray(rows, dtype=np.int64), np.asarray(columns, dtype=np.int64), aged=False
+        )
+
     def _phenotype(self, rows: np.ndarray, columns: np.ndarray | None, aged: bool) -> np.ndarray:
         """The one place a phenotype is produced: mode, then mask, then (if `aged`) senescence.
 

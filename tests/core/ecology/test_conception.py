@@ -22,12 +22,16 @@ from core.world.barriers import Barriers
 from core.world.climate import Climate, ClimateConfig
 from core.world.terrain import Terrain
 
+from core.genetics.speciation import Lineage, Speciation, SpeciationConfig
 from tests.support.genes import gene_registry
 from tests.support.plants import plant_field
 
 GENE_NAMES = ("size", "heat_tolerance", "cold_tolerance", "maturity_age", "gestation_length", "mutability")
 GENE_REGISTRY = gene_registry(GENE_NAMES, {"heat_tolerance": 1.0, "cold_tolerance": 1.0})
 GENETICS_CONFIG = GeneticsConfig(mutability_gene="mutability", drift_margin=2.0, senescence=None)
+SPECIATION = SpeciationConfig(
+    distance_genes=("size",), ordinary=1.0, threshold=2.0, min_founders=2, every_n_ticks=1
+)
 METABOLISM_CONFIG = MetabolismConfig(
     dehydration_penalty=0.0,
     basal_rate=1.0,
@@ -44,7 +48,6 @@ def config(**overrides):
         offspring_energy=40.0,
         maturity_gene="maturity_age",
         gestation_gene="gestation_length",
-        speciation_threshold=100.0,
     )
     params.update(overrides)
     return ConceptionConfig(**params)
@@ -72,7 +75,17 @@ def make_world(capacity=16, **overrides):
         species,
         genetics,
         ecology,
-        Conception(store, ecology, genetics, GENE_REGISTRY, config(**overrides), Barriers(terrain)),
+        Conception(
+            store,
+            ecology,
+            genetics,
+            GENE_REGISTRY,
+            config(**overrides),
+            Barriers(terrain),
+            # Every animal here carries identical genes, so this only has to exist: who may breed
+            # with whom by genes is `Speciation`'s and is tested there (#16).
+            Speciation(genetics, GENE_REGISTRY, SPECIATION, Lineage()),
+        ),
     )
 
 
@@ -109,7 +122,6 @@ class TestConfigValidation:
         [
             ({"contact_range": 0.0}, "contact_range"),
             ({"offspring_energy": 0.0}, "offspring_energy"),
-            ({"speciation_threshold": 0.0}, "speciation_threshold"),
         ],
     )
     def test_rejects_tuning_that_makes_breeding_impossible_or_free(self, changes, message):

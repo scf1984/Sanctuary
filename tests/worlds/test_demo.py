@@ -22,7 +22,6 @@ from worlds.demo import (
     demo_world_config,
     temperate_world_config,
 )
-from core.genetics.speciation import interbreeding_probability
 from core.invariants import default_registry
 from core.selection import Selection
 from core.world.assembly import build_world
@@ -87,7 +86,7 @@ class TestTheShippedTuningIsNotDegenerate:
     """Guards against the failure this world keeps having: a config constant whose name says one
     thing while it silently does another.
 
-    `speciation_threshold` shipped at 8.0 against a median pairwise distance of ~29, so
+    The interbreeding threshold once shipped at 8.0 against a median pairwise distance of ~29, so
     `interbreeding_probability` returned zero for 94% of candidate couples and suppressed births
     roughly 24-fold. Every test passed throughout — nothing asserted that the gate was *open*.
     """
@@ -95,19 +94,17 @@ class TestTheShippedTuningIsNotDegenerate:
     def test_most_couples_can_actually_breed(self):
         """The gate exists to stop diverged populations interbreeding. With one population and no
         divergence it should be nearly transparent, so a majority failing is a misconfiguration
-        rather than ecology."""
+        rather than ecology. Since #16, ordinary couples are fully fertile by construction."""
         world = build_demo_world(seed=2, n_entities=120)
         world.loop.advance(200)
         rows = np.flatnonzero(world.store.alive & (world.store.age >= 0))
         rng = np.random.default_rng(2)
         a, b = rng.choice(rows, 500), rng.choice(rows, 500)
 
-        chance = interbreeding_probability(
-            world.genetics, a, b, world.config.conception.speciation_threshold
-        )
+        chance = world.speciation.compatibility(a, b)
 
         assert float((chance > 0.0).mean()) > 0.9
-        assert float(np.median(chance)) > 0.5
+        assert float(np.median(chance)) > 0.9
 
     def test_the_gate_still_closes_on_a_genuinely_diverged_pair(self):
         """The other half: a threshold set so high that nothing is ever incompatible would pass the
@@ -115,18 +112,27 @@ class TestTheShippedTuningIsNotDegenerate:
         world = build_demo_world(seed=2, n_entities=40)
         rows = np.flatnonzero(world.store.alive)[:2]
         genes = world.genetics.genes_at(rows)
-        # Push one animal far past anything drift produces, along the gene that dominates the
-        # metric today (#193).
-        genes[1, world.genes.index_of("maturity_age")] += 10_000.0
+        # Push one animal's smell far past anything drift produces: signature is what distance
+        # reads (#16).
+        genes[1, world.genes.index_of("signature_0")] += 10.0
         world.genetics.set_genes(
             Selection.from_indices(rows, world.store.capacity), genes
         )
 
-        chance = interbreeding_probability(
-            world.genetics, rows[:1], rows[1:], world.config.conception.speciation_threshold
-        )
+        chance = world.speciation.compatibility(rows[:1], rows[1:])
 
         assert float(chance[0]) == 0.0
+
+    def test_founders_start_as_one_interbreeding_population(self):
+        """#16: founders sit at one point in cue space, so a world begins as one population and a
+        later split is drift and isolation rather than the founding spread (speciation-signature.md).
+        """
+        world = build_demo_world(seed=2, n_entities=200)
+        columns = world.speciation.columns
+        signatures = world.genetics.heritable_columns_at(world.founders.to_indices(), columns)
+
+        assert float(signatures.min()) >= 0.45 and float(signatures.max()) <= 0.55
+        assert world.species.n_species == 1
 
     def test_scent_emission_charges_no_upkeep(self):
         """§2.5: low emission is already a survival benefit, so any upkeep makes silence both
@@ -263,3 +269,49 @@ class TestChoosingAWorld:
         world = build_named_world(DEFAULT_WORLD, seed=3, n_entities=10)
 
         assert world.config == demo_world_config(n_entities=10, seed=3)
+
+
+class TestSpeciationRunsInTheWorld:
+    """#16 end to end, through the tick order: the assembled world finds and records a split on
+    its own. Drift takes hundreds of generations (speciation-signature.md), so the test moves one
+    group's smell far away directly and then asks the world to notice."""
+
+    def diverge_some(self, world, count):
+        rows = np.flatnonzero(world.store.alive)[:count]
+        genes = world.genetics.genes_at(rows)
+        for column in world.speciation.columns:
+            genes[:, column] += 1.0
+        world.genetics.set_genes(Selection.from_indices(rows, world.store.capacity), genes)
+        return world.store.row_ids()[rows]
+
+    def test_a_diverged_group_becomes_a_species_at_the_next_check(self):
+        world = build_demo_world(seed=3, n_entities=120)
+        moved = self.diverge_some(world, 40)
+        period = world.config.speciation.every_n_ticks
+
+        world.loop.advance(1)  # tick 0 is a check
+        assert world.species.n_species == 2
+        (daughter,) = world.speciation.lineage.parents()
+        living = world.store.row_ids()
+        moved_rows = np.flatnonzero(np.isin(living, moved) & world.store.alive)
+        assert (world.store.species_id[moved_rows] == daughter).all()
+
+        world.loop.advance(period)
+        assert world.species.n_species == 2  # a split happens once, not every check
+
+    def test_nothing_splits_an_undisturbed_world(self):
+        world = build_demo_world(seed=3, n_entities=120)
+        world.loop.advance(3 * world.config.speciation.every_n_ticks + 1)
+
+        assert world.species.n_species == 1
+
+    def test_the_two_species_never_conceive_together(self):
+        world = build_demo_world(seed=3, n_entities=120)
+        self.diverge_some(world, 40)
+        world.loop.advance(1)
+        rows = np.flatnonzero(world.store.alive & (world.store.age >= 0))
+        species = world.store.species_id[rows]
+        a = rows[species == 0][:20]
+        b = rows[species == 1][:20]
+
+        assert (world.speciation.compatibility(a, b) == 0.0).all()

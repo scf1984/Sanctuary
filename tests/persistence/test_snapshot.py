@@ -397,3 +397,38 @@ def _rewrite_meta(path: Path, **changes) -> None:
     meta.update(changes)
     contents["meta"] = np.array(json.dumps(meta))
     np.savez(path, **contents)
+
+
+class TestSpeciesSurviveAReload:
+    """#16: a split is state. The masks say which species exist and the ids who belongs to each,
+    but only the lineage says where a species came from, and nothing can recompute it."""
+
+    def split_off(self, built, count=15):
+        from core.genetics.speciation import split
+        from core.selection import Selection
+
+        rows = np.flatnonzero(built.store.alive)[:count]
+        return split(
+            built.genetics,
+            built.speciation.lineage,
+            Selection.from_indices(rows, built.store.capacity),
+        )
+
+    def test_the_lineage_and_the_new_species_come_back(self, tmp_path):
+        built = world()
+        daughter = self.split_off(built)
+        path = save(built, tmp_path / "w.npz")
+
+        reloaded = world()
+        load(reloaded, path)
+
+        assert reloaded.speciation.lineage.ancestry(daughter) == (0, daughter)
+        assert reloaded.species.n_species == 2
+        np.testing.assert_array_equal(reloaded.store.species_id, built.store.species_id)
+
+    def test_a_world_that_never_split_reloads_with_no_lineage(self, tmp_path):
+        path = save(world(), tmp_path / "w.npz")
+        reloaded = world()
+        load(reloaded, path)
+
+        assert reloaded.speciation.lineage.parents() == {}
