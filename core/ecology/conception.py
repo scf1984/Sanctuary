@@ -160,7 +160,9 @@ class Conception:
 
         # Compatibility is a probability rather than a gate, so a pair drifting toward the split
         # threshold breeds ever more rarely before it stops breeding at all — #16's "no cliff edge".
-        chance = self.speciation.compatibility(first, second)
+        # Each species' step is read over everyone eligible to breed, not over the willing: the
+        # ruler is a property of the species, and willingness changes tick to tick (#304).
+        chance = self.speciation.compatibility(first, second, selection)
         accepted = rng.random(chance.shape[0]) < chance
         first, second = first[accepted], second[accepted]
 

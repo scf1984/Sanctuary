@@ -82,6 +82,11 @@ class TestBuildDemoWorld:
         assert (world.store.age[world.store.alive] == 5).all()
 
 
+def living(world):
+    """Everyone born and alive: the breeders whose mean mutability is each species' step (#304)."""
+    return Selection.from_mask(world.store.alive & (world.store.age >= 0))
+
+
 class TestTheShippedTuningIsNotDegenerate:
     """Guards against the failure this world keeps having: a config constant whose name says one
     thing while it silently does another.
@@ -101,7 +106,7 @@ class TestTheShippedTuningIsNotDegenerate:
         rng = np.random.default_rng(2)
         a, b = rng.choice(rows, 500), rng.choice(rows, 500)
 
-        chance = world.speciation.compatibility(a, b)
+        chance = world.speciation.compatibility(a, b, living(world))
 
         assert float((chance > 0.0).mean()) > 0.9
         assert float(np.median(chance)) > 0.9
@@ -119,7 +124,7 @@ class TestTheShippedTuningIsNotDegenerate:
             Selection.from_indices(rows, world.store.capacity), genes
         )
 
-        chance = world.speciation.compatibility(rows[:1], rows[1:])
+        chance = world.speciation.compatibility(rows[:1], rows[1:], living(world))
 
         assert float(chance[0]) == 0.0
 
@@ -314,4 +319,4 @@ class TestSpeciationRunsInTheWorld:
         a = rows[species == 0][:20]
         b = rows[species == 1][:20]
 
-        assert (world.speciation.compatibility(a, b) == 0.0).all()
+        assert (world.speciation.compatibility(a, b, living(world)) == 0.0).all()

@@ -16,6 +16,7 @@ from core.genetics.speciation import (
     interbreeding_probability,
     propose,
     split,
+    species_mutation_step,
     split_gap,
 )
 from core.genetics.species import SpeciesRegistry
@@ -60,10 +61,23 @@ def diverged(genetics, a, b, threshold, ordinary=0.0):
     return has_diverged(genetics, a, b, ordinary, threshold, COLUMNS)
 
 
+def fertility(genetics, a, b, ordinary, threshold, columns):
+    """`interbreeding_probability` with each species' step read over the couples themselves.
+
+    A test's couples are usually its whole population, so this is the species' mean mutability.
+    Tests about the ruler itself (#304) pass a population of their own instead."""
+    population = Selection.from_indices(
+        np.unique(np.concatenate([a, b])), genetics.store.capacity
+    )
+    return interbreeding_probability(
+        genetics, a, b, ordinary, threshold, columns, species_mutation_step(genetics, population)
+    )
+
+
 def compatible(genetics, a, b, threshold, ordinary=0.0):
     """`interbreeding_probability` at unit steps; linear from zero distance unless `ordinary`."""
     unit_steps(genetics)
-    return interbreeding_probability(genetics, a, b, ordinary, threshold, COLUMNS)
+    return fertility(genetics, a, b, ordinary, threshold, COLUMNS)
 
 
 def make_world(n_entities, expressed=GENE_NAMES, capacity=None):
@@ -385,10 +399,10 @@ class TestTheThresholdIsCountedInMutationSteps:
         steady, rows = self.two_at_distance(1.0, 0.5)
         volatile, _ = self.two_at_distance(1.0, 2.0)
 
-        assert interbreeding_probability(steady, rows[:1], rows[1:], 0.0, 4.0, COLUMNS)[0] == (
+        assert fertility(steady, rows[:1], rows[1:], 0.0, 4.0, COLUMNS)[0] == (
             pytest.approx(0.5)
         )
-        assert interbreeding_probability(volatile, rows[:1], rows[1:], 0.0, 4.0, COLUMNS)[0] == (
+        assert fertility(volatile, rows[:1], rows[1:], 0.0, 4.0, COLUMNS)[0] == (
             pytest.approx(0.875)
         )
 
@@ -397,28 +411,55 @@ class TestTheThresholdIsCountedInMutationSteps:
         small, rows = self.two_at_distance(0.3, 0.1)
         large, _ = self.two_at_distance(3.0, 1.0)
 
-        assert interbreeding_probability(small, rows[:1], rows[1:], 0.0, 5.0, COLUMNS)[0] == (
-            pytest.approx(interbreeding_probability(large, rows[:1], rows[1:], 0.0, 5.0, COLUMNS)[0])
+        assert fertility(small, rows[:1], rows[1:], 0.0, 5.0, COLUMNS)[0] == (
+            pytest.approx(fertility(large, rows[:1], rows[1:], 0.0, 5.0, COLUMNS)[0])
         )
 
-    def test_a_couple_mean_is_the_step(self):
-        store, genetics, rows = make_world(2)
+    def test_the_step_is_the_species_mean_not_the_couples(self):
+        """#304: two couples of one species at one distance are equally fertile however mutable
+        each couple happens to be. Read against the couple's own mutability, the steady couple
+        here would count 1.0 as four steps of 0.25 and the volatile one as one step of 1.0."""
+        store, genetics, rows = make_world(4)
         store.genes[rows] = 0.0
         store.genes[rows[1], 0] = 1.0
-        store.genes[rows[0], MUTABILITY_COLUMN] = 0.5
-        store.genes[rows[1], MUTABILITY_COLUMN] = 1.5
+        store.genes[rows[3], 0] = 1.0
+        store.genes[rows[:2], MUTABILITY_COLUMN] = 0.25
+        store.genes[rows[2:], MUTABILITY_COLUMN] = 1.75
+        population = Selection.from_indices(rows, store.capacity)
+        step = species_mutation_step(genetics, population)
 
-        # Mean mutability 1, so distance 1 is one step of four.
-        assert interbreeding_probability(genetics, rows[:1], rows[1:], 0.0, 4.0, COLUMNS)[0] == (
-            pytest.approx(0.75)
+        chance = interbreeding_probability(
+            genetics, rows[[0, 2]], rows[[1, 3]], 0.0, 4.0, COLUMNS, step
         )
+
+        # Species mean mutability 1, so distance 1 is one step of four for both couples.
+        np.testing.assert_allclose(chance, [0.75, 0.75])
+
+    def test_each_species_has_its_own_step(self):
+        store, genetics, rows = make_world(4)
+        store.genes[rows[:2], MUTABILITY_COLUMN] = [0.5, 1.5]
+        store.genes[rows[2:], MUTABILITY_COLUMN] = [3.0, 5.0]
+        split(genetics, Lineage(), selection_of(store, rows, [2, 3]))
+
+        step = species_mutation_step(genetics, Selection.from_indices(rows, store.capacity))
+
+        np.testing.assert_allclose(step, [1.0, 4.0])
+
+    def test_a_species_with_nobody_in_the_population_has_no_step(self):
+        store, genetics, rows = make_world(4)
+        store.genes[rows, MUTABILITY_COLUMN] = 1.0
+        split(genetics, Lineage(), selection_of(store, rows, [2, 3]))
+
+        step = species_mutation_step(genetics, Selection.from_indices(rows[:2], store.capacity))
+
+        np.testing.assert_allclose(step, [1.0, 0.0])
 
     def test_without_mutability_only_identical_genomes_are_compatible(self):
         same, rows = self.two_at_distance(0.0, 0.0)
         apart, _ = self.two_at_distance(0.1, 0.0)
 
-        assert interbreeding_probability(same, rows[:1], rows[1:], 0.0, 4.0, COLUMNS)[0] == 1.0
-        assert interbreeding_probability(apart, rows[:1], rows[1:], 0.0, 4.0, COLUMNS)[0] == 0.0
+        assert fertility(same, rows[:1], rows[1:], 0.0, 4.0, COLUMNS)[0] == 1.0
+        assert fertility(apart, rows[:1], rows[1:], 0.0, 4.0, COLUMNS)[0] == 0.0
 
     def test_divergence_is_counted_in_the_same_steps(self):
         store, genetics, rows = make_world(2)
@@ -437,7 +478,7 @@ class TestTheThresholdIsCountedInMutationSteps:
         store.genes[rows[1], 0] = 50.0  # a gene distance does not read
         only_second = np.array([1], dtype=np.int64)
 
-        assert interbreeding_probability(genetics, rows[:1], rows[1:], 0.0, 2.0, only_second)[0] == 1.0
+        assert fertility(genetics, rows[:1], rows[1:], 0.0, 2.0, only_second)[0] == 1.0
 
 
 class TestOrdinaryCouplesAreFullyFertile:
@@ -467,7 +508,7 @@ class TestOrdinaryCouplesAreFullyFertile:
     def test_the_ordinary_distance_must_sit_below_the_threshold(self):
         store, genetics, rows = make_world(2)
         with pytest.raises(ValueError, match="ordinary < threshold"):
-            interbreeding_probability(genetics, rows[:1], rows[1:], 4.0, 4.0, COLUMNS)
+            fertility(genetics, rows[:1], rows[1:], 4.0, 4.0, COLUMNS)
         with pytest.raises(ValueError, match="ordinary < threshold"):
             SpeciationConfig(
                 DISTANCE_GENES, ordinary=5.0, threshold=4.0, min_founders=2, every_n_ticks=1
@@ -717,7 +758,7 @@ class TestIsolationCausesSpeciation:
         did_split, genetics, left, right = splits(seed=0, isolated=True)
         assert did_split
 
-        cross = interbreeding_probability(
+        cross = fertility(
             genetics, left.to_indices(), right.to_indices(), ORDINARY_STEPS, THRESHOLD_STEPS, COLUMNS
         )
         assert (cross == 0.0).all()

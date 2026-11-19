@@ -80,3 +80,24 @@ two sides' centroids sat about one typical pairwise distance apart (0.10–0.11)
   *centroids*, which sit much closer. A threshold on one is not the same quantity on the other, and
   §2.5's "the same threshold a split fires on" only holds once both are expressed in the species' own
   spread.
+
+## Fertility's ruler: the couple's mutability or the species' (#304)
+
+As #16 first merged, a couple's distance was counted in that couple's own mean mutability. Founders'
+mutability varies threefold (0.01–0.03), so at founding on seed 4 the least mutable couples were 78%
+fertile against about 100% for the most mutable. Demo world, 200 founders, animals alive at tick
+3,000, seeds 1–10 (`viability10.py`-style runs, one process per seed):
+
+| version | median | worlds under 600 |
+|---|---:|---:|
+| before #16 | 2,288 | 1/10 |
+| before #16, narrow founders | 2,626 | 1/10 |
+| #16, every couple fully fertile | 2,714 | 1/10 |
+| #16, the couple's own step | 2,421 | 4/10 |
+| **#16, the species' mean step (#304)** | **2,608** | **1/10** |
+
+Narrow founders change nothing measurable. The per-couple step is what stalled worlds, and the
+species' step removes the effect without giving up the relative threshold. The split check
+already read the species' mean (both of its groups together), so splitting is unchanged, and so
+is the harness in `tests/core/genetics/test_speciation.py` (96% of isolated pens of 40 split by
+400 generations, 1.5% of mixed pools), which breeds without this rule.
