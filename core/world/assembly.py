@@ -14,12 +14,9 @@ as data and then not consulting it, which is why the tuple sequences rather than
 
 The reasoning behind each position lives in CLAUDE.md §2.1, not here — it is a decision of
 consequence and belongs where decisions are recorded (§8.6). What belongs here is the fact that
-**this is the implemented prefix of that order, in that order.** One settled step has no system
-yet and is absent rather than stubbed (§8.2):
-
-| settled step | inserted by |
-|---|---|
-| speciation, last; periodicity still open | #16 |
+**this is that order, every step of it.** Speciation (#16) was the last step to get a system. It
+runs last, every `SpeciationConfig.every_n_ticks` ticks, so a split never happens with a newborn
+half-simulated and sees the tick's whole population, gestating young included.
 
 Energy enters an animal, animals die of running out of it, and animals now breed — so a
 population can rise as well as fall, and for the first time a gene can be *passed on* rather than
@@ -91,6 +88,7 @@ from core.entities.growth import GrowthConfig
 from core.entities.store import EntityStore
 from core.genetics.expression import GeneticsConfig
 from core.genetics.service import Genetics
+from core.genetics.speciation import Lineage, Speciation, SpeciationConfig
 from core.genetics.species import SpeciesRegistry
 from core.genetics.registry import GeneRegistry, GeneSpec
 from core.invariants import default_registry
@@ -120,6 +118,7 @@ TICK_ORDER: tuple[str, ...] = (
     "decomposition",
     "age_increment",
     "conception",
+    "speciation",
 )
 """The order systems run within a tick — a rule, not an implementation detail (CLAUDE.md §2.1).
 
@@ -160,6 +159,7 @@ class WorldConfig:
     plants: PlantsConfig
     growth: GrowthConfig
     conception: ConceptionConfig
+    speciation: SpeciationConfig
     diet: DietConfig
     feeding: FeedingConfig
     predation: PredationConfig
@@ -234,6 +234,7 @@ class World:
     barriers: Barriers
     death: Death
     conception: Conception
+    speciation: Speciation
     exertion: Exertion
     movement: Movement
     behaviour: Behaviour
@@ -307,7 +308,10 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
         store, ecology, genetics, carrion, diet, genes, config.feeding, config.predation, barriers
     )
     death = Death(store, ecology)
-    conception = Conception(store, ecology, genetics, genes, config.conception, barriers)
+    speciation = Speciation(genetics, genes, config.speciation, Lineage())
+    conception = Conception(
+        store, ecology, genetics, genes, config.conception, barriers, speciation
+    )
     exertion = Exertion(store, columns, config.exertion)
     movement = Movement(
         store,
@@ -388,6 +392,7 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
         death,
         aging,
         conception,
+        speciation,
         rng,
     )
     loop = TickLoop(
@@ -425,6 +430,7 @@ def build_world(config: WorldConfig, seed: int, debug_checks: bool = False) -> W
         barriers=barriers,
         death=death,
         conception=conception,
+        speciation=speciation,
         exertion=exertion,
         movement=movement,
         behaviour=behaviour,
@@ -478,6 +484,7 @@ def _build_systems(
     death: Death,
     aging: Aging,
     conception: Conception,
+    speciation: Speciation,
     rng: np.random.Generator,
 ) -> dict[str, Callable[[], None]]:
     """One zero-argument callable per system, by name. `_ordered` decides the sequence.
@@ -541,6 +548,8 @@ def _build_systems(
         "decomposition": lambda: carrion.decompose(),
         "age_increment": lambda: aging.advance(gestating_or_living()),
         "conception": lambda: conception.conceive(living(), rng),
+        # Over gestating young as well as the born: see `Speciation.check`.
+        "speciation": lambda: speciation.speciate(gestating_or_living(), current_tick()),
     }
 
 

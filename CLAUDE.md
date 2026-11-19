@@ -116,7 +116,7 @@ import order or from whatever sequence a test happened to use. Settled order, ow
 | 9 | death, then decomposition | starvation is only meaningful once the tick's upkeep is charged. Decomposition rots the carrion field once a tick, after the tick's strikes have laid their carrion (#179) |
 | 10 | age increment | closes a whole tick of living, and runs **before** births — see below |
 | 11 | reproduction (`conception`) | **after death**, so rows freed this tick are immediately reusable and a world at capacity can still breed |
-| 12 | speciation | periodicity undecided; see #115 |
+| 12 | speciation | **last**, so it sees the tick's whole population, gestating young included, and no newborn is half-simulated when a split lands. Runs every `SpeciationConfig.every_n_ticks`, about once a generation (#16): isolation takes hundreds of generations, so a split a few ticks late cannot matter |
 
 Two rules the order exists to enforce, which outlive any particular sequence:
 
@@ -135,9 +135,8 @@ than running wherever import order put it (§4 forbids a rule declared as data t
 `build_world` is the only place a store, its services and a loop are wired together — a second
 assembly is what §7.2 exists to prevent, and the viewer's world is now config handed to this one.
 
-`TICK_ORDER` holds the **implemented prefix** of the table, in the table's relative order. Every
-step but speciation (#16) has a system. Speciation is absent rather than stubbed (§8.2), so the
-assembled world eats, drinks, hunts, dies and breeds, but never splits. Reproduction runs as
+`TICK_ORDER` holds every step of the table, in its order. Speciation (#16) was the last to get a
+system, so the assembled world now eats, drinks, hunts, dies, breeds and splits. Reproduction runs as
 `conception`: a young is allocated as a row with a negative age and born when `Aging` brings it to
 zero (#20). Movement acts for **every** animal rather than for one drive's winners: #114 replaced the argmax over drives with a sampled heading, so there is no longer a subset "driven
 by" hunger and no animal stands still merely because the drive that won has no mechanic. That was
@@ -1447,14 +1446,48 @@ by" hunger and no animal stands still merely because the drive that won has no m
 
   **MAJOR** under §2.8: it moves what animals do.
 - **Emergent speciation.** Genetic distance accumulates between isolated populations; past a
-  threshold they can no longer interbreed and are tracked as a new species the player may name.
-  This makes isolation — by fence or by terrain — the most rewarding intervention in the game.
-  **Reproductive isolation degrades, it does not switch**: interbreeding probability falls
-  continuously to zero at the same threshold a split fires on, so by the time two populations
-  separate they were already hybridising at a negligible rate. Drift rates and the threshold that
-  separates isolated from mixed populations are measured in
-  [`docs/spikes/speciation-drift.md`](docs/spikes/speciation-drift.md); the threshold is a
-  per-world parameter, never hardcoded in `core/`.
+  threshold they can no longer interbreed and are tracked as a new species the player names (the
+  owner's decision, 2026-11-06). This makes isolation — by fence or by terrain — the most
+  rewarding intervention in the game. Settled in #16, which owned it; every choice below was the
+  owner's, made against [`docs/spikes/speciation-signature.md`](docs/spikes/speciation-signature.md).
+
+  - **Distance reads only the eight scent-signature genes.** They are neutral, so they drift like a
+    clock, and mate-finding already reads them (#188), so a split records an isolation that has
+    begun in behaviour. Over every gene, `maturity_age` and `gestation_length` were 98.4% of the
+    metric (#193, now resolved by scope). **What it forecloses: ecological speciation.** Two
+    populations diverging only in diet, size or life history stay one species.
+  - **Distance is counted in mutation steps**, the animals' own expressed `mutability`, never in
+    signature units. Mutability is a gene, and selection moved it sixfold up in one demo world and
+    to a third in another, with within-pool spread following it. An absolute threshold would read
+    that as divergence. The species' *measured* spread was the other way to be relative, and it
+    fails: it includes the substructure a split detects, so it grows as two demes drift apart.
+  - **Ordinary couples are fully fertile.** Fertility is 1 up to an ordinary within-species
+    distance (`SpeciationConfig.ordinary`) and falls linearly to 0 at the `threshold`. The demo
+    world derives the ordinary distance as 1.8 steps per gene at mutation–drift balance
+    (`speciation-drift.md`), 7.2 over eight genes, and puts the threshold at twice it. A falloff
+    from zero distance, as first built, taxed every birth to price the few that cross a boundary:
+    keeping ordinary couples 80% fertile needed a threshold no isolated pen ever drifted to.
+  - **Reproductive isolation degrades, it does not switch.** A split fires when two groups'
+    centroids sit `√(threshold² − ordinary²)` apart, which is exactly where a typical pair drawn
+    across them (the gap plus an ordinary scatter, in quadrature) reaches zero fertility. So by
+    the time a split is recorded, cross-group couples were already infertile.
+  - **A 2-means clustering of each species' signatures proposes; the gate decides.** It catches
+    isolation by terrain as well as by fence, which sealed fence regions would not. A daughter
+    must hold at least `min_founders` (a species of one cannot breed), a placeholder for what
+    #99's `selfing_rate` should derive. The smaller cluster becomes the daughter.
+  - **Founders sit at one point in cue space** (signatures over 0.45–0.55 in the demo world).
+    Founders spread over the whole space were a dozen overlapping pools: the first fence penned a
+    small sample whose mean landed far from everyone else's at once, while its members still
+    overlapped the outside as mates.
+  - **A split is something the player comes back to.** Measured by drift alone, pens of 20, 40
+    and 100 reached a split in a median of 60, 100 and 200 generations, and the harness splits 96%
+    of isolated pens of 40 by 400 generations against 1.5% of mixed pools. At §2.1's live rate
+    that is hours, so catch-up (§2.4) is what usually delivers it (#292's done-when moved
+    accordingly). A larger pen takes longer, which is real peripatric speciation.
+  - **Cost**: one check is 420 ms at 100,000 animals of one species, once a generation, so about
+    3.5 ms per tick spread out. The lineage is state and is snapshotted (schema v7).
+
+  **MAJOR** under §2.8: it changes who interbreeds, what founders smell like, and adds splits.
 
 ### 2.6 World and space
 
@@ -2022,27 +2055,30 @@ Not yet decided. Do not assume answers — ask.
   intervention currency**. The *direction* is settled on #26: **ecosystem value**, income that
   scales with how rich and stable the world is. Plain time-ticks, discovery-and-naming and a fixed
   endowment were rejected there, with reasons. The *formula* is still open, so the entry stays here
-  until income ships (§7.3). Three of its four terms wait on #16 and #193, so the playable slice
+  until income ships (§7.3). Three of its four terms waited on #16 and #193. #16 has landed and
+  #193 was resolved by its scope, but the genetic-diversity term still has no composition (#302),
+  so the playable slice
   (#292) starts from population and its stability and adds the rest as they land. The floor that
   keeps a declining world recoverable is undesigned, and belongs on #26.
 - **The remaining half of the metric definitions.** Species count and Shannon entropy over species
-  abundance are still open, and they are deferred *with* #16 — with one species they read 1 and 0
-  forever, so there is nothing yet to argue about and nothing to test an argument against. #30 owns
-  them and reserves them rather than leaving them for whoever reaches for them first.
+  abundance are still open. They were deferred *with* #16, since with one species they read 1 and 0
+  forever. #16 has landed, so there is now something to argue about. #30 owns them and reserves
+  them rather than leaving them for whoever reaches for them first.
 
   The third — within-species genetic diversity — is settled as far as the numbers to compute it
   *from*: `metrics.Sample.expressed_spread`, the per-gene standard deviation of the expressed
   phenotype. The composition into one scalar is **deliberately not shipped**, and the reason is
   measured: the obvious mean-of-variances reads 17.5 on the demo world, of which almost all is
   `maturity_age` alone, because it is founded over 40–120 ticks while `size` is founded over
-  0.8–1.2. That is #193's defect on the genetic *distance* metric, and it wants one scale-free
-  composition rather than two — so the scalar waits on #193, and a misleading number was not
-  shipped in the meantime (§8.7).
+  0.8–1.2. That was #193's defect on the genetic *distance* metric. #16 resolved it for distance
+  by scope, reading only the signature block, which leaves the scalar's composition its own open
+  question (#302). A misleading number is still not shipped in the meantime (§8.7).
 - Competition format: replicate count, duration, termination condition, what is measured.
-- Whether the player names species on speciation, and how lineage is displayed. The mechanic
-  itself is settled (§2.5): `core.genetics.speciation` splits a diverged population and records
-  the parent link in a `Lineage`. What is still open is purely the player-facing half — naming and
-  presentation — so `split()` returns an opaque id and stores no name.
+- **How lineage is displayed.** Naming is settled (#16, 2026-11-06): the player names a new
+  species, which carries a neutral placeholder until then, and the name is presentation stored
+  outside the rule-bearing state. The mechanic is settled too (§2.5). What is still open is how the
+  lineage is shown, which lands with the game client (#292), so `split()` returns an opaque id and
+  stores no name.
 
 ---
 

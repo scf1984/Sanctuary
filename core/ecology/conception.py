@@ -54,7 +54,7 @@ from core.ecology.service import Ecology
 from core.entities.store import EntityStore
 from core.genetics.registry import GeneRegistry, Unit
 from core.genetics.service import Genetics
-from core.genetics.speciation import interbreeding_probability
+from core.genetics.speciation import Speciation
 from core.selection import Selection
 from core.world.barriers import Barriers
 
@@ -76,15 +76,15 @@ class ConceptionConfig:
         because life-history theory puts it under exactly the selection this world applies: a short
         gestation returns a parent to breeding sooner, a long one is a bet nothing here rewards yet
         and #185's carcasses will.
-    speciation_threshold: genetic distance at which interbreeding probability reaches zero. #16 owns
-        what happens *at* that distance — recording a split — and reads the same number.
+
+    Who may breed with whom by genes is not here: `Speciation` owns the threshold, so interbreeding
+    and splitting read one number (#16).
     """
 
     contact_range: float
     offspring_energy: float
     maturity_gene: str
     gestation_gene: str
-    speciation_threshold: float
 
     def __post_init__(self) -> None:
         if self.contact_range <= 0.0:
@@ -93,11 +93,6 @@ class ConceptionConfig:
             raise ValueError(
                 f"offspring_energy must be positive, got {self.offspring_energy}; a free offspring "
                 "makes breeding costless and every lineage breeds without limit"
-            )
-        if self.speciation_threshold <= 0.0:
-            raise ValueError(
-                f"speciation_threshold must be positive, got {self.speciation_threshold}; at zero "
-                "no two animals are ever compatible and nothing can ever breed"
             )
 
 
@@ -117,6 +112,7 @@ class Conception:
         genes: GeneRegistry,
         config: ConceptionConfig,
         barriers: Barriers,
+        speciation: Speciation,
     ) -> None:
         self.store = store
         self.ecology = ecology
@@ -124,6 +120,7 @@ class Conception:
         self.config = config
         # Two animals either side of a fence are in range and still cannot touch (#276).
         self.barriers = barriers
+        self.speciation = speciation
         # Both are counts of ticks, so dimensionless: §2.1 makes the tick the only clock, and
         # neither is a length or an energy.
         self._maturity_column = np.array(
@@ -163,9 +160,7 @@ class Conception:
 
         # Compatibility is a probability rather than a gate, so a pair drifting toward the split
         # threshold breeds ever more rarely before it stops breeding at all — #16's "no cliff edge".
-        chance = interbreeding_probability(
-            self.genetics, first, second, self.config.speciation_threshold
-        )
+        chance = self.speciation.compatibility(first, second)
         accepted = rng.random(chance.shape[0]) < chance
         first, second = first[accepted], second[accepted]
 

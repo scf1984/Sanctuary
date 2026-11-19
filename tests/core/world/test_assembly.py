@@ -37,6 +37,7 @@ from core.ecology.metabolism import MetabolismConfig
 from core.ecology.plants import PlantsConfig
 from core.genetics.expression import GeneticsConfig
 from core.genetics.senescence import SenescenceConfig
+from core.genetics.speciation import SpeciationConfig
 from core.world.diffusion import CostAwareDiffusion, DiffusionConfig
 from core.invariants import no_entity_exceeds_its_top_speed
 from core.selection import Selection
@@ -154,6 +155,13 @@ def world_config(**overrides):
             # — and since `grow` doubles, it is reached rarely.
             reserve_fraction=0.1,
         ),
+        speciation=SpeciationConfig(
+            distance_genes=SIGNATURE_GENES,
+            ordinary=7.2,
+            threshold=14.4,
+            min_founders=10,
+            every_n_ticks=100,
+        ),
         conception=ConceptionConfig(
             # World units. A contact distance, not a search radius: finding each other is the lust
             # drive's business (#188), and by the time two animals are this close they have walked.
@@ -164,8 +172,6 @@ def world_config(**overrides):
             offspring_energy=60.0,
             maturity_gene="maturity_age",
             gestation_gene="gestation_length",
-            # Genetic distance at which interbreeding reaches zero; #16 reads the same number.
-            speciation_threshold=8.0,
         ),
         diet=DietConfig(animal_derived_gene="diet_animal_derived", frontier_exponent=2.0),
         feeding=FeedingConfig(intake_rate=0.6, assimilation_max=0.5, size_gene="size"),
@@ -331,7 +337,7 @@ class TestTheOrderIsDeclaredData:
 
     def test_a_system_built_but_not_placed_is_rejected(self):
         with pytest.raises(SystemOrderError, match="unplaced"):
-            _ordered({name: (lambda: None) for name in TICK_ORDER + ("speciation",)})
+            _ordered({name: (lambda: None) for name in TICK_ORDER + ("migration",)})
 
     def test_an_order_naming_a_system_that_does_not_exist_is_rejected(self):
         """Otherwise a name in TICK_ORDER with nothing behind it is a silent gap in the tick."""

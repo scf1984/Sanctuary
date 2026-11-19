@@ -41,6 +41,7 @@ from core.behaviour.exertion import ExertionConfig
 from core.behaviour.service import BehaviourConfig
 from core.behaviour.movement import MovementConfig
 from core.ecology.conception import ConceptionConfig
+from core.genetics.speciation import SpeciationConfig
 from core.entities.growth import GrowthConfig
 from core.ecology.cues import CueFieldConfig, ScentGenes
 from core.ecology.diet import DietConfig
@@ -75,6 +76,7 @@ _GENERATION_TICKS = sum(_FOUNDER_MATURITY) / 2.0 + sum(_FOUNDER_GESTATION) / 2.0
 _GENERATIONS_PER_YEAR = 6
 _YEAR_LENGTH = round(_GENERATIONS_PER_YEAR * _GENERATION_TICKS)
 
+
 # The thermal drive's two numbers (#249), measured on this world's founders across a year
 # (docs/spikes/thermal-drive.md), not chosen. Both are energy units per tick.
 #
@@ -92,6 +94,16 @@ _THERMAL_THRESHOLD = 0.002
 # Cue space is eight-dimensional, per CLAUDE.md §2.5's settled floor. The signature genes and the
 # two aversion directions are that reserved block, named here because the vocabulary is per world.
 _SIGNATURE_GENES = tuple(f"signature_{channel}" for channel in range(8))
+
+# Mutation steps (dimensionless), #16. A couple is fully fertile up to an ordinary within-species
+# distance and infertile at twice it. The ordinary distance is derived, not tuned: at mutation-drift
+# balance a gene's spread is about 1.8 mutation steps (docs/spikes/speciation-drift.md), so two
+# animals sit 1.8 x sqrt(2 x 8 signature genes) = 7.2 steps apart. Measured on this world, the
+# median pair sits 5.7-10 steps apart (docs/spikes/speciation-signature.md). "Twice" is the owner's
+# choice on #16: it puts a split at centroids sqrt(3) x 7.2 = 12.5 steps apart, which pens of 20, 40
+# and 100 reached by drift in a median of 60, 100 and 200 generations.
+ORDINARY_PAIR_STEPS = 1.8 * (2 * len(_SIGNATURE_GENES)) ** 0.5
+SPECIATION_THRESHOLD = 2.0 * ORDINARY_PAIR_STEPS
 _AVERSION_GENES = (
     tuple(f"aversion0_{channel}" for channel in range(8)),
     tuple(f"aversion1_{channel}" for channel in range(8)),
@@ -441,6 +453,17 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
             # — and since `grow` doubles, it is reached rarely.
             reserve_fraction=0.1,
         ),
+        speciation=SpeciationConfig(
+            distance_genes=_SIGNATURE_GENES,
+            ordinary=ORDINARY_PAIR_STEPS,
+            threshold=SPECIATION_THRESHOLD,
+            # A placeholder for what #99's `selfing_rate` should decide (see SpeciationConfig):
+            # enough animals that a daughter is a breeding population and not a stray family.
+            min_founders=20,
+            # About one founding generation (120 ticks). Isolation takes hundreds of them to
+            # reach a split, so a check once a generation cannot be meaningfully late.
+            every_n_ticks=round(_GENERATION_TICKS),
+        ),
         conception=ConceptionConfig(
             # World units. A contact distance, not a search radius: finding each other is the lust
             # drive's business (#188), and by the time two animals are this close they have walked.
@@ -451,21 +474,6 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
             offspring_energy=60.0,
             maturity_gene="maturity_age",
             gestation_gene="gestation_length",
-            # Genetic distance at which interbreeding reaches zero; #16 reads the same number.
-            #
-            # **Derived rather than chosen**: four times the 99th-percentile pairwise distance
-            # *within* this world's population, which measures ~73 (docs/spikes/
-            # interbreeding-threshold.md). The rule is what matters, not the value — the gate
-            # exists to stop *diverged populations* interbreeding, so it must sit above the
-            # spread a single healthy population already carries, or it throttles ordinary
-            # reproduction instead.
-            #
-            # It shipped at 8.0 against a median distance of ~29, which rejected 94% of
-            # candidate couples and suppressed births roughly 24-fold. **Re-derive this after
-            # #193**: the distance metric is currently dominated by `maturity_age` and
-            # `gestation_length`, and changing what distance measures changes this number
-            # completely.
-            speciation_threshold=300.0,
         ),
         diet=DietConfig(
             animal_derived_gene="diet_animal_derived",
@@ -668,7 +676,14 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
             "sight": (2.0, 6.0),
             "scent_emission": (0.5, 1.5),
             "scent_acuity": (0.5, 1.5),
-            **{name: (0.0, 1.0) for name in _SIGNATURE_GENES},
+            # One point in cue space, not all of it (#16, the owner's decision). Founders spread
+            # over (0, 1) are a dozen overlapping pools rather than one population: the first fence
+            # pens a small sample of that spread, its mean lands far from everyone else's at once,
+            # and yet its members overlap the outside as mates (docs/spikes/
+            # speciation-signature.md). A band of 0.1 starts one interbreeding population, so any
+            # later split is drift and isolation. 0.5 is the middle of the old range, so the
+            # aversion directions founded over (-1, 1) meet the same air on average.
+            **{name: (0.45, 0.55) for name in _SIGNATURE_GENES},
             **{name: (-1.0, 1.0) for name in _AVERSION_GENES[0] + _AVERSION_GENES[1]},
             # Around the 0.02 the drift spike measured as a working mutation-drift balance, drawn
             # rather than fixed so founders vary in evolvability like anything else

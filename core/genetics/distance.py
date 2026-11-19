@@ -32,7 +32,7 @@ from core.genetics.service import Genetics
 from core.selection import Selection
 
 
-def between(genetics: Genetics, a: np.ndarray, b: np.ndarray) -> np.ndarray:
+def between(genetics: Genetics, a: np.ndarray, b: np.ndarray, columns: np.ndarray) -> np.ndarray:
     """(len(a),) float32: Euclidean distance between each row of `a` and the paired row of `b`.
 
     `a` and `b` are **row index arrays**, paired elementwise: row `a[i]` against row `b[i]`. They
@@ -41,11 +41,15 @@ def between(genetics: Genetics, a: np.ndarray, b: np.ndarray) -> np.ndarray:
     pairing built from position crosses constantly. The old form rewired such a pairing silently
     instead of refusing it (#20).
 
+    columns: the vocabulary indices distance reads. **Required, never defaulted to every gene**:
+    over the whole vocabulary two life-history genes were 98.4% of the metric (#193), and a world
+    reads only its signature block (#16). A default would be a second answer to "which genes".
+
     This is a positional pairing of two equal-length arrays, not a claim that the two entities at
     position i are otherwise related.
     """
-    phenotype_a = genetics.heritable_at(a)
-    phenotype_b = genetics.heritable_at(b)
+    phenotype_a = genetics.heritable_columns_at(a, columns)
+    phenotype_b = genetics.heritable_columns_at(b, columns)
     if phenotype_a.shape[0] != phenotype_b.shape[0]:
         raise ValueError(
             f"a and b must select the same number of rows "
@@ -54,8 +58,11 @@ def between(genetics: Genetics, a: np.ndarray, b: np.ndarray) -> np.ndarray:
     return np.linalg.norm(phenotype_a - phenotype_b, axis=1).astype(np.float32)
 
 
-def centroid_between(genetics: Genetics, a: Selection, b: Selection) -> np.float32:
-    """Euclidean distance between the mean expressed phenotype of `a` and of `b`.
+def centroid_between(
+    genetics: Genetics, a: Selection, b: Selection, columns: np.ndarray
+) -> np.float32:
+    """Euclidean distance between the mean expressed phenotype of `a` and of `b`, over `columns`
+    (see `between`).
 
     `a` and `b` may differ in size and need not be disjoint. Zero exactly when `a` and `b` have
     the same mean expressed phenotype — in particular when `a` and `b` select the same rows, which
@@ -67,6 +74,6 @@ def centroid_between(genetics: Genetics, a: Selection, b: Selection) -> np.float
     """
     if len(a) == 0 or len(b) == 0:
         raise ValueError("centroid_between requires both selections to be non-empty")
-    centroid_a = genetics.heritable(a).mean(axis=0)
-    centroid_b = genetics.heritable(b).mean(axis=0)
+    centroid_a = genetics.heritable_columns_at(a.to_indices(), columns).mean(axis=0)
+    centroid_b = genetics.heritable_columns_at(b.to_indices(), columns).mean(axis=0)
     return np.float32(np.linalg.norm(centroid_a - centroid_b))

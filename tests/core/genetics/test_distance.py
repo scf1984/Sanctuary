@@ -23,6 +23,9 @@ GENETICS_CONFIG = GeneticsConfig(
 )
 GENE_REGISTRY = gene_registry(GENE_NAMES)
 
+# Every gene: these tests are about the metric, not about which genes a world reads (#16).
+ALL = np.arange(len(GENE_NAMES), dtype=np.int64)
+
 
 def make_world(rng, n_entities):
     """A store seeded with `n_entities` creatures split across three species with distinct,
@@ -86,7 +89,7 @@ class TestBetweenBasics:
 
         a = selection_of(store, rows, [0])
         b = selection_of(store, rows, [1])
-        assert between(genetics, a.to_indices(), b.to_indices())[0] == pytest.approx(5.0)  # 3-4-5 triangle
+        assert between(genetics, a.to_indices(), b.to_indices(), ALL)[0] == pytest.approx(5.0)  # 3-4-5 triangle
 
     def test_mismatched_length_selections_raise(self):
         rng = np.random.default_rng(1)
@@ -94,7 +97,7 @@ class TestBetweenBasics:
         a = selection_of(store, rows, [0, 1])
         b = selection_of(store, rows, [2])
         with pytest.raises(ValueError):
-            between(genetics, a.to_indices(), b.to_indices())
+            between(genetics, a.to_indices(), b.to_indices(), ALL)
 
     def test_unexpressed_genes_do_not_affect_distance(self):
         store = EntityStore(initial_capacity=2, n_drives=1, n_genes=len(GENE_NAMES))
@@ -117,7 +120,7 @@ class TestBetweenBasics:
         # Only "size" and "speed" are expressed by this species, and both creatures agree on
         # those -- so distance is zero even though "sight"/"camouflage" differ wildly, because
         # those slots are unexpressed and never enter the comparison.
-        assert between(genetics, a.to_indices(), b.to_indices())[0] == pytest.approx(0.0)
+        assert between(genetics, a.to_indices(), b.to_indices(), ALL)[0] == pytest.approx(0.0)
 
 
 class TestCentroidBetweenBasics:
@@ -127,35 +130,35 @@ class TestCentroidBetweenBasics:
         a = selection_of(store, rows, [0])
         empty = Selection.none(store.capacity)
         with pytest.raises(ValueError):
-            centroid_between(genetics, a, empty)
+            centroid_between(genetics, a, empty, ALL)
 
 
 @pytest.mark.parametrize("seed", range(25))
 class TestMetricProperties:
     def test_between_is_symmetric(self, seed):
         genetics, a, b, _ = three_populations(seed)
-        np.testing.assert_allclose(between(genetics, a.to_indices(), b.to_indices()), between(genetics, b.to_indices(), a.to_indices()))
+        np.testing.assert_allclose(between(genetics, a.to_indices(), b.to_indices(), ALL), between(genetics, b.to_indices(), a.to_indices(), ALL))
 
     def test_between_satisfies_triangle_inequality(self, seed):
         genetics, a, b, c = three_populations(seed)
-        direct = between(genetics, a.to_indices(), c.to_indices())
-        via_b = between(genetics, a.to_indices(), b.to_indices()) + between(genetics, b.to_indices(), c.to_indices())
+        direct = between(genetics, a.to_indices(), c.to_indices(), ALL)
+        via_b = between(genetics, a.to_indices(), b.to_indices(), ALL) + between(genetics, b.to_indices(), c.to_indices(), ALL)
         assert (direct <= via_b + 1e-4).all()
 
     def test_between_a_selection_and_itself_is_zero(self, seed):
         genetics, a, _, _ = three_populations(seed)
-        np.testing.assert_allclose(between(genetics, a.to_indices(), a.to_indices()), 0.0, atol=1e-5)
+        np.testing.assert_allclose(between(genetics, a.to_indices(), a.to_indices(), ALL), 0.0, atol=1e-5)
 
     def test_centroid_between_is_symmetric(self, seed):
         genetics, a, b, _ = three_populations(seed)
-        assert centroid_between(genetics, a, b) == pytest.approx(centroid_between(genetics, b, a))
+        assert centroid_between(genetics, a, b, ALL) == pytest.approx(centroid_between(genetics, b, a, ALL))
 
     def test_centroid_between_satisfies_triangle_inequality(self, seed):
         genetics, a, b, c = three_populations(seed)
-        direct = centroid_between(genetics, a, c)
-        via_b = centroid_between(genetics, a, b) + centroid_between(genetics, b, c)
+        direct = centroid_between(genetics, a, c, ALL)
+        via_b = centroid_between(genetics, a, b, ALL) + centroid_between(genetics, b, c, ALL)
         assert direct <= via_b + 1e-4
 
     def test_centroid_between_a_population_and_itself_is_zero(self, seed):
         genetics, a, _, _ = three_populations(seed)
-        assert centroid_between(genetics, a, a) == pytest.approx(0.0, abs=1e-5)
+        assert centroid_between(genetics, a, a, ALL) == pytest.approx(0.0, abs=1e-5)

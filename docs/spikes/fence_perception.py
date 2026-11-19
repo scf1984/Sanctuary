@@ -331,7 +331,7 @@ def distance_run(seed: int, ticks: int = 1000) -> dict[str, float]:
         inside, outside = split()
         if len(inside) == 0 or len(outside) == 0:
             return float("nan"), float("nan"), len(inside), len(outside)
-        whole = float(centroid_between(world.genetics, inside, outside))
+        whole = float(centroid_between(world.genetics, inside, outside, np.arange(len(world.genes.vocabulary.names))))
         a = world.genetics.heritable(inside)[:, signature_columns].mean(axis=0)
         b = world.genetics.heritable(outside)[:, signature_columns].mean(axis=0)
         return whole, float(np.linalg.norm(a - b)), len(inside), len(outside)
