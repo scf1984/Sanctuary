@@ -5,7 +5,8 @@ import json
 import pytest
 
 import api
-from service import close_world, open_world
+from scheduler import Anchor, RateChange, Timeline
+from service import close_world, keep_timeline, open_timeline, open_world
 
 
 def comparable(session):
@@ -118,3 +119,44 @@ class TestSnapshotReplacement:
         close_world(session, tmp_path)
 
         assert sorted(p.name for p in tmp_path.iterdir()) == ["snapshot.npz", "world.json"]
+
+
+class TestTimeline:
+    """#307: the state directory keeps the world's history of time, and a restart is unwatched."""
+
+    ANCHOR = Anchor(wall_seconds=0.0, tick=0, ticks_per_second=1.0)
+
+    def test_a_world_never_retimed_has_only_its_anchor(self, tmp_path):
+        timeline = open_timeline(tmp_path, self.ANCHOR, now=50.0)
+
+        assert timeline == Timeline(self.ANCHOR)
+        assert not (tmp_path / "timeline.json").exists()
+
+    def test_a_kept_timeline_reopens_with_its_history(self, tmp_path):
+        """Its age at every moment it lived through is still there to reconstruct."""
+        kept = Timeline(self.ANCHOR).at_rate(10.0, 0.0).at_own_rate(50.0)
+        keep_timeline(tmp_path, kept)
+
+        reopened = open_timeline(tmp_path, self.ANCHOR, now=100.0)
+
+        assert reopened == kept
+        assert reopened.due(100.0) == 60
+
+    def test_a_restart_resumes_the_worlds_own_rate(self, tmp_path):
+        """A hard kill mid-pause leaves the pause on record. Nobody watches a world that has just
+        started, so it resumes, at the restart since when the player left is not known."""
+        keep_timeline(tmp_path, Timeline(self.ANCHOR).at_rate(10.0, 0.0))
+
+        reopened = open_timeline(tmp_path, self.ANCHOR, now=80.0)
+
+        assert reopened.ticks_per_second == 1.0
+        assert reopened.changes[-1] == RateChange(wall_seconds=80.0, tick=10, ticks_per_second=1.0)
+        assert open_timeline(tmp_path, self.ANCHOR, now=90.0) == reopened
+
+    def test_the_record_is_plain_json_without_the_anchor(self, tmp_path):
+        """The anchor lives in `world.json` alone, so the two files cannot disagree about it."""
+        keep_timeline(tmp_path, Timeline(self.ANCHOR).at_rate(10.0, 0.0))
+
+        record = json.loads((tmp_path / "timeline.json").read_text(encoding="utf-8"))
+
+        assert record == {"changes": [{"wall_seconds": 10.0, "tick": 10, "ticks_per_second": 0.0}]}

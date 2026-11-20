@@ -14,11 +14,25 @@ import pytest
 
 import api
 from api import CullRequest, Refused
-from scheduler import Anchor, Stage, WakeSchedule
+from scheduler import Anchor, Stage, Timeline, WakeSchedule
 from service import Service
 from tests.api.test_values import assert_plain
 
 SCHEDULE = WakeSchedule(watched_interval=1.0, absent=(Stage(math.inf, 3_600.0),))
+FASTEST = 6.0
+
+
+def make_service(session, anchor, schedule, clock, chunk, kept=None):
+    """A service whose recorded timelines land in `kept`, where a test can read them."""
+    return Service(
+        session,
+        Timeline(anchor),
+        schedule,
+        clock,
+        chunk,
+        fastest_ticks_per_second=FASTEST,
+        keep=(kept if kept is not None else []).append,
+    )
 
 
 class Clock:
@@ -30,11 +44,17 @@ class Clock:
 
 
 @pytest.fixture
-def served():
+def kept():
+    """Every timeline the served world's service recorded, in order."""
+    return []
+
+
+@pytest.fixture
+def served(kept):
     """A service on a small demo world, an HTTP server on a free port, and a remote session."""
     clock = Clock()
     session = api.create("demo", seed=3, founders=40)
-    service = Service(session, Anchor(clock.now, 0, 1.0), SCHEDULE, clock, chunk=10)
+    service = make_service(session, Anchor(clock.now, 0, 1.0), SCHEDULE, clock, 10, kept)
     server = service.http_server("127.0.0.1", 0)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -59,7 +79,7 @@ class TestTheWorldTicksOnItsOwn:
         """The done-when, on a real thread and a real clock: no client, and the world moves."""
         session = api.create("demo", seed=3, founders=20)
         fast = WakeSchedule(watched_interval=0.05, absent=(Stage(math.inf, 0.05),))
-        service = Service(session, Anchor(time.time(), 0, 40.0), fast, time.time, chunk=5)
+        service = make_service(session, Anchor(time.time(), 0, 40.0), fast, time.time, 5)
         service.start()
         deadline = time.time() + 10.0
         while session.status().tick < 10 and time.time() < deadline:
@@ -71,7 +91,7 @@ class TestTheWorldTicksOnItsOwn:
     def test_stopping_waits_for_a_chunk_boundary_not_for_the_whole_catch_up(self):
         session = api.create("demo", seed=3, founders=20)
         clock = Clock()
-        service = Service(session, Anchor(clock.now, 0, 1.0), SCHEDULE, clock, chunk=5)
+        service = make_service(session, Anchor(clock.now, 0, 1.0), SCHEDULE, clock, 5)
         service._stop.set()
 
         assert service.wake(clock.now + 10_000.0) == 5
@@ -96,6 +116,7 @@ class TestTheProtocol:
         for value in (
             remote.status(), info, remote.terrain(), remote.frame(), remote.barriers(),
             remote.history(), remote.inspect(some_id), remote.inspect(-1), remote.ledger(),
+            remote.pace(),
             *(remote.condition(m) for m in info.conditions),
             *(remote.field(f) for f in info.field_layers),
         ):
@@ -199,6 +220,125 @@ class TestWatching:
 
         assert not service.watched
         assert service.last_seen == clock.now
+
+
+def watch(service, remote):
+    """Open a real event stream on a thread, returning once the service counts it as watching. It
+    stays open until the service stops."""
+    events = remote.events()
+    reader = threading.Thread(target=lambda: next(events, None), daemon=True)
+    reader.start()
+    deadline = time.time() + 5.0
+    while not service.watched and time.time() < deadline:
+        time.sleep(0.01)
+    assert service.watched
+
+
+class TestPace:
+    """#307: a watching player pauses and fast-forwards, and leaving resumes the world's own rate."""
+
+    def test_the_pace_says_the_rate_and_the_range_offered(self, served):
+        _service, _session, remote, _clock = served
+
+        assert remote.pace() == api.Pace(
+            ticks_per_second=1.0, own_ticks_per_second=1.0, fastest_ticks_per_second=FASTEST
+        )
+
+    def test_nobody_can_change_the_pace_of_a_world_they_are_not_watching(self, served):
+        """Decision 8's follow-up: a pause that outlived the player would let them switch off the
+        world running while they are away."""
+        service, _session, remote, _clock = served
+
+        with pytest.raises(Refused, match="watching"):
+            remote.set_pace(0.0)
+        assert service.timeline.changes == ()
+
+    def test_a_watching_player_pauses_the_world(self, served):
+        service, session, remote, clock = served
+        watch(service, remote)
+        clock.now += 5.0
+        service.wake(clock.now)
+
+        assert remote.set_pace(0.0).ticks_per_second == 0.0
+        clock.now += 100.0
+        service.wake(clock.now)
+
+        assert session.status().tick == 5
+
+    def test_a_watching_player_fast_forwards_the_world(self, served):
+        service, session, remote, clock = served
+        watch(service, remote)
+
+        remote.set_pace(FASTEST)
+        clock.now += 10.0
+        service.wake(clock.now)
+
+        assert session.status().tick == 60
+
+    def test_no_rate_past_the_fastest_is_offered(self, served):
+        service, _session, remote, _clock = served
+        watch(service, remote)
+
+        with pytest.raises(Refused, match="fastest"):
+            remote.set_pace(FASTEST + 0.5)
+
+    @pytest.mark.parametrize("rate", [-1.0, math.inf])
+    def test_a_rate_that_is_not_one_is_a_mistake(self, served, rate):
+        service, _session, remote, _clock = served
+        watch(service, remote)
+
+        with pytest.raises(ValueError, match="rate"):
+            service.set_pace(rate)
+
+    def test_only_a_pace_request_sets_the_pace(self, served):
+        service, _session, remote, _clock = served
+        watch(service, remote)
+
+        with pytest.raises(TypeError, match="PaceRequest"):
+            remote._post("/pace", CullRequest(species_id=0, count=1, survivors=1))
+
+    def test_leaving_resumes_the_worlds_own_rate_at_that_moment(self, served):
+        """A world paused and then closed keeps running, and owes nothing for the pause itself."""
+        service, session, remote, clock = served
+        watcher = service.attach()
+        clock.now += 5.0
+        remote.set_pace(0.0)
+        clock.now += 300.0
+
+        service.detach(watcher)
+        clock.now += 20.0
+        service.wake(clock.now)
+
+        assert not service.watched
+        assert service.timeline.ticks_per_second == 1.0
+        assert service.timeline.changes[-1].wall_seconds == clock.now - 20.0
+        assert session.status().tick == 25
+
+    def test_every_change_is_recorded_before_it_takes_effect(self, served, kept):
+        """The state directory must never hold a timeline older than the one the world runs by,
+        or a crash would restart it owing a different number of ticks."""
+        service, _session, remote, clock = served
+        watcher = service.attach()
+        clock.now += 1.0
+        remote.set_pace(0.0)
+        clock.now += 1.0
+        remote.set_pace(3.0)
+        clock.now += 1.0
+        service.detach(watcher)
+
+        assert [timeline.ticks_per_second for timeline in kept] == [0.0, 3.0, 1.0]
+        assert kept[-1] == service.timeline
+
+    def test_stopping_the_service_is_everyone_leaving(self, served, kept):
+        """So the snapshot saved after a stop sits beside a timeline back at the world's own rate,
+        whenever the stream threads get round to detaching."""
+        service, _session, remote, _clock = served
+        service.attach()
+        remote.set_pace(0.0)
+
+        service.stop()
+
+        assert kept[-1].ticks_per_second == 1.0
 
 
 class TestTheViewerOverTheProtocol:

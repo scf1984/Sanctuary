@@ -67,7 +67,9 @@ These were decided deliberately. Reopen them explicitly, not by accident.
 - **The tick counter is the only clock.** No wall-clock reads anywhere in simulation logic. Real
   time exists solely to compute how many ticks are owed.
 - **The world advances at the same sim-rate whether or not anyone is watching.** Offline is not a
-  different simulation; it is the same simulation with rendering off.
+  different simulation; it is the same simulation with rendering off. The one exception belongs to
+  the watcher: a watching player may pause or fast-forward, and leaving always restores the
+  world's own rate (§2.4, #307), so an unwatched world runs at that rate without exception.
 - **The renderer interpolates between ticks.** Visual smoothness must not constrain tick size.
 
 Baseline ratios — tunable, but they must be tuned *as a table*, not as constants that drift apart:
@@ -253,6 +255,42 @@ by" hunger and no animal stands still merely because the drive that won has no m
   gaps rounds at every wake, so a schedule that woke more often would lose more fractions of a
   tick and the world would age at a rate set by the schedule. The anchor outlives the process: a
   service that restarts keeps it beside the snapshot, so the world owes its downtime too.
+- **Time controls make the anchor a series of rate segments** (#307, the owner's decision 8 on
+  #292). A watching player may pause (rate 0), resume, or fast-forward. Each change is a
+  `scheduler.RateChange`: the moment, the tick due then, and the new rate. A `Timeline` is the
+  founding anchor plus every change since. The tick due at any moment is read off the segment in
+  force then, from that segment's own start. So each change is a fixed point too, and batching
+  still cannot change the world's age. The series is the world's history of time: from it a
+  world's age at any moment it lived through can be reconstructed. It is kept in the state
+  directory (`timeline.json`) beside the founding, which keeps the anchor alone, so the two cannot
+  disagree. Every change is written before it takes effect.
+
+  Three rules make it honest:
+
+  - **A change lands on the last whole tick due** (§2.7's tick boundary). The fraction in progress
+    is dropped, at most one tick per change and never per wake. Starting the new segment at that
+    tick's own moment would keep the fraction, but would apply a fast-forward retroactively.
+  - **A change is made against the tick due, not the tick the world has reached.** A world still
+    paying a backlog when the player pauses goes on paying it. Forgiving the backlog would make
+    what a pause forgave depend on when the last wake was.
+  - **Only a watcher may change the rate, and leaving undoes it** (decision 8's follow-up). The
+    service refuses `POST /pace` unless an event stream is open. When the last one closes, or the
+    service stops, the world's own rate resumes at that moment. A restart is unwatched, so it
+    resumes the own rate too: a hard kill mid-pause resumes it at the restart, since when the
+    player left is not known (#52's loss, not a new one). So "the world kept running while you
+    were away" stays unconditional, and the absence schedule above is untouched by time controls.
+
+  **The fastest rate offered is measured, not chosen** (§8.5): `Pacing.fastest_ticks_per_second`.
+  Past what a world computes, a fast-forward only builds a debt of ticks that it pays after the
+  player has gone. The demo world offers **4 ticks a second**: over seeds 0–2, a settled world
+  (ticks 3,000–6,000, 2,800–4,000 animals) ran 4.6–13.3 ticks a second per 250-tick window, median
+  9.3, and the ceiling sits under the slowest window rather than at the median, since a rate the
+  median sustains still falls behind in the slow stretches. Early on, with a few hundred animals,
+  the same world runs 40–55, so the ceiling is a settled world's, not a young one's. It is a fact
+  about one machine and one population, so it is re-measured when either moves (#258).
+
+  Open on #307: whether fast-forward is free once income accrues per tick (decision 4), and whether
+  a pause should hold while one of several watchers leaves (stage 3, §3.1).
 - **Catch-up is identical to live play, not merely statistically equivalent.** `TickLoop.advance`
   runs the same systems over the same ticks however they are batched, so one call, single ticks
   and uneven chunks reach the same state bit for bit (`tests/scheduler/test_catchup.py`). A
@@ -1794,15 +1832,17 @@ wrapping work. If it is not, no amount of service code will save it.
   sits behind the protocol, where no client can see it.
 - **A served world advances in one place**: the ticker thread, running #32's executor. There is no
   advance endpoint, and `RemoteSession.advance` raises `Refused`. An open event stream is what
-  "watched" means, and it shortens the wake interval and nothing else. Any request also counts as
-  the player looking, which resets the absence clock that decays the schedule.
+  "watched" means. It shortens the wake interval, and it is what lets the player set the pace
+  (`GET`/`POST /pace`, §2.4's time controls), which ends when the last stream closes. Any request
+  also counts as the player looking, which resets the absence clock that decays the schedule.
 - **One codec, `api.wire`, used by both ends.** A dataclass is encoded from its own definition and
   tagged with its type's name, so no message shape is written down anywhere twice. Only
   `api.values`' own types decode. NaN and infinity are refused, since `JSON.parse` rejects them.
-- **A state directory holds the founding and the snapshot.** The founding (`world.json`: the world's
-  name, seed, founders and anchor) is written once and never changes, so it cannot disagree with a
-  newer snapshot. A restart rebuilds the world from it, restores the snapshot, and pays the
-  downtime from the anchor. A snapshot is replaced only once the new one is whole. A hard kill
+- **A state directory holds the founding, the timeline and the snapshot.** The founding
+  (`world.json`: the world's name, seed, founders and anchor) is written once and never changes, so
+  it cannot disagree with a newer snapshot. The timeline (`timeline.json`) holds every rate change
+  since the anchor (§2.4), rewritten before each takes effect. A restart rebuilds the world from
+  the founding, restores the snapshot, and pays the downtime from the timeline. A snapshot is replaced only once the new one is whole. A hard kill
   loses everything since the last graceful stop, which is #52's to solve.
 
 ### 3.2 Infrastructure

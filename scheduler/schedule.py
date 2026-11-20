@@ -80,15 +80,27 @@ class Pacing:
     ticks_per_second: §2.1's live rate, a ratio-table entry (baseline 1), tuned with that table
         and never on its own. Positive.
     schedule: when the world wakes. It moves when compute happens and never how much (§2.4).
+    fastest_ticks_per_second: the fastest a watching player may run the world (#307). Measured,
+        never chosen (§8.5): a rate the world cannot compute only builds a debt it pays after the
+        player has gone, so the ceiling is what the world sustains. At least `ticks_per_second`.
 
-    Per world (§2.4), and never one of its rules. Neither number changes what the world does,
-    only when it is done, which is why neither enters the config fingerprint a snapshot is
-    checked against (§3.2).
+    Per world (§2.4), and never one of its rules. No number here changes what the world does,
+    only when it is done, which is why none enters the config fingerprint a snapshot is checked
+    against (§3.2).
     """
 
     ticks_per_second: float
     schedule: WakeSchedule
+    fastest_ticks_per_second: float
 
     def __post_init__(self) -> None:
         if not self.ticks_per_second > 0:
             raise ValueError(f"ticks_per_second must be positive, got {self.ticks_per_second}")
+        if not (
+            math.isfinite(self.fastest_ticks_per_second)
+            and self.fastest_ticks_per_second >= self.ticks_per_second
+        ):
+            raise ValueError(
+                f"the fastest rate ({self.fastest_ticks_per_second}) must be finite and at least "
+                f"the world's own ({self.ticks_per_second}): a measured ceiling, never none"
+            )

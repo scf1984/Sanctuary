@@ -12,6 +12,10 @@ the world *should* be at from that anchor and runs the difference. Summing per-w
 would round at every wake, and a schedule that woke more often would lose more fractions of a tick,
 which is exactly the "waking more often makes the world age differently" that §2.4 forbids.
 
+A served world's time controls (#307) do not change that. A pause or a fast-forward is a recorded
+`RateChange` on a `scheduler.timeline.Timeline`, and each change is itself a fixed point, so
+catch-up asks a `Reckoning` what tick is due and never what happened since it last asked.
+
 **No clock is read here.** The caller passes `now`, in seconds. That keeps the arithmetic testable
 without waiting, and keeps the one place that reads a wall clock in the process that serves the
 world (#36). `core/` never does (§2.1).
@@ -76,6 +80,13 @@ class Anchor:
         return self.tick + math.floor(elapsed * self.ticks_per_second)
 
 
+class Reckoning(Protocol):
+    """What catch-up asks of time: the tick a world should have reached at real time `now`. An
+    `Anchor` is one, and so is a `Timeline` of rate changes after it (#307)."""
+
+    def due(self, now: float) -> int: ...
+
+
 @dataclass(frozen=True)
 class Progress:
     """How far one catch-up has got: `done` of `owed` ticks, and where the world now stands.
@@ -93,16 +104,19 @@ class Progress:
 class CatchUp:
     """Runs what a world owes, in chunks, reporting after each.
 
+    reckoning: what says which tick is due. Asked afresh at the start of every run, so a served
+        world whose rate the player changes (#307) is reckoned under the new rate from its next
+        wake on.
     chunk: ticks per `advance` call between progress reports. Batching never changes outcomes
         (see the module docstring), so this only decides how often a caller hears back, which
         matters because a long absence can take minutes to pay off.
     """
 
-    def __init__(self, world: Advanceable, anchor: Anchor, chunk: int) -> None:
+    def __init__(self, world: Advanceable, reckoning: Reckoning, chunk: int) -> None:
         if chunk < 1:
             raise ValueError(f"chunk must be at least one tick, got {chunk}")
         self.world = world
-        self.anchor = anchor
+        self.reckoning = reckoning
         self.chunk = chunk
 
     def owed(self, now: float) -> int:
@@ -112,7 +126,7 @@ class CatchUp:
         status = self.world.status()
         if status.collapsed:
             return 0
-        return max(0, self.anchor.due(now) - status.tick)
+        return max(0, self.reckoning.due(now) - status.tick)
 
     def run(self, now: float) -> Iterator[Progress]:
         """Pay off what is owed at `now`, yielding after every chunk.
