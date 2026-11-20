@@ -4,6 +4,6 @@ Stage 2 of §3.1. One process, one world, no accounts. `python -m service` runs 
 """
 
 from service.server import Service
-from service.state import Founding, close_world, open_world
+from service.state import Founding, close_world, keep_timeline, open_timeline, open_world
 
-__all__ = ["Founding", "Service", "close_world", "open_world"]
+__all__ = ["Founding", "Service", "close_world", "keep_timeline", "open_timeline", "open_world"]

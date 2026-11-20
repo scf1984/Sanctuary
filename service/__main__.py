@@ -20,7 +20,7 @@ from typing import Callable, Optional, Sequence
 
 import api
 from service.server import Service
-from service.state import close_world, open_world
+from service.state import close_world, keep_timeline, open_timeline, open_world
 from worlds import pacing_for
 
 # Used only when founding. A world that already exists keeps what it was founded with.
@@ -53,13 +53,23 @@ def run(
         # Defaults apply only when founding. For a world that already exists, an argument left out
         # means "whatever it was founded with", and one given must match it (see `open_world`).
         asked = {key: _FOUNDING_DEFAULTS[key] if value is None else value for key, value in asked.items()}
+    now = clock()
     session, founding = open_world(
         args.state,
-        now=clock(),
+        now=now,
         ticks_per_second=pacing_for(asked["world"] or api.DEFAULT_WORLD).ticks_per_second,
         **asked,
     )
-    service = Service(session, founding.anchor, pacing_for(founding.world).schedule, clock, args.chunk)
+    pacing = pacing_for(founding.world)
+    service = Service(
+        session,
+        open_timeline(args.state, founding.anchor, now),
+        pacing.schedule,
+        clock,
+        args.chunk,
+        fastest_ticks_per_second=pacing.fastest_ticks_per_second,
+        keep=lambda timeline: keep_timeline(args.state, timeline),
+    )
     server = service.http_server(args.host, args.port)
     threading.Thread(target=server.serve_forever, name="http", daemon=True).start()
     service.start()

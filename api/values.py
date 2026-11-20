@@ -40,6 +40,8 @@ __all__ = [
     "Frame",
     "GeneReading",
     "Ledger",
+    "Pace",
+    "PaceRequest",
     "Progress",
     "Quote",
     "Record",
@@ -292,3 +294,25 @@ Request = Union[CullRequest, FenceRequest]
 """What a client may ask a world to do. Data, never a core object: the session builds the
 intervention, so a drag in a viewer and a standing policy firing during an absence travel the same
 path (§2.7)."""
+
+
+@dataclass(frozen=True)
+class Pace:
+    """How fast a served world runs, and the range a watching player may set (#307).
+
+    ticks_per_second: the rate now. Zero while paused.
+    own_ticks_per_second: the world's own rate, §2.1's live rate. Leaving always returns to it.
+    fastest_ticks_per_second: the most the world is measured to sustain, and so the most offered.
+    """
+
+    ticks_per_second: float
+    own_ticks_per_second: float
+    fastest_ticks_per_second: float
+
+
+@dataclass(frozen=True)
+class PaceRequest:
+    """Run the served world at `ticks_per_second`: 0 pauses, the world's own rate resumes, and
+    anything up to the fastest fast-forwards. Granted only while the asker is watching."""
+
+    ticks_per_second: float

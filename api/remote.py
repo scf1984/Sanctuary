@@ -31,6 +31,8 @@ from api.values import (
     FieldView,
     Frame,
     Ledger,
+    Pace,
+    PaceRequest,
     Progress,
     Quote,
     Request,
@@ -109,6 +111,22 @@ class RemoteSession:
         self._post("/request", request)
 
     # -- watching -----------------------------------------------------------------------------
+
+    def pace(self) -> Pace:
+        """How fast the world runs now, and what a watching player may set it to (#307)."""
+        return self._get("/pace")
+
+    def set_pace(self, ticks_per_second: float) -> Pace:
+        """Pause (0), resume (the world's own rate) or fast-forward, up to the fastest offered.
+
+        **Only while watching.** It raises `Refused` unless some client holds `events()` open,
+        and the rate returns to the world's own the moment the last one closes, so "the world
+        kept running while you were away" holds however the player left it (#292, decision 8).
+        A rate past the fastest is refused too, because it would only build a debt of ticks the
+        world pays after the player has gone. A local session has no counterpart: it advances
+        when its client says, so it has no clock to set.
+        """
+        return self._post("/pace", PaceRequest(ticks_per_second=ticks_per_second))
 
     def events(self) -> Iterator[Progress]:
         """Every catch-up chunk as the service announces it, until the connection closes.
