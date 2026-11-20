@@ -15,6 +15,10 @@ open. That matters because the absence clock is what decays the schedule (§2.4)
 
 Standard library only, by the owner's decision on #36: `ThreadingHTTPServer` is enough for one
 user and one world, and replacing it later sits behind the protocol where no client can see it.
+
+**The game client is served from here too** (#292, decision 5; #306): a path that is not an API
+route is a file of the built client, so one process and one origin serve the whole game and no
+route needs a CORS policy.
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ import queue
 import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any, Callable, Optional
 from urllib.parse import unquote
 
@@ -34,6 +39,22 @@ from scheduler import Anchor, CatchUp, Progress, WakeSchedule
 # How often an idle stream sends a comment line. Writing is the only way a server learns that a
 # client has gone, so without it a closed viewer would count as watching until the next wake.
 _KEEPALIVE_SECONDS = 15.0
+
+# What the built client is made of, and what each is served as. A table rather than `mimetypes`,
+# because on Windows `mimetypes` reads the registry, which commonly maps `.js` to `text/plain`, and
+# a browser refuses to run a module served as text. An extension not listed is not served: the
+# build emits nothing else, and anything else in the directory was not put there by it.
+_CLIENT_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".ico": "image/x-icon",
+    ".woff2": "font/woff2",
+    ".json": "application/json",
+    ".map": "application/json",
+}
 
 
 class Service:
@@ -143,14 +164,21 @@ class Service:
 
     # -- serving ------------------------------------------------------------------------------
 
-    def http_server(self, host: str, port: int) -> ThreadingHTTPServer:
-        """An HTTP server for this service. `port=0` picks a free one (`server.server_port`)."""
+    def http_server(
+        self, host: str, port: int, client: Optional[Path] = None
+    ) -> ThreadingHTTPServer:
+        """An HTTP server for this service. `port=0` picks a free one (`server.server_port`).
+
+        client: the built game client's directory (`clients/web/dist`), served at `/` for every
+            path that is not an API route. None serves the API alone, and `/` says so.
+        """
         service = self
 
         class Handler(_Handler):
             pass
 
         Handler.service = service
+        Handler.client = client.resolve() if client is not None else None
         server = ThreadingHTTPServer((host, port), Handler)
         server.daemon_threads = True
         return server
@@ -195,6 +223,7 @@ _WRITES: dict[str, Callable[[api.Session, Any], object]] = {
 
 class _Handler(BaseHTTPRequestHandler):
     service: Service
+    client: Optional[Path] = None
     protocol_version = "HTTP/1.1"
 
     def do_GET(self) -> None:  # noqa: N802 - the name http.server dispatches on
@@ -208,7 +237,30 @@ class _Handler(BaseHTTPRequestHandler):
                 args = [unquote(group) for group in match.groups()]
                 self._answer(lambda: call(self.service.session, *args))
                 return
-        self._error(404, "LookupError", f"no such route: {self.path}")
+        self._serve_client()
+
+    def _serve_client(self) -> None:
+        """A file of the built client, or 404. `/` is its `index.html`.
+
+        The path is resolved and must stay inside the client's directory, so `/../world.json`
+        cannot read the state directory or anything else on a machine serving a public
+        repository's code.
+        """
+        if self.client is None:
+            self._error(404, "LookupError", f"no such route: {self.path}; the game client is not served")
+            return
+        relative = unquote(self.path.split("?", 1)[0]).lstrip("/") or "index.html"
+        target = (self.client / relative).resolve()
+        kind = _CLIENT_TYPES.get(target.suffix)
+        if not target.is_relative_to(self.client) or kind is None or not target.is_file():
+            self._error(404, "LookupError", f"no such route: {self.path}")
+            return
+        body = target.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", kind)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def do_POST(self) -> None:  # noqa: N802
         self.service.seen()
