@@ -77,6 +77,19 @@ def test_skips_virtualenvs_whatever_they_are_named(tmp_path):
     assert list(iter_source_files(tmp_path)) == [tmp_path / "mine.py"]
 
 
+def test_skips_an_npm_install(tmp_path):
+    """The game client's `node_modules` (#306) can hold Python that npm packages ship, such as
+    node-gyp's. npm marks every install with `.package-lock.json`, so that is what is tested on."""
+    install = tmp_path / "clients" / "web" / "node_modules"
+    (install / "node-gyp" / "gyp").mkdir(parents=True)
+    (install / ".package-lock.json").write_text("{}", encoding="utf-8")
+    (install / "node-gyp" / "gyp" / "gyp_main.py").write_text("import time\n", encoding="utf-8")
+
+    (tmp_path / "mine.py").write_text("import os\n", encoding="utf-8")
+
+    assert list(iter_source_files(tmp_path)) == [tmp_path / "mine.py"]
+
+
 def test_skips_dot_directories(tmp_path):
     # .claude/worktrees is the one that matters beyond hygiene: CLAUDE.md §8.9 puts every issue in
     # a worktree there, so each is a whole second checkout of this repository. Without this rule a

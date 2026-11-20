@@ -38,6 +38,9 @@ def iter_source_files(root: Path) -> Iterator[Path]:
       (PEP 405) whatever it has been named. A name list is the wrong instrument here: §8.8
       records this repository committing a `.venv312/` precisely because the `.venv/` pattern did
       not match it, and `venv/` without the leading dot is as common a convention as `.venv/`.
+    - **A directory containing `.package-lock.json`**, which npm writes into every `node_modules`
+      it installs. The game client brought npm into the tree (#306), and npm packages may ship
+      Python of their own (node-gyp does), which is not this project's.
 
     skip_names: directories the caller excludes as a matter of *project rule* rather than
     """
@@ -50,6 +53,7 @@ def iter_source_files(root: Path) -> Iterator[Path]:
             for name in subdirectories
             if not name.startswith(".")
             and not (directory / name / "pyvenv.cfg").exists()
+            and not (directory / name / ".package-lock.json").exists()
         )
         for filename in sorted(filenames):
             if filename.endswith(".py"):

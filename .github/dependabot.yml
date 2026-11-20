@@ -1,0 +1,9 @@
+# The game client brings npm into a public repository (#306), so its dependencies are watched for
+# advisories and updates. Python's are pinned by pyproject.toml ranges and are not covered here.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /clients/web
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
