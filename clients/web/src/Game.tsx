@@ -121,9 +121,11 @@ export function Game({ world }: { world: WorldInfo }) {
         setProgress(event);
         setStatus(event.status);
         void refreshFrame();
+        // Every tick, not only after a request: income lands at each metrics sample (#308), so
+        // the balance moves on its own.
+        void refreshLedger();
         if (awaitingOutcome.current) {
           awaitingOutcome.current = false;
-          void refreshLedger();
           void client.barriers().then((view) => renderer.current?.setBarriers(view));
         }
       }, setConnected);
@@ -269,6 +271,7 @@ export function Game({ world }: { world: WorldInfo }) {
         pending={pending}
         quote={quote}
         balance={ledger?.balance ?? null}
+        incomePerTick={ledger?.income_per_tick ?? null}
         onBuild={build}
         onCancel={cancel}
         notices={notices}

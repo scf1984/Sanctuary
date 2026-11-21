@@ -274,7 +274,12 @@ class Session:
 
     def ledger(self) -> Ledger:
         interventions = self._interventions()
-        return Ledger(balance=interventions.balance, records=tuple(interventions.history))
+        return Ledger(
+            balance=interventions.balance,
+            earned=interventions.earned,
+            income_per_tick=interventions.income_per_tick,
+            records=tuple(interventions.history),
+        )
 
     # -- write --------------------------------------------------------------------------------
 

@@ -97,16 +97,37 @@ class Interventions:
     Splitting them would let a balance be spent without a matching line, which is precisely the
     reconciliation §3.2 needs to survive a restore.
 
-    balance: what the player has left to spend. Given at construction and never granted here: what
-        *generates* it is an open question (§5) and inventing an answer would settle it by accident.
+    balance: what the player has left to spend, currency units. Starts at what the world is
+        founded with, and grows only through `credit`, which income (`metrics.income`, #308) calls.
+    earned: currency units credited so far, so the ledger reconciles: balance is the founding
+        balance plus `earned` minus every recorded cost.
+    income_per_tick: currency units a tick, at the last credit. What the player is earning now.
     """
 
     def __init__(self, balance: float) -> None:
         if balance < 0:
             raise ValueError(f"a budget cannot start negative, got {balance}")
         self.balance = float(balance)
+        self.earned = 0.0
+        self.income_per_tick = 0.0
         self.history: list[Record] = []
         self._pending: list[Intervention] = []
+
+    def credit(self, per_tick: float, ticks: int) -> None:
+        """Pay `per_tick` currency units for each of `ticks` ticks (#308).
+
+        Income is the only thing that adds to the balance, and it is not a `Record`: it lands at
+        every metrics sample, so recording each payment would grow the history by a line every
+        twenty ticks for the life of a world. `earned` keeps the total that reconciliation needs.
+        A negative credit is refused, because spending goes through an intervention and its record,
+        and a credit that took money away would be a charge nobody could find in the history.
+        """
+        if per_tick < 0:
+            raise ValueError(f"income cannot be negative, got {per_tick} a tick")
+        amount = per_tick * ticks
+        self.balance += amount
+        self.earned += amount
+        self.income_per_tick = per_tick
 
     def request(self, intervention: Intervention) -> None:
         """Queue `intervention` for the next tick boundary.
@@ -119,7 +140,9 @@ class Interventions:
         """
         self._pending.append(intervention)
 
-    def restore(self, balance: float, history: list[Record]) -> None:
+    def restore(
+        self, balance: float, history: list[Record], earned: float, income_per_tick: float
+    ) -> None:
         """Replace the accounting with a saved one (#31), and **drop whatever is queued**.
 
         Balance and history together, because they are one accounting: restoring either alone
@@ -130,6 +153,8 @@ class Interventions:
         the same reason, since it was asked of the world the load just replaced.
         """
         self.balance = float(balance)
+        self.earned = float(earned)
+        self.income_per_tick = float(income_per_tick)
         self.history = list(history)
         self._pending = []
 

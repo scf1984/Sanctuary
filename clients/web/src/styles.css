@@ -70,6 +70,10 @@ body,
   text-transform: capitalize;
 }
 
+.bar .income {
+  color: var(--ok);
+}
+
 .bar .catching-up {
   color: var(--accent);
 }

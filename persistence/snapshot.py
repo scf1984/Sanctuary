@@ -23,7 +23,10 @@ from core.world.interventions import Record
 #
 # v7 added the lineage (#16): which species split from which. A v6 world could never have split,
 # but reading one would still be reading a file that does not say so.
-SCHEMA_VERSION = 7
+#
+# v8 added income to the ledger (#308): what has been earned and the rate it is being earned at.
+# A v7 ledger cannot say how much of its balance was income, so it does not reconcile.
+SCHEMA_VERSION = 8
 
 # Every array the world cannot recompute. Terrain, water, the cue field and the forage field are
 # all pure functions of the config or of the state below, so storing them would be storing a
@@ -183,6 +186,8 @@ def load(world, path: Path) -> None:
         world.loop.interventions.restore(
             meta["interventions"]["balance"],
             [Record(**line) for line in meta["interventions"]["history"]],
+            meta["interventions"]["earned"],
+            meta["interventions"]["income_per_tick"],
         )
 
     world.plants.exported_nutrients = meta["exported_nutrients"]
@@ -211,6 +216,8 @@ def _ledger(interventions) -> Optional[dict]:
         return None
     return {
         "balance": interventions.balance,
+        "earned": interventions.earned,
+        "income_per_tick": interventions.income_per_tick,
         "history": [dataclasses.asdict(record) for record in interventions.history],
     }
 

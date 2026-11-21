@@ -93,6 +93,8 @@ export interface GeneReading {
 export interface Ledger {
   readonly $type: "Ledger";
   readonly balance: number;
+  readonly earned: number;
+  readonly income_per_tick: number;
   readonly records: readonly Record[];
 }
 
