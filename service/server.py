@@ -13,6 +13,12 @@ catch-up would freeze the protocol for minutes.
 looking, so a phone widget polling once a day resets the absence clock without holding anything
 open. That matters because the absence clock is what decays the schedule (§2.4).
 
+**A watching player may pause and fast-forward, and leaving undoes it** (#307, #292's decision 8).
+`POST /pace` records a rate change on the world's `Timeline`, refused unless a stream is open. When
+the last stream closes, the rate returns to the world's own at that moment, so a world paused and
+forgotten keeps running. Each change is handed to `keep` before it takes effect, so the state
+directory never holds a timeline older than the one the world is running under.
+
 Standard library only, by the owner's decision on #36: `ThreadingHTTPServer` is enough for one
 user and one world, and replacing it later sits behind the protocol where no client can see it.
 
@@ -23,7 +29,9 @@ route needs a CORS policy.
 
 from __future__ import annotations
 
+import contextlib
 import json
+import math
 import queue
 import re
 import threading
@@ -34,7 +42,7 @@ from urllib.parse import unquote
 
 import api
 from api import wire
-from scheduler import Anchor, CatchUp, Progress, WakeSchedule
+from scheduler import CatchUp, Progress, Timeline, WakeSchedule
 
 # How often an idle stream sends a comment line. Writing is the only way a server learns that a
 # client has gone, so without it a closed viewer would count as watching until the next wake.
@@ -60,28 +68,40 @@ _CLIENT_TYPES = {
 class Service:
     """A `Session`, the lock around it, and the ticker that keeps it caught up.
 
+    timeline: the world's anchor and its rate changes so far (#307). It should be at the world's
+        own rate, since nobody is watching a service that has not started.
     clock: seconds on the wall clock the anchor was taken on. This is the one place in the
         repository that reads one for the simulation's sake, and it only decides how many ticks
         are owed (§2.1). Passed in so tests can say what time it is.
     chunk: ticks per catch-up chunk. Batching never changes outcomes (#32), so this decides only
         how long a request may wait for the lock and how often the stream reports.
+    fastest_ticks_per_second: the most a watching player may set the rate to (`Pacing`).
+    keep: called with every new timeline before it takes effect, to record it (`service.state`).
     """
 
     def __init__(
         self,
         session: api.Session,
-        anchor: Anchor,
+        timeline: Timeline,
         schedule: WakeSchedule,
         clock: Callable[[], float],
         chunk: int,
+        *,
+        fastest_ticks_per_second: float,
+        keep: Callable[[Timeline], None],
     ) -> None:
         self.session = session
-        self.anchor = anchor
         self.schedule = schedule
         self.clock = clock
+        self.fastest_ticks_per_second = fastest_ticks_per_second
         self.lock = threading.Lock()
-        self._catchup = CatchUp(_Locked(session, self.lock), anchor, chunk)
+        self._timeline = timeline
+        self._keep = keep
+        self._catchup = CatchUp(_Locked(session, self.lock), self, chunk)
         self._watchers: list[queue.Queue[Optional[Progress]]] = []
+        # Guards the audience and the timeline together, because whether anyone is watching is
+        # what decides whether a rate may be set: a request that saw a watcher must not land after
+        # that watcher's leaving has already restored the world's own rate.
         self._watchers_lock = threading.Lock()
         self.last_seen = clock()
         self._wake = threading.Event()
@@ -94,6 +114,14 @@ class Service:
     def watched(self) -> bool:
         with self._watchers_lock:
             return bool(self._watchers)
+
+    @property
+    def timeline(self) -> Timeline:
+        return self._timeline
+
+    def due(self, now: float) -> int:
+        """The tick due at `now`, from the timeline as it stands: what `CatchUp` reckons by."""
+        return self._timeline.due(now)
 
     def next_interval(self) -> float:
         """Seconds until the next wake, as the schedule says for the world's current audience."""
@@ -120,12 +148,18 @@ class Service:
         self._ticker.start()
 
     def stop(self) -> None:
-        """Stop the ticker at the next chunk boundary and wait for it, then end every stream."""
+        """Stop the ticker at the next chunk boundary and wait for it, then end every stream.
+
+        Ending the streams is everyone leaving, so the world's own rate is restored here rather
+        than whenever each stream's thread gets round to detaching: the snapshot saved after a stop
+        must sit beside a timeline that is already back at the world's own rate.
+        """
         self._stop.set()
         self._wake.set()
         if self._ticker is not None:
             self._ticker.join()
         with self._watchers_lock:
+            self._retime(self._timeline.at_own_rate(self.clock()))
             for watcher in self._watchers:
                 watcher.put(None)
 
@@ -148,14 +182,58 @@ class Service:
         return watcher
 
     def detach(self, watcher: queue.Queue[Optional[Progress]]) -> None:
-        """Close a stream. The last one closing is when the absence clock starts."""
+        """Close a stream. The last one closing is when the absence clock starts, and when a pause
+        or fast-forward ends: the world's own rate resumes at that moment (#307)."""
         with self._watchers_lock:
             if watcher in self._watchers:
                 self._watchers.remove(watcher)
+            if not self._watchers:
+                self._retime(self._timeline.at_own_rate(self.clock()))
         self.seen()
 
     def seen(self) -> None:
         self.last_seen = self.clock()
+
+    # -- pace ---------------------------------------------------------------------------------
+
+    def pace(self) -> api.Pace:
+        timeline = self._timeline
+        return api.Pace(
+            ticks_per_second=timeline.ticks_per_second,
+            own_ticks_per_second=timeline.own_ticks_per_second,
+            fastest_ticks_per_second=self.fastest_ticks_per_second,
+        )
+
+    def set_pace(self, ticks_per_second: float) -> api.Pace:
+        """Run the world at `ticks_per_second` from now, for as long as somebody watches.
+
+        Raises `ValueError` for a rate that is not one, and `api.Refused` for one the world will
+        not run at: past the fastest it sustains, or asked with nobody watching, since a pause
+        that outlived the player would let them switch off the world running while they are away.
+        """
+        if not (math.isfinite(ticks_per_second) and ticks_per_second >= 0):
+            raise ValueError(f"a rate is zero or a positive number of ticks, got {ticks_per_second}")
+        if ticks_per_second > self.fastest_ticks_per_second:
+            raise api.Refused(
+                f"{ticks_per_second} ticks a second is past the fastest this world sustains "
+                f"({self.fastest_ticks_per_second})"
+            )
+        with self._watchers_lock:
+            if not self._watchers:
+                raise api.Refused(
+                    "only a watching player can change the pace: open the event stream first"
+                )
+            self._retime(self._timeline.at_rate(self.clock(), ticks_per_second))
+        # A resume or a fast-forward should not wait out the interval the ticker is already in.
+        self._wake.set()
+        return self.pace()
+
+    def _retime(self, timeline: Timeline) -> None:
+        """Adopt `timeline`, recording it first. The caller holds `_watchers_lock`."""
+        if timeline is self._timeline:
+            return
+        self._keep(timeline)
+        self._timeline = timeline
 
     def _announce(self, progress: Progress) -> None:
         with self._watchers_lock:
@@ -231,6 +309,9 @@ class _Handler(BaseHTTPRequestHandler):
         if self.path == "/events":
             self._stream()
             return
+        if self.path == "/pace":
+            self._answer(self.service.pace, world=False)
+            return
         for pattern, call in _READS:
             match = pattern.match(self.path)
             if match:
@@ -265,7 +346,7 @@ class _Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         self.service.seen()
         call = _WRITES.get(self.path)
-        if call is None:
+        if call is None and self.path != "/pace":
             self._error(404, "LookupError", f"no such route: {self.path}")
             return
         length = int(self.headers.get("Content-Length", 0))
@@ -274,11 +355,22 @@ class _Handler(BaseHTTPRequestHandler):
         except (ValueError, KeyError, TypeError) as bad:
             self._error(400, "ValueError", f"not a request: {bad}")
             return
+        if call is None:
+            self._answer(lambda: self._set_pace(request), world=False)
+            return
         self._answer(lambda: call(self.service.session, request))
 
-    def _answer(self, call: Callable[[], object]) -> None:
+    def _set_pace(self, request: object) -> api.Pace:
+        if not isinstance(request, api.PaceRequest):
+            raise TypeError(f"/pace takes a PaceRequest, not {request!r}")
+        return self.service.set_pace(request.ticks_per_second)
+
+    def _answer(self, call: Callable[[], object], world: bool = True) -> None:
+        """Answer with `call`'s value, or the error it raised. `world` says whether the call
+        reads or writes the world and so must hold its lock. The pace does neither: it is the
+        service's own, and setting it should not wait out a catch-up chunk."""
         try:
-            with self.service.lock:
+            with self.service.lock if world else contextlib.nullcontext():
                 value = call()
         except api.Refused as refused:
             self._error(409, "Refused", str(refused))

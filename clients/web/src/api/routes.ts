@@ -13,5 +13,6 @@ export const ROUTES = [
   "/entity",
   "/quote",
   "/request",
+  "/pace",
   "/events",
 ] as const;

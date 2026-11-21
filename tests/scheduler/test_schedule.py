@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from scheduler import Stage, WakeSchedule
+from scheduler import Pacing, Stage, WakeSchedule
 
 HOUR = 3_600.0
 DAY = 86_400.0
@@ -56,3 +56,15 @@ class TestValidation:
     def test_a_schedule_needs_somewhere_to_decay_to(self):
         with pytest.raises(ValueError, match="at least one"):
             WakeSchedule(watched_interval=1.0, absent=())
+
+
+class TestPacing:
+    def test_the_fastest_rate_must_let_the_world_run_at_its_own(self):
+        with pytest.raises(ValueError, match="at least"):
+            Pacing(ticks_per_second=2.0, schedule=decaying(), fastest_ticks_per_second=1.0)
+
+    def test_the_fastest_rate_is_a_measured_ceiling_never_none(self):
+        """#307: past what the world computes, a fast-forward only builds a debt it pays after the
+        player has gone. An infinite ceiling is no ceiling."""
+        with pytest.raises(ValueError, match="finite"):
+            Pacing(ticks_per_second=1.0, schedule=decaying(), fastest_ticks_per_second=math.inf)

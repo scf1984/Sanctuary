@@ -96,6 +96,18 @@ export interface Ledger {
   readonly records: readonly Record[];
 }
 
+export interface Pace {
+  readonly $type: "Pace";
+  readonly ticks_per_second: number;
+  readonly own_ticks_per_second: number;
+  readonly fastest_ticks_per_second: number;
+}
+
+export interface PaceRequest {
+  readonly $type: "PaceRequest";
+  readonly ticks_per_second: number;
+}
+
 export interface Progress {
   readonly $type: "Progress";
   readonly done: number;
@@ -165,4 +177,4 @@ export interface WorldInfo {
 export type Request = CullRequest | FenceRequest;
 
 /** Every tagged value the wire carries. */
-export type Value = Column | BarrierView | ConditionView | CullRequest | DriveShare | EntityReport | FenceRequest | FieldView | Frame | GeneReading | Ledger | Progress | Quote | Record | Sample | Status | TerrainView | WorldInfo;
+export type Value = Column | BarrierView | ConditionView | CullRequest | DriveShare | EntityReport | FenceRequest | FieldView | Frame | GeneReading | Ledger | Pace | PaceRequest | Progress | Quote | Record | Sample | Status | TerrainView | WorldInfo;

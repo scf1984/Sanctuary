@@ -20,7 +20,7 @@ from typing import Callable, Optional, Sequence
 
 import api
 from service.server import Service
-from service.state import close_world, open_world
+from service.state import close_world, keep_timeline, open_timeline, open_world
 from worlds import pacing_for
 
 # The game client's build output (#306): `npm run build` in `clients/web` writes it.
@@ -62,13 +62,23 @@ def run(
         # Defaults apply only when founding. For a world that already exists, an argument left out
         # means "whatever it was founded with", and one given must match it (see `open_world`).
         asked = {key: _FOUNDING_DEFAULTS[key] if value is None else value for key, value in asked.items()}
+    now = clock()
     session, founding = open_world(
         args.state,
-        now=clock(),
+        now=now,
         ticks_per_second=pacing_for(asked["world"] or api.DEFAULT_WORLD).ticks_per_second,
         **asked,
     )
-    service = Service(session, founding.anchor, pacing_for(founding.world).schedule, clock, args.chunk)
+    pacing = pacing_for(founding.world)
+    service = Service(
+        session,
+        open_timeline(args.state, founding.anchor, now),
+        pacing.schedule,
+        clock,
+        args.chunk,
+        fastest_ticks_per_second=pacing.fastest_ticks_per_second,
+        keep=lambda timeline: keep_timeline(args.state, timeline),
+    )
     # A missing build is said out loud rather than served as a blank page: the API still works
     # (the viewer's --connect needs nothing else), and the line says what to run (§8.7).
     client = args.client if (args.client / "index.html").is_file() else None
