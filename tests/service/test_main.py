@@ -70,3 +70,35 @@ def test_asking_an_existing_world_to_be_another_is_refused(tmp_path):
     args = parse(["--state", str(tmp_path / "w"), "--port", "0", "--seed", "9"])
     with pytest.raises(ValueError, match="not what was asked for"):
         run(args, threading.Event())
+
+
+def test_a_pause_ends_when_the_service_stops_and_the_restart_runs_at_the_worlds_own_rate(tmp_path):
+    """#307 end to end: paused while watched, the world does not age; stopped, everyone has left,
+    so the downtime is owed at the world's own rate from the moment of the stop."""
+    clock = {"now": 1_000.0}
+    tick = lambda: clock["now"]  # noqa: E731
+    stopping, thread, _lines, remote = serve(tmp_path / "w", clock=tick)
+    events = remote.events()
+    threading.Thread(target=lambda: next(events, None), daemon=True).start()
+    deadline = time.time() + 10.0
+    while True:
+        try:
+            remote.set_pace(0.0)
+            break
+        except api.Refused:
+            assert time.time() < deadline, "the stream was never counted as watching"
+            time.sleep(0.02)
+    clock["now"] += 100.0
+    stopping.set()
+    thread.join(timeout=30.0)
+
+    clock["now"] += 25.0
+    stopping, thread, _lines, remote = serve(tmp_path / "w", clock=tick)
+    deadline = time.time() + 30.0
+    while remote.status().tick < 25 and time.time() < deadline:
+        time.sleep(0.05)
+
+    assert remote.status().tick == 25
+    assert remote.pace().ticks_per_second == remote.pace().own_ticks_per_second
+    stopping.set()
+    thread.join(timeout=30.0)

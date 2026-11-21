@@ -829,6 +829,11 @@ DEMO_PACING = Pacing(
         watched_interval=1.0,
         absent=(Stage(until=86_400.0, interval=3_600.0), Stage(until=math.inf, interval=86_400.0)),
     ),
+    # The slowest stretch of a settled world, rounded down (#307, §8.5): over seeds 0-2, ticks
+    # 3,000-6,000 (2,800-4,000 animals) ran 4.6-13.3 ticks a second per 250-tick window, median
+    # 9.3, on the development machine. A rate the median sustains would still fall behind in the
+    # slow windows, and a fast-forward that falls behind leaves a debt paid after the player leaves.
+    fastest_ticks_per_second=4.0,
 )
 PACING = {"demo": DEMO_PACING, "temperate": DEMO_PACING}
 
