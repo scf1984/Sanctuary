@@ -384,3 +384,84 @@ class TestTheViewerOverTheProtocol:
         assert describe_entity(some_id, remote.inspect(some_id))[0].startswith("entity")
         assert current.tick == previous.tick + 2
         assert px.shape == (current.ids.shape[0],)
+
+
+@pytest.fixture
+def client_served(tmp_path):
+    """A service serving a stand-in client build: an index, a module, and a file the build would
+    never emit. A secret sits beside the build, where a traversal would reach it."""
+    build = tmp_path / "dist"
+    (build / "assets").mkdir(parents=True)
+    (build / "index.html").write_text("<!doctype html><title>Sanctuary</title>", encoding="utf-8")
+    (build / "assets" / "main.js").write_text("export const x = 1;", encoding="utf-8")
+    (build / "notes.txt").write_text("not part of a build", encoding="utf-8")
+    (tmp_path / "world.json").write_text("{}", encoding="utf-8")
+    clock = Clock()
+    session = api.create("demo", seed=3, founders=20)
+    service = make_service(session, Anchor(clock.now, 0, 1.0), SCHEDULE, clock, chunk=10)
+    server = service.http_server("127.0.0.1", 0, build)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{server.server_port}"
+    service.stop()
+    server.shutdown()
+    server.server_close()
+
+
+def fetch(url):
+    """(status, content type, body) for a GET, whether or not it succeeded."""
+    import urllib.error
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(url) as response:
+            return response.status, response.headers["Content-Type"], response.read()
+    except urllib.error.HTTPError as failed:
+        return failed.code, failed.headers["Content-Type"], failed.read()
+
+
+class TestTheGameClientIsServedFromHere:
+    """#292 decision 5: one process and one origin serve the game, so no route needs CORS."""
+
+    def test_the_root_is_the_clients_index(self, client_served):
+        status, kind, body = fetch(client_served + "/")
+        assert status == 200
+        assert kind.startswith("text/html")
+        assert b"Sanctuary" in body
+
+    def test_a_module_is_served_as_javascript(self, client_served):
+        """Not `mimetypes`' answer: on Windows that can be text/plain, which a browser will not run."""
+        status, kind, _ = fetch(client_served + "/assets/main.js")
+        assert status == 200
+        assert kind.startswith("text/javascript")
+
+    def test_api_routes_still_answer(self, client_served):
+        status, kind, body = fetch(client_served + "/status")
+        assert status == 200
+        assert kind == "application/json"
+        assert b'"$type":"Status"' in body
+
+    @pytest.mark.parametrize(
+        "path", ["/../world.json", "/%2e%2e/world.json", "/assets/../../world.json"]
+    )
+    def test_nothing_outside_the_build_is_served(self, client_served, path):
+        status, _, body = fetch(client_served + path)
+        assert status == 404
+        assert b"{}" != body
+
+    def test_a_file_the_build_does_not_emit_is_not_served(self, client_served):
+        assert fetch(client_served + "/notes.txt")[0] == 404
+
+    def test_a_missing_file_is_404(self, client_served):
+        assert fetch(client_served + "/assets/gone.js")[0] == 404
+
+    def test_without_a_build_the_root_says_the_client_is_not_served(self, served):
+        service, *_ = served
+        server = service.http_server("127.0.0.1", 0)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            status, _, body = fetch(f"http://127.0.0.1:{server.server_port}/")
+        finally:
+            server.shutdown()
+            server.server_close()
+        assert status == 404
+        assert b"not served" in body

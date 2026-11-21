@@ -1937,6 +1937,33 @@ serialisable *in practice* from the first slice, not just in principle. In-proce
 `api/` was declined, and so was pygame first with the browser later, which would mean two game
 clients whose UX lessons do not carry over in code.
 
+**How the game client is built and served** — settled on #292 (decisions 5–7, the owner's) and
+built in #306. It lives in `clients/web`:
+
+- **`service/` serves it at `/`.** A path that is not an API route is a file of the build
+  (`clients/web/dist`), so one process and one origin serve the game and no route needs a CORS
+  policy. Content types come from a table, not `mimetypes`, which on Windows reads the registry
+  and can call `.js` plain text. A path resolving outside the build is a 404. During development
+  `npm run dev` forwards the API routes to a running service, so that needs no CORS either.
+- **TypeScript, built by Vite, with React for the panels.** This brought Node into the
+  repository: a lockfile installed with `npm ci`, a CI job, and Dependabot for npm.
+- **No message shape is written by hand on the client.** `python -m api.typescript --write`
+  generates `clients/web/src/api/values.ts` from `api.values`, and a test fails while the
+  committed file is stale. The one piece of wire logic written by hand is decoding a `Column`
+  into a typed array (`src/api/wire.ts`), which checks the dtype and shape and refuses a 64-bit id
+  a double cannot hold exactly.
+- **The map is PixiJS on WebGL.** It is imperative, outside React, because a frame changes every
+  dot and React would re-render nothing useful for it. Its geometry (camera, fences, terrain
+  shading, colour) is in pure modules tested without a GPU. Terrain shading and the condition
+  ramp are ports of the viewer's, so the two clients shade one world alike, and the terrain port
+  matches the viewer within one colour step per channel on the demo map.
+- **Frames are matched by id once per tick and blended once per drawn frame.** Matching inside
+  every drawn frame measured 49 ms at 100,000 animals. Split, the blend is 1.1 ms. The matching
+  still costs 49 ms once per tick at that size, and decoding the frame 20 ms.
+- **A fence asks before it builds.** Dragging prices it (`POST /quote`), releasing shows the price
+  and a confirm, and only then is it requested. It cannot be taken down, so the release that
+  commits it in the viewer is one step too few for a game.
+
 **A position snapshot is never read without the occupancy that qualifies it** — decided in #119,
 which owned it, and it governs every future overlay (#39) rather than the entity dots alone.
 `EntityStore.release` clears `alive` and the id mapping but deliberately leaves `x`, `y` and `z`
@@ -2047,6 +2074,7 @@ worlds/      named world definitions: content, opened by name. never imported by
 api/         boundary between core and any client. the only thing clients may import.
 service/     process wrapper around api/. protocol, sessions, world lifecycle.
 clients/     diagnostic viewer, dashboard. never import core internals, only api.
+  web        the browser game client (TypeScript). reads only the wire; its types are generated.
 ```
 
 Rules:

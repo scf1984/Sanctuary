@@ -23,6 +23,9 @@ from service.server import Service
 from service.state import close_world, keep_timeline, open_timeline, open_world
 from worlds import pacing_for
 
+# The game client's build output (#306): `npm run build` in `clients/web` writes it.
+_CLIENT = Path(__file__).resolve().parents[1] / "clients" / "web" / "dist"
+
 # Used only when founding. A world that already exists keeps what it was founded with.
 _FOUNDING_DEFAULTS = {"world": api.DEFAULT_WORLD, "seed": 0, "founders": 200}
 
@@ -35,6 +38,12 @@ def parse(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--founders", type=int, help="founds a new world (default 200)")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument(
+        "--client",
+        type=Path,
+        default=_CLIENT,
+        help="the built game client to serve at / (default clients/web/dist)",
+    )
     parser.add_argument(
         "--chunk", type=int, default=60, help="ticks per catch-up chunk: how often the stream reports"
     )
@@ -70,13 +79,18 @@ def run(
         fastest_ticks_per_second=pacing.fastest_ticks_per_second,
         keep=lambda timeline: keep_timeline(args.state, timeline),
     )
-    server = service.http_server(args.host, args.port)
+    # A missing build is said out loud rather than served as a blank page: the API still works
+    # (the viewer's --connect needs nothing else), and the line says what to run (§8.7).
+    client = args.client if (args.client / "index.html").is_file() else None
+    server = service.http_server(args.host, args.port, client)
     threading.Thread(target=server.serve_forever, name="http", daemon=True).start()
     service.start()
     announce(
         f"serving {founding.world!r} (seed {founding.seed}) at http://{args.host}:{server.server_port}, "
         f"tick {session.status().tick}; Ctrl+C to stop"
     )
+    if client is None:
+        announce(f"no game client at {args.client}: run `npm ci && npm run build` in clients/web")
 
     # A timed wait rather than a bare one, so a signal is handled promptly on every platform.
     while not stopping.wait(timeout=0.5):

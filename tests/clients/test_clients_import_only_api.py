@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from tools.sources import iter_source_files
+
 _CLIENTS = Path(__file__).resolve().parents[2] / "clients"
 
 # Everything behind the boundary. `worlds` is on the list because a world definition is core
@@ -32,7 +34,8 @@ def forbidden(module: str) -> bool:
     return module.split(".")[0] in _FORBIDDEN
 
 
-_SOURCES = sorted(_CLIENTS.rglob("*.py"))
+# The project's own sources only: not the game client's npm install, which may hold Python (#306).
+_SOURCES = list(iter_source_files(_CLIENTS))
 
 
 def test_there_are_client_modules_to_check():

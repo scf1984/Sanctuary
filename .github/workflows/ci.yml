@@ -126,3 +126,26 @@ jobs:
       # is a broken promise to code this repository cannot see.
       - run: mypy core api scheduler service
 
+  client:
+    name: game client (type-check, test, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: clients/web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: clients/web/package-lock.json
+
+      # `npm ci` installs exactly the lockfile and fails if package.json disagrees with it, so a
+      # dependency nobody reviewed cannot arrive through a loose version range (#306, §3.2).
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      # What `python -m service` serves at `/`. Building it here is the check that it builds; the
+      # output is not kept, because a build is run output and is never committed.
+      - run: npx vite build
