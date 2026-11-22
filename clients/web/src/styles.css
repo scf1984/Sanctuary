@@ -78,6 +78,35 @@ body,
   color: var(--accent);
 }
 
+.bar .pace {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.bar .pace button {
+  padding: 2px 8px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.bar .pace .pause {
+  min-width: 34px;
+}
+
+.bar .pace.paused .pause {
+  border-color: var(--refused);
+}
+
+.bar .pace .paused-label {
+  margin-left: 4px;
+  color: var(--refused);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+
 .bar .link {
   margin-left: auto;
   font-size: 12px;

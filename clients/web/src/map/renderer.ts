@@ -7,6 +7,7 @@ import { Application, Container, Graphics, Particle, ParticleContainer, Sprite, 
 
 import type { BarrierView, TerrainView, WorldInfo } from "../api/values";
 import { blendInto, pair, type Pairing, type Positions } from "../world/frames";
+import { blendPeriod } from "../world/pace";
 import { type Camera, fit, TOP_INSET, toScreen } from "./camera";
 import { fenceSegments, type Segment } from "./fence";
 import { CASING, conditionColor, FENCE } from "./palette";
@@ -51,6 +52,8 @@ export class MapRenderer {
   private arrived = 0;
   /** Milliseconds between the last two frames: how long a blend from one to the next takes. */
   private period = 1000;
+  /** The world's rate, which bounds how long a blend may take (`blendPeriod`). */
+  ticksPerSecond = 1;
   camera: Camera;
 
   private constructor(app: Application, world: WorldInfo) {
@@ -123,7 +126,7 @@ export class MapRenderer {
       return;
     }
     if (latest !== null) {
-      this.period = Math.min(5000, Math.max(100, now - this.arrived));
+      this.period = blendPeriod(now - this.arrived, frame.tick - latest.tick, this.ticksPerSecond);
     }
     this.pairing = pair(latest, frame);
     this.arrived = now;
