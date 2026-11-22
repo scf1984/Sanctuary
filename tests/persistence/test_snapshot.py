@@ -266,6 +266,23 @@ class TestTheLedgerSurvivesAReload:
 
         assert restored.loop.interventions.balance == saved.loop.interventions.balance
 
+    def test_income_comes_back_and_keeps_paying_as_it_would_have(self, tmp_path):
+        """#308: what was earned and the rate it is earned at are both ledger state. A reloaded
+        world then earns exactly what the saved one goes on to earn, because income reads only
+        the recorded series (§3.2's bit-for-bit continuation)."""
+        saved = world()
+        saved.loop.advance(60)
+        assert saved.loop.interventions.earned > 0, "three samples should have paid"
+
+        restored = world()
+        load(restored, save(saved, tmp_path / "w.npz"))
+        assert restored.loop.interventions.earned == saved.loop.interventions.earned
+        assert restored.loop.interventions.income_per_tick == saved.loop.interventions.income_per_tick
+
+        saved.loop.advance(40)
+        restored.loop.advance(40)
+        assert restored.loop.interventions.balance == saved.loop.interventions.balance
+
     def test_the_history_remembers_what_was_done(self, tmp_path):
         """Refusals too: a player back from an absence needs to know what did *not* happen (§2.7)."""
         saved = world()

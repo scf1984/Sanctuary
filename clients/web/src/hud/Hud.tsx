@@ -32,11 +32,16 @@ interface Props {
   pending: FenceRequest | null;
   quote: Quote | null;
   balance: number | null;
+  /** Currency units a tick, at the last metrics sample (#308). */
+  incomePerTick: number | null;
   onBuild: () => void;
   onCancel: () => void;
   notices: readonly Notice[];
   failure: string | null;
 }
+
+/** One tick is one sim-minute (CLAUDE.md §2.1). */
+const TICKS_PER_DAY = 24 * 60;
 
 const number = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 0 });
 
@@ -56,8 +61,17 @@ export function Hud(props: Props) {
           </>
         )}
         {props.balance !== null && (
-          <span title="what the player has to spend on interventions">
+          <span title="what you have to spend on interventions">
             <strong>{number(props.balance)}</strong> to spend
+            {props.incomePerTick !== null && props.incomePerTick > 0 && (
+              <span
+                className="income"
+                title="income: paid on the fewest animals alive over the last generation, so a boom pays once it has held and a crash cuts it at once"
+              >
+                {" "}
+                +{number(props.incomePerTick * TICKS_PER_DAY)} a day
+              </span>
+            )}
           </span>
         )}
         {catchingUp && (

@@ -252,9 +252,18 @@ class EntityReport:
 
 @dataclass(frozen=True)
 class Ledger:
-    """The player's accounting: what is left, and every intervention's outcome in order (#26)."""
+    """The player's accounting: what is left, what came in, and every intervention's outcome in
+    order (#26, #308).
+
+    balance: currency units left to spend.
+    earned: currency units of income so far. The founding balance plus `earned`, minus every
+        record's cost, is `balance`.
+    income_per_tick: currency units a tick at the last metrics sample: what the world earns now.
+    """
 
     balance: float
+    earned: float
+    income_per_tick: float
     records: tuple[Record, ...]
 
 

@@ -59,7 +59,7 @@ from core.world.assembly import World, WorldConfig, build_world
 from core.world.climate import ClimateConfig, SeasonsConfig
 from core.world.terrain import TerrainConfig
 from core.world.interventions import Interventions
-from metrics import MetricHistory, MetricsConfig
+from metrics import Income, IncomeConfig, MetricHistory, MetricsConfig
 from scheduler.schedule import Pacing, Stage, WakeSchedule
 
 _GRID = 80
@@ -778,11 +778,20 @@ def temperate_world_config(n_entities: int, seed: int) -> WorldConfig:
 # window, and fine enough that a population crash does not fall between two samples.
 DEMO_METRICS = MetricsConfig(every_n_ticks=20, history_limit=2_000)
 
-# What the player starts with. A round number and openly arbitrary: what *generates* intervention
-# currency is an open question (§5) settled only in the negative so far, so a demo world is handed a
-# balance and nothing here creates more. Culling costs one per animal (#26), which makes this a few
-# hundred animals' worth of stewardship before the budget is the constraint rather than the ecology.
+# What the player starts with. A round number and openly arbitrary. Culling costs one per animal
+# (#26) and a fence two per world unit of perimeter (#27), so this is a few pens or a few hundred
+# animals' worth of stewardship before income (below) has had time to matter.
 DEMO_BUDGET = 500.0
+
+# Income (#308): ecosystem value, paid on the fewest animals alive over the last generation. The
+# window is the world's own generation time, as the seasonal year is (§2.1), so retuning the
+# founders' breeding ranges moves it with them.
+#
+# The two rates are starting points for playtests (#292 phase 5), set against the prices above. A
+# world holding 1,000 animals earns 0.1 a tick, 144 a sim-day (24 real minutes at the live rate):
+# about one 70-unit pen a day. The floor is a tenth of that, 14.4 a sim-day, so a world that has
+# crashed can still buy a small cull or a short fence within a few days.
+DEMO_INCOME = IncomeConfig(per_animal=1e-4, floor=0.01, window=round(_GENERATION_TICKS))
 
 
 def build_demo_world(seed: int, n_entities: int) -> World:
@@ -806,10 +815,13 @@ def _compose(config: WorldConfig, seed: int) -> World:
     world = build_world(config, seed=seed)
     # Attached rather than assembled, because a recorder reads a finished world and `core/` must
     # stay importable without `metrics/` (§4). This is the composition root doing composition.
-    world.loop.metrics = MetricHistory(
+    history = MetricHistory(
         world.store, world.genetics, world.plants, world.genes.vocabulary, DEMO_METRICS
     )
-    world.loop.interventions = Interventions(balance=DEMO_BUDGET)
+    ledger = Interventions(balance=DEMO_BUDGET)
+    world.loop.metrics = history
+    world.loop.interventions = ledger
+    Income(DEMO_INCOME, history, ledger)
     return world
 
 

@@ -26,5 +26,6 @@ metric that cannot move is worse than a missing one because it looks like an ans
 """
 
 from metrics.history import MetricHistory, MetricsConfig, Sample
+from metrics.income import Income, IncomeConfig
 
-__all__ = ["MetricHistory", "MetricsConfig", "Sample"]
+__all__ = ["Income", "IncomeConfig", "MetricHistory", "MetricsConfig", "Sample"]

@@ -7,7 +7,7 @@ population still evolving" without holding a reference to anything inside `core/
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, fields
-from typing import Mapping, Optional
+from typing import Callable, Mapping, Optional
 
 import numpy as np
 
@@ -162,6 +162,16 @@ class MetricHistory:
         # count somebody else has to keep. `None` until the first sample, which is why that one
         # reports zero for both.
         self._previous: Optional[tuple[int, int]] = None
+        self._subscribers: list[Callable[[Sample], None]] = []
+
+    def subscribe(self, callback: Callable[[Sample], None]) -> None:
+        """Call `callback` with every sample as it is recorded, after it joins the window.
+
+        Income (#308) is the subscriber: it pays on the recorded series, so it has to run at the
+        moment a sample exists and not before. Called only for samples recorded, never for a
+        window restored from a snapshot, because a payment already made was saved with the ledger.
+        """
+        self._subscribers.append(callback)
 
     def record_if_due(self, tick: int) -> Optional[Sample]:
         """Take a sample if `tick` falls on the cadence, and return it; otherwise `None`.
@@ -178,6 +188,8 @@ class MetricHistory:
         # Oldest first: a client watching a live world wants the recent past, and the long view
         # belongs in the metrics store rather than in a process's memory (see `MetricsConfig`).
         del self.samples[: max(0, len(self.samples) - self.config.history_limit)]
+        for callback in self._subscribers:
+            callback(sample)
         return sample
 
     def sample(self, tick: int) -> Sample:

@@ -1725,10 +1725,43 @@ by" hunger and no animal stands still merely because the drive that won has no m
   ecological: a body decomposes where it falls, a cull is that compressed into one tick, and a cull
   that skipped it would sterilise the ground the player used it on.
 
-  **The catalogue and the currency are still open** (§5). #26 built the framework and one
-  intervention; #27's fence and #28's siblings own their own effects, and what *generates* the
-  player's budget is a design decision rather than a number — so the ledger spends a balance it is
-  given and nothing creates one.
+  **The catalogue is still open** (§5). #26 built the framework and one intervention; #27's fence
+  and #28's siblings own their own effects.
+
+- **Income is ecosystem value, paid on the population that has held** — the currency's source
+  decided on #26, the floor on #26, and the formula on #308, all by the owner, and built in #308
+  (`metrics.income`). At every metrics sample the ledger is credited, for the ticks the sample
+  covers:
+
+  ```
+  per tick = max(floor, per_animal × fewest animals alive at any sample in the last window)
+  ```
+
+  - **The trailing minimum is both "rich" and "stable".** A boom pays only once it has held for a
+    window, and a crash cuts income at once and keeps it cut for a window. The demo world's window
+    is one generation, taken from its founders' breeding ranges as the seasonal year is (§2.1).
+    It does not penalise swings above the trough, and it pays linearly on size, so a bigger map is
+    a richer one. Population × a stability factor was declined because it reads healthy growth as
+    instability, and raw population because it pays most for a boom about to crash.
+  - **Per tick, never per real second.** Income is a function of the recorded series alone, so a
+    restored world has the balance it was saved with, and the wall clock stays out of everything
+    but the count of ticks owed (§2.1). Fast-forward (#307) therefore earns faster in real time
+    and no faster in world time.
+  - **The same whether or not anyone watches.** It is paid inside the tick loop, which catch-up
+    runs exactly as live play does (§2.4). A long absence from a thriving world returns a large
+    balance. A balance ceiling was declined, and is a new decision if playtests show hoarding.
+  - **A minimum income is the floor**, so a world one bad decision from collapse can still act,
+    slowly. A one-off rescue grant was declined because once spent the spiral is unprotected, and
+    free interventions below a threshold because a player could farm them by degrading the world.
+  - **No species term yet.** It waits on #30's species metric (§5). A plain species count would be
+    farmable by fencing many small pens to force splits.
+  - **Income is not a `Record`.** It lands every sample, so the history would grow a line every
+    twenty ticks forever. The ledger keeps `earned` instead, so a balance still reconciles: the
+    founding balance plus `earned`, minus every record's cost.
+
+  The rates are tuning, set against the prices: on the demo world, 1,000 animals held for a
+  generation earn 144 a sim-day, about one 70-unit pen, and the floor is a tenth of that. They are
+  starting points for the playtest (#292 phase 5), not decisions.
 
 ### 2.8 Rule versions
 
@@ -1883,7 +1916,8 @@ wrapping work. If it is not, no amount of service code will save it.
   diverge from the saved one at its first birth. With both, a save and reload continues *bit for
   bit* — which is a stronger promise than §2.2 requires and a much easier one to test.
 
-  **The intervention ledger and the metric history are state too** (schema v6, #31). Without the
+  **The intervention ledger and the metric history are state too** (schema v6, #31; v8 added what
+  income has earned and the rate it pays at, #308). Without the
   ledger a reload hands back a fresh budget, and a costly cull can be repeated for free. Without the
   series every scenario goal and every income reading restarts from nothing, and a series cannot
   be replayed (§2.2, §4). Three rules come with them:
@@ -2128,15 +2162,9 @@ Not yet decided. Do not assume answers — ask.
   happens after is undecided — frozen and runnable forever, migrated only with the player's
   explicit consent, or read-only. This decides how long old rule sets and their pinning tests must
   be carried, so it is a cost question as much as a design one.
-- The concrete intervention catalogue and what each costs, and **what generates the player's
-  intervention currency**. The *direction* is settled on #26: **ecosystem value**, income that
-  scales with how rich and stable the world is. Plain time-ticks, discovery-and-naming and a fixed
-  endowment were rejected there, with reasons. The *formula* is still open, so the entry stays here
-  until income ships (§7.3). Three of its four terms waited on #16 and #193. #16 has landed and
-  #193 was resolved by its scope, but the genetic-diversity term still has no composition (#302),
-  so the playable slice
-  (#292) starts from population and its stability and adds the rest as they land. The floor that
-  keeps a declining world recoverable is undesigned, and belongs on #26.
+- The concrete intervention catalogue and what each costs. What *generates* the currency is
+  settled and built (§2.7, #308); the income formula's species, genetic-diversity (#302) and
+  trophic terms are added as their metrics are defined.
 - **The remaining half of the metric definitions.** Species count and Shannon entropy over species
   abundance are still open. They were deferred *with* #16, since with one species they read 1 and 0
   forever. #16 has landed, so there is now something to argue about. #30 owns them and reserves
