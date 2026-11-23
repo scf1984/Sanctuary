@@ -96,7 +96,7 @@ def establish(out: Path) -> None:
         start = time.perf_counter()
         world = build_demo_world(seed=seed, n_entities=ESTABLISH_FOUNDERS)
         world.loop.advance(ESTABLISH_TICKS)
-        snapshot.save(world, out / f"source_{seed}.npz")
+        snapshot.save(world, out / f"source_{seed}.npz", names={})
         summary[seed] = {
             "born": int(_born(world).sum()),
             "generation_ticks": generation_ticks(world),

@@ -296,7 +296,10 @@ class TestSpeciationRunsInTheWorld:
 
         world.loop.advance(1)  # tick 0 is a check
         assert world.species.n_species == 2
-        (daughter,) = world.speciation.lineage.parents()
+        (made,) = world.speciation.lineage.splits()
+        daughter = made.species_id
+        assert made.tick == 0
+        assert made.founders == len(moved)
         living = world.store.row_ids()
         moved_rows = np.flatnonzero(np.isin(living, moved) & world.store.alive)
         assert (world.store.species_id[moved_rows] == daughter).all()

@@ -1,16 +1,20 @@
-// One world on screen: the map, the clock, and the fence tool. State that changes every tick (the
-// animals) goes straight to the renderer; what a person reads (status, price, outcomes) is React's.
+// One world on screen: the map, the clock, the fence tool and the species list. State that changes
+// every tick (the animals) goes straight to the renderer; what a person reads (status, price,
+// outcomes, species) is React's.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import * as client from "./api/client";
-import type { FenceRequest, Ledger, Pace, Progress, Quote, Status, WorldInfo } from "./api/values";
+import type { FenceRequest, Ledger, Pace, Progress, Quote, SpeciesReport, Status, WorldInfo } from "./api/values";
 import { decodeColumn } from "./api/wire";
 import { Hud, type Notice } from "./hud/Hud";
+import { SpeciesPanel } from "./hud/Species";
 import { pan, toWorld, zoomAt } from "./map/camera";
+import { dotTints, SPECIES_MODE } from "./map/colours";
 import { fenceRequest } from "./map/fence";
 import { MapRenderer } from "./map/renderer";
-import { positions } from "./world/frames";
+import { positions, type Positions } from "./world/frames";
+import { newSplits, speciesLabel, speciesSeries } from "./world/lineage";
 import { speeds } from "./world/pace";
 
 export type Tool = "look" | "fence";
@@ -21,6 +25,9 @@ const MAX_SCALE = 64;
 const DRAG_THRESHOLD = 4;
 /** Milliseconds a drag must rest before it is priced, so a quote is not asked for every pixel. */
 const QUOTE_DELAY = 120;
+/** Milliseconds between re-reading the history for the species sparklines. A sample lands every
+ * twenty ticks in the demo world, and the history is the largest read there is. */
+const HISTORY_INTERVAL = 5000;
 
 type Gesture =
   | { kind: "pan"; x: number; y: number }
@@ -45,6 +52,14 @@ export function Game({ world }: { world: WorldInfo }) {
   /** The rate a resume returns to: the last one chosen, so pausing a fast-forward and resuming
    * keeps the fast-forward. */
   const resumeAt = useRef<number | null>(null);
+  const [species, setSpecies] = useState<readonly SpeciesReport[]>([]);
+  const [series, setSeries] = useState<ReadonlyMap<number, readonly number[]>>(new Map());
+  const [selected, setSelected] = useState<number | null>(null);
+  /** Species ids this page has already shown, so a split is announced once. Null until the first
+   * read, which announces nothing: those splits happened before the player arrived, and the list
+   * shows them, each unnamed daughter marked to be named. */
+  const knownSpecies = useRef<Set<number> | null>(null);
+  const historyRead = useRef(0);
 
   // A request's outcome lands in the ledger at the next tick boundary (§2.7), so after asking, the
   // next progress event is when to look. `known` is how many records the player has been shown.
@@ -52,6 +67,19 @@ export function Game({ world }: { world: WorldInfo }) {
   const known = useRef<number | null>(null);
   const modeRef = useRef(mode);
   modeRef.current = mode;
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
+  /** The frame on screen and its deficits, kept so a new selection or mode repaints at once. */
+  const shown = useRef<{ frame: Positions; deficits: Float32Array | null } | null>(null);
+
+  const paint = useCallback(() => {
+    const current = shown.current;
+    if (current === null) return;
+    const { frame, deficits } = current;
+    const bySpecies = modeRef.current === SPECIES_MODE;
+    const tints = dotTints(frame.ids.length, bySpecies, deficits, frame.species, selectedRef.current);
+    renderer.current?.setFrame(frame, tints, performance.now());
+  }, []);
 
   const notify = useCallback((notice: Omit<Notice, "id">) => {
     const id = Date.now() + Math.random();
@@ -72,21 +100,70 @@ export function Game({ world }: { world: WorldInfo }) {
     try {
       do {
         again.current = false;
-        // Frame and condition are two calls, so a tick can land between them. A condition is only
-        // drawn against the frame of its own tick (api.values.ConditionView); otherwise ask again.
-        let [frame, condition] = await Promise.all([client.frame(), client.condition(modeRef.current)]);
-        if (condition.tick !== frame.tick) {
-          [frame, condition] = await Promise.all([client.frame(), client.condition(modeRef.current)]);
+        if (modeRef.current === SPECIES_MODE) {
+          // Species ride the frame itself, so there is no second call to keep in step.
+          shown.current = { frame: positions(await client.frame()), deficits: null };
+        } else {
+          // Frame and condition are two calls, so a tick can land between them. A condition is only
+          // drawn against the frame of its own tick (api.values.ConditionView); otherwise ask again.
+          let [frame, condition] = await Promise.all([client.frame(), client.condition(modeRef.current)]);
+          if (condition.tick !== frame.tick) {
+            [frame, condition] = await Promise.all([client.frame(), client.condition(modeRef.current)]);
+          }
+          const deficits = condition.tick === frame.tick ? decodeColumn(condition.values).values : null;
+          shown.current = { frame: positions(frame), deficits: deficits instanceof Float32Array ? deficits : null };
         }
-        const deficits = condition.tick === frame.tick ? decodeColumn(condition.values).values : null;
-        renderer.current?.setFrame(positions(frame), deficits instanceof Float32Array ? deficits : null, performance.now());
+        paint();
       } while (again.current);
     } catch (error) {
       setFailure(String(error));
     } finally {
       fetching.current = false;
     }
+  }, [paint]);
+
+  // -- species -----------------------------------------------------------------------------------
+
+  const refreshSpecies = useCallback(async () => {
+    const next = await client.species();
+    const known = knownSpecies.current;
+    if (known === null) {
+      // A world that has already split opens on species: that is what there is to see.
+      if (next.length > 1) setMode(SPECIES_MODE);
+    } else {
+      const byId = new Map(next.map((report) => [report.id, report]));
+      for (const split of newSplits(next, known)) {
+        const parent = split.parent === null ? undefined : byId.get(split.parent);
+        const from = parent === undefined ? "its parent" : speciesLabel(parent);
+        notify({
+          tone: "ok",
+          text: `A new species has split off from ${from}, with ${split.founders ?? 0} founders. Name it in the species list.`,
+        });
+        setMode(SPECIES_MODE);
+      }
+    }
+    knownSpecies.current = new Set(next.map((report) => report.id));
+    setSpecies(next);
+  }, [notify]);
+
+  const refreshHistory = useCallback(async () => {
+    historyRead.current = performance.now();
+    const samples = await client.history();
+    const count = samples.reduce((widest, sample) => Math.max(widest, sample.species_living.length), 0);
+    setSeries(new Map(Array.from({ length: count }, (_, id) => [id, speciesSeries(samples, id)])));
   }, []);
+
+  const rename = useCallback(
+    async (id: number, name: string) => {
+      try {
+        const named = await client.name(id, name);
+        setSpecies((all) => all.map((report) => (report.id === named.id ? named : report)));
+      } catch (error) {
+        notify({ tone: "refused", text: `Could not rename: ${String(error)}` });
+      }
+    },
+    [notify],
+  );
 
   const refreshLedger = useCallback(async () => {
     const next = await client.ledger();
@@ -154,7 +231,7 @@ export function Game({ world }: { world: WorldInfo }) {
       map.setTerrain(terrain);
       map.setBarriers(barriers);
       setStatus(first);
-      await Promise.all([refreshFrame(), refreshLedger()]);
+      await Promise.all([refreshFrame(), refreshLedger(), refreshSpecies(), refreshHistory()]);
       stop = client.follow((event) => {
         setProgress(event);
         setStatus(event.status);
@@ -162,6 +239,9 @@ export function Game({ world }: { world: WorldInfo }) {
         // Every tick, not only after a request: income lands at each metrics sample (#308), so
         // the balance moves on its own.
         void refreshLedger();
+        // Every tick too: the counts move, and a split rides `status.splits` (#314).
+        void refreshSpecies();
+        if (performance.now() - historyRead.current > HISTORY_INTERVAL) void refreshHistory();
         if (awaitingOutcome.current) {
           awaitingOutcome.current = false;
           void client.barriers().then((view) => renderer.current?.setBarriers(view));
@@ -179,11 +259,15 @@ export function Game({ world }: { world: WorldInfo }) {
       renderer.current?.destroy();
       renderer.current = null;
     };
-  }, [world, refreshFrame, refreshLedger, refreshPace]);
+  }, [world, refreshFrame, refreshLedger, refreshPace, refreshSpecies, refreshHistory]);
 
   useEffect(() => {
     void refreshFrame();
   }, [mode, refreshFrame]);
+
+  useEffect(() => {
+    paint();
+  }, [selected, paint]);
 
   // -- pricing -----------------------------------------------------------------------------------
 
@@ -230,6 +314,8 @@ export function Game({ world }: { world: WorldInfo }) {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      // Typing a species' name is not a command.
+      if (event.target instanceof HTMLInputElement) return;
       if (event.key === "Escape") cancel();
       if (event.key === "f") setTool((t) => (t === "fence" ? "look" : "fence"));
       if (event.key === " " && !(event.target instanceof HTMLButtonElement)) {
@@ -328,6 +414,15 @@ export function Game({ world }: { world: WorldInfo }) {
         notices={notices}
         failure={failure}
       />
+      {species.length > 0 && (
+        <SpeciesPanel
+          species={species}
+          series={series}
+          selected={selected}
+          onSelect={setSelected}
+          onRename={(id, name) => void rename(id, name)}
+        />
+      )}
     </div>
   );
 }

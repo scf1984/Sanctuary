@@ -170,6 +170,66 @@ class TestWhatASampleSays:
         assert sample.living == 0
         assert sample.median_energy == 0.0
         assert len(sample.expressed_mean) == len(built.genes.vocabulary.names)
+        assert sample.species_living == (0,)
+
+
+class TestSpeciesPopulations:
+    """#314: the living count per species, recorded as the world runs because a per-species trend
+    for time already played cannot be recovered later (§4)."""
+
+    def split_off(self, built, count):
+        from core.genetics.speciation import split
+
+        rows = np.flatnonzero(built.store.alive & (built.store.age >= 0))[:count]
+        return split(
+            built.genetics,
+            built.speciation.lineage,
+            Selection.from_indices(rows, built.store.capacity),
+            tick=0,
+        )
+
+    def test_one_species_reads_the_whole_living_population(self):
+        sample = world().loop.metrics.sample(tick=0)
+
+        assert sample.species_living == (sample.living,)
+
+    def test_a_split_adds_an_entry_and_the_counts_still_sum_to_the_living(self):
+        built = world()
+        daughter = self.split_off(built, 15)
+
+        sample = built.loop.metrics.sample(tick=0)
+
+        assert len(sample.species_living) == 2
+        assert sample.species_living[daughter] == 15
+        assert sum(sample.species_living) == sample.living
+
+    def test_an_extinct_species_reads_zero_rather_than_vanishing(self):
+        built = world()
+        daughter = self.split_off(built, 10)
+        members = built.store.alive & (built.store.species_id == daughter)
+        built.store.release(built.store.row_ids()[members])
+
+        sample = built.loop.metrics.sample(tick=0)
+
+        assert sample.species_living[daughter] == 0
+
+    def test_a_widening_series_survives_the_columns_round_trip(self):
+        """A split widens the tuple mid-window, so the stored matrix is padded. The padding must
+        come back off exactly, and nothing else with it, or a reloaded history differs."""
+        built = world()
+        built.loop.advance(2)
+        self.split_off(built, 12)
+        built.loop.advance(2)
+        recorder = built.loop.metrics
+        before = list(recorder.samples)
+
+        recorder.restore(recorder.columns(), recorder.previous_reading)
+
+        assert [s.species_living for s in recorder.samples] == [
+            s.species_living for s in before
+        ]
+        assert len(before[0].species_living) == 1
+        assert len(before[-1].species_living) == 2
 
 
 class TestWhatShowsEvolutionHappening:

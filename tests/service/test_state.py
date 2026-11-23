@@ -20,6 +20,7 @@ def comparable(session):
         session.frame(),
         session.ledger(),
         session.history(),
+        session.species(),
         tuple(session.field(layer) for layer in info.field_layers if layer != "potential_growth"),
     )
 
@@ -59,6 +60,8 @@ class TestRestarting:
         session.advance(60)
         session.request(api.CullRequest(species_id=0, count=2, survivors=10))
         session.advance(1)
+        # #314: a species' name is the player's, and a restart must not lose it.
+        session.name(api.SpeciesNameRequest(species_id=0, name="Grazers"))
         before = comparable(session)
         close_world(session, state)
 

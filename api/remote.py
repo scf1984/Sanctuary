@@ -37,6 +37,8 @@ from api.values import (
     Quote,
     Request,
     Sample,
+    SpeciesNameRequest,
+    SpeciesReport,
     Status,
     TerrainView,
     WorldInfo,
@@ -102,6 +104,9 @@ class RemoteSession:
     def ledger(self) -> Ledger:
         return self._get("/ledger")
 
+    def species(self) -> tuple[SpeciesReport, ...]:
+        return self._get("/species")
+
     # -- write --------------------------------------------------------------------------------
 
     def quote(self, request: Request) -> Quote:
@@ -109,6 +114,9 @@ class RemoteSession:
 
     def request(self, request: Request) -> None:
         self._post("/request", request)
+
+    def name(self, request: SpeciesNameRequest) -> SpeciesReport:
+        return self._post("/name", request)
 
     # -- watching -----------------------------------------------------------------------------
 

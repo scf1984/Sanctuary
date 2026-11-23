@@ -1533,6 +1533,11 @@ by" hunger and no animal stands still merely because the drive that won has no m
     accordingly). A larger pen takes longer, which is real peripatric speciation.
   - **Cost**: one check is 420 ms at 100,000 animals of one species, once a generation, so about
     3.5 ms per tick spread out. The lineage is state and is snapshotted (schema v7).
+  - **The lineage records when and from how many** (#314, the owner's decision 2). Each split is a
+    `Split`: daughter, parent, the tick it happened on, and its founder count. A split is most often
+    met on return, so when it happened is part of what it is, and nothing can recompute it
+    afterwards. `Status.splits` counts them, so every catch-up progress event says when one has
+    landed, whether or not anyone was watching (schema v9).
 
   **MAJOR** under §2.8: it changes who interbreeds, what founders smell like, and adds splits.
 
@@ -1917,7 +1922,8 @@ wrapping work. If it is not, no amount of service code will save it.
   bit* — which is a stronger promise than §2.2 requires and a much easier one to test.
 
   **The intervention ledger and the metric history are state too** (schema v6, #31; v8 added what
-  income has earned and the rate it pays at, #308). Without the
+  income has earned and the rate it pays at, #308; v9 added each split's tick and founders, the
+  player's species names, and the living count per species on every sample, #314). Without the
   ledger a reload hands back a fresh budget, and a costly cull can be repeated for free. Without the
   series every scenario goal and every income reading restarts from nothing, and a series cannot
   be replayed (§2.2, §4). Three rules come with them:
@@ -2090,6 +2096,30 @@ reproduction precisely so that it can), and anything keyed by row, `alive` bit o
 the newborn from wherever its predecessor fell. Matching by id is also order-independent, which a
 frame needs because the world lists animals in row order and that order shifts as rows are reused.
 
+**Species are a colour mode and a lineage tree in the game client** — settled on #314 (the owner's
+decisions 4 and 5), which answers §5's "how is lineage displayed". The viewer's rule that colour
+encodes condition, not identity, still holds for the viewer, and in the game it holds for every
+condition mode. *Species* is one more mode beside them, and the first split switches the map to it,
+since a split is the showcase (#292).
+
+- **A species keeps its colour for life.** The palette is categorical, in a fixed order, indexed
+  by species id, and validated against the dark map (lightness band, chroma, colour-blind and
+  normal-vision separation, 3:1 contrast). A split therefore never repaints the species that were
+  already there. Past eight species the colours repeat, and that was accepted deliberately:
+  **selecting a species dims everyone else**, in every mode, and that is what tells two species
+  apart however many there are. The casing stays light, because it is what makes a dot readable
+  on every terrain.
+- **The list is a tree.** Each daughter sits under its parent, oldest first, with its count, a
+  sparkline from the recorded series and "split from X on day D, N founders". **An extinct
+  species stays listed, greyed**, because extinction is permanent (§2.7) and is part of the
+  world's story.
+- **A name is the player's, kept by `api` and saved in the snapshot** (decision 1). It is
+  presentation, so it never enters `core/`, where something that decides an outcome could come to
+  read it. It is saved with the world rather than in a file of its own, so a restore brings back
+  names and lineage from one moment. Renaming is not an intervention: it is free and applies at
+  once. Until a species is named the client shows a placeholder, and the service stores none, so
+  a placeholder is never mistaken for a chosen name.
+
 ---
 
 ## 4. Architecture boundaries
@@ -2168,7 +2198,9 @@ Not yet decided. Do not assume answers — ask.
 - **The remaining half of the metric definitions.** Species count and Shannon entropy over species
   abundance are still open. They were deferred *with* #16, since with one species they read 1 and 0
   forever. #16 has landed, so there is now something to argue about. #30 owns them and reserves
-  them rather than leaving them for whoever reaches for them first.
+  them rather than leaving them for whoever reaches for them first. What they will be computed
+  *from* is recorded already: since #314 every `Sample` carries `species_living`, the count per
+  species, so neither will start with a hole in its history.
 
   The third — within-species genetic diversity — is settled as far as the numbers to compute it
   *from*: `metrics.Sample.expressed_spread`, the per-gene standard deviation of the expressed
@@ -2179,12 +2211,6 @@ Not yet decided. Do not assume answers — ask.
   by scope, reading only the signature block, which leaves the scalar's composition its own open
   question (#302). A misleading number is still not shipped in the meantime (§8.7).
 - Competition format: replicate count, duration, termination condition, what is measured.
-- **How lineage is displayed.** Naming is settled (#16, 2026-11-06): the player names a new
-  species, which carries a neutral placeholder until then, and the name is presentation stored
-  outside the rule-bearing state. The mechanic is settled too (§2.5). What is still open is how the
-  lineage is shown, which lands with the game client (#292), so `split()` returns an opaque id and
-  stores no name.
-
 ---
 
 ## 6. Testing

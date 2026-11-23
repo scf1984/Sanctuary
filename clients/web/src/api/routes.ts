@@ -8,11 +8,13 @@ export const ROUTES = [
   "/barriers",
   "/history",
   "/ledger",
+  "/species",
   "/condition",
   "/field",
   "/entity",
   "/quote",
   "/request",
+  "/name",
   "/pace",
   "/events",
 ] as const;

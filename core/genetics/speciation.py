@@ -64,36 +64,60 @@ class MixedSpeciesError(Exception):
     """A selection that had to belong to a single species contained more than one."""
 
 
+@dataclass(frozen=True)
+class Split:
+    """One split, as the lineage records it (#314).
+
+    species_id: the daughter species the split made.
+    parent_species_id: the species it split off from.
+    tick: the tick the split was recorded on. A split is something the player most often meets on
+        return, delivered by catch-up (§2.5), so when it happened is part of what it is: nothing
+        can recompute it afterwards, and a client that only sees ids appear cannot say.
+    founders: how many animals, born and gestating, the daughter began with.
+    """
+
+    species_id: int
+    parent_species_id: int
+    tick: int
+    founders: int
+
+
 class Lineage:
-    """Which species each species split off from.
+    """Every split the world has made: which species came from which, when, and from how many.
 
     Roots -- species registered directly rather than produced by `split()` -- have no parent and
     are not recorded here at all; `parent_of` returns None for them, which is what terminates an
-    `ancestry` walk. Only the parent link is stored: it is what ancestry display needs, and this
-    module has no clock of its own to timestamp anything with (CLAUDE.md §2.1 -- the tick counter
-    lives in the world loop, and inventing a parameter no caller passes today would violate §8.2).
+    `ancestry` walk.
+
+    No names. A name is the player's and is presentation (#16), so it is kept beside the world
+    by `api`, never here, where it could come to be read by something that decides an outcome.
     """
 
     def __init__(self) -> None:
-        self._parent_by_species: dict[int, int] = {}
+        self._splits: dict[int, Split] = {}
 
-    def record_split(self, species_id: int, parent_species_id: int) -> None:
-        """Record that `species_id` split off from `parent_species_id`.
+    def record_split(self, split: Split) -> None:
+        """Record `split`.
 
         Raises ValueError on re-recording a species: a species id is created by exactly one
         split and its parent never changes, so a second record is a caller bug, not an update
         (CLAUDE.md §8.7).
         """
-        if species_id in self._parent_by_species:
+        if split.species_id in self._splits:
             raise ValueError(
-                f"species {species_id} already descends from "
-                f"{self._parent_by_species[species_id]}"
+                f"species {split.species_id} already descends from "
+                f"{self._splits[split.species_id].parent_species_id}"
             )
-        self._parent_by_species[species_id] = parent_species_id
+        self._splits[split.species_id] = split
 
     def parent_of(self, species_id: int) -> int | None:
         """The species `species_id` split off from, or None if it is a root."""
-        return self._parent_by_species.get(species_id)
+        found = self._splits.get(species_id)
+        return None if found is None else found.parent_species_id
+
+    def split_of(self, species_id: int) -> Split | None:
+        """The split that made `species_id`, or None if it is a root."""
+        return self._splits.get(species_id)
 
     def ancestry(self, species_id: int) -> tuple[int, ...]:
         """The chain from the root ancestor down to `species_id`, inclusive.
@@ -109,14 +133,14 @@ class Lineage:
             parent = self.parent_of(parent)
         return tuple(reversed(chain))
 
-    def parents(self) -> dict[int, int]:
-        """Every recorded split, as `{daughter: parent}`. A copy, for a snapshot to store (#31)."""
-        return dict(self._parent_by_species)
+    def splits(self) -> tuple[Split, ...]:
+        """Every recorded split, in the order they were made, for a snapshot to store (#31)."""
+        return tuple(self._splits.values())
 
-    def restore(self, parents: dict[int, int]) -> None:
+    def restore(self, splits: tuple[Split, ...]) -> None:
         """Replace the record with a saved one (#31). A split is state, not a derivation: which
-        species came from which cannot be recomputed from the masks or the ids."""
-        self._parent_by_species = {int(k): int(v) for k, v in parents.items()}
+        species came from which, and when, cannot be recomputed from the masks or the ids."""
+        self._splits = {split.species_id: split for split in splits}
 
 
 def mutation_step(genetics: Genetics, rows: np.ndarray) -> np.ndarray:
@@ -193,8 +217,11 @@ def has_diverged(
     return bool(centroid_between(genetics, a, b, columns) >= gap)
 
 
-def split(genetics: Genetics, lineage: Lineage, diverged: Selection) -> int:
+def split(genetics: Genetics, lineage: Lineage, diverged: Selection, tick: int) -> int:
     """Make `diverged` a new species descended from its current one; returns the new species id.
+
+    `tick` is when, for the lineage to record (#314). This module has no clock of its own
+    (§2.1), so the speciation step that calls it passes the tick it runs on.
 
     The daughter species starts with a copy of its parent's expression mask: a split changes who
     breeds with whom, not which genes anyone expresses. Divergence in expression comes afterwards,
@@ -219,7 +246,14 @@ def split(genetics: Genetics, lineage: Lineage, diverged: Selection) -> int:
 
     new_species_id = genetics.species.derive(parent_species_id)
     genetics.speciate(diverged, new_species_id)
-    lineage.record_split(new_species_id, parent_species_id)
+    lineage.record_split(
+        Split(
+            species_id=new_species_id,
+            parent_species_id=parent_species_id,
+            tick=tick,
+            founders=len(diverged),
+        )
+    )
     return new_species_id
 
 
@@ -431,5 +465,5 @@ class Speciation:
             # The smaller group is the daughter: a split is a group leaving its parent stock, and
             # the stock is the larger side. Which keeps the old id is otherwise arbitrary.
             daughter = first if len(first) < len(second) else second
-            made.append(split(self.genetics, self.lineage, daughter))
+            made.append(split(self.genetics, self.lineage, daughter, tick))
         return tuple(made)

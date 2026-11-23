@@ -358,3 +358,75 @@ class TestInterventions:
     def test_something_that_is_not_a_request_is_refused(self):
         with pytest.raises(TypeError, match="not a request"):
             session_on(founders=20).request("cull everything")
+
+
+class TestSpecies:
+    """#314: the lineage list a client draws, and the names the player gives it."""
+
+    def split_off(self, session, count=12):
+        from core.genetics.speciation import split
+        from core.selection import Selection
+
+        world = session._world
+        rows = np.flatnonzero(world.store.alive & (world.store.age >= 0))[:count]
+        return split(
+            world.genetics,
+            world.speciation.lineage,
+            Selection.from_indices(rows, world.store.capacity),
+            tick=world.loop.tick_count,
+        )
+
+    def test_a_founding_species_has_no_parent_and_holds_everyone(self):
+        session = session_on(founders=30)
+
+        (only,) = session.species()
+
+        assert only == api.SpeciesReport(
+            id=0, name=None, parent=None, split_tick=None, founders=None, living=30
+        )
+
+    def test_a_split_is_listed_after_its_parent_with_when_and_from_how_many(self):
+        session = session_on(founders=30)
+        session.advance(4)
+        daughter = self.split_off(session, count=12)
+
+        parent, child = session.species()
+
+        assert child.id == daughter
+        assert (child.parent, child.split_tick, child.founders) == (0, 4, 12)
+        assert parent.living + child.living == session.status().living
+
+    def test_the_status_counts_the_splits(self):
+        session = session_on(founders=30)
+        assert session.status().splits == 0
+
+        self.split_off(session)
+
+        assert session.status().splits == 1
+
+    def test_a_name_is_applied_at_once_and_trimmed(self):
+        session = session_on(founders=30)
+
+        named = session.name(api.SpeciesNameRequest(species_id=0, name="  Grazers "))
+
+        assert named.name == "Grazers"
+        assert session.species()[0].name == "Grazers"
+
+    @pytest.mark.parametrize(
+        ("species_id", "name", "message"),
+        [(7, "Ghosts", "no species 7"), (0, "   ", "blank"), (0, "x" * 41, "at most 40")],
+    )
+    def test_a_bad_name_is_refused(self, species_id, name, message):
+        with pytest.raises(ValueError, match=message):
+            session_on(founders=30).name(api.SpeciesNameRequest(species_id=species_id, name=name))
+
+    def test_names_survive_a_save_and_a_load_rolls_them_back(self, tmp_path):
+        """A restore brings back names from the snapshot's moment, not the latest ones."""
+        session = session_on(founders=30)
+        session.name(api.SpeciesNameRequest(species_id=0, name="Grazers"))
+        path = session.save(str(tmp_path / "slot.npz"))
+        session.name(api.SpeciesNameRequest(species_id=0, name="Renamed later"))
+
+        session.load(path)
+
+        assert session.species()[0].name == "Grazers"

@@ -47,6 +47,8 @@ __all__ = [
     "Record",
     "Request",
     "Sample",
+    "SpeciesNameRequest",
+    "SpeciesReport",
     "Status",
     "TerrainView",
     "WorldInfo",
@@ -100,11 +102,16 @@ class Status:
     tick: ticks completed. The only clock (§2.1).
     collapsed: whether the run has ended (§2.7). Read from the world rather than latched.
     living: animals alive and born. A gestating young is not one yet (#20).
+    splits: how many splits the world has recorded (#314). It rides every catch-up progress event,
+        so a client sees it rise when a split lands, live or during catch-up, and fetches
+        `species()` to see what it was. A count rather than the split itself, because a client
+        that missed an event, or opens after an absence, reads the same record either way.
     """
 
     tick: int
     collapsed: bool
     living: int
+    splits: int
 
 
 @dataclass(frozen=True)
@@ -303,6 +310,37 @@ Request = Union[CullRequest, FenceRequest]
 """What a client may ask a world to do. Data, never a core object: the session builds the
 intervention, so a drag in a viewer and a standing policy firing during an absence travel the same
 path (§2.7)."""
+
+
+@dataclass(frozen=True)
+class SpeciesReport:
+    """One species, living or extinct, as the player sees it in the lineage list (#314).
+
+    id: the species id a frame's `species` column and `EntityReport.species` carry.
+    name: what the player called it, or None until they do. The placeholder shown meanwhile is the
+        client's: it is presentation, and a stored placeholder would read as a name chosen.
+    parent: the species it split from, or None for a founding species.
+    split_tick: the tick it split off on, or None for a founding species.
+    founders: how many animals it split off with, or None for a founding species.
+    living: animals of this species alive and born now. Zero is extinct, which is permanent
+        (§2.7), so an extinct species stays listed rather than vanishing.
+    """
+
+    id: int
+    name: Optional[str]
+    parent: Optional[int]
+    split_tick: Optional[int]
+    founders: Optional[int]
+    living: int
+
+
+@dataclass(frozen=True)
+class SpeciesNameRequest:
+    """Call species `species_id` by `name` (#314). Not an intervention: it costs nothing, changes
+    nothing the world does, and so is applied at once rather than at a tick boundary (§2.7)."""
+
+    species_id: int
+    name: str
 
 
 @dataclass(frozen=True)

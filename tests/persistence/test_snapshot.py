@@ -43,7 +43,7 @@ class TestARoundTripIsTheSameWorld:
         saved = run(80)
 
         restored = world()
-        load(restored, save(saved, tmp_path / "w.npz"))
+        load(restored, save(saved, tmp_path / "w.npz", names={}))
 
         for column in ("x", "y", "z", "velocity_x", "energy", "age", "genes", "alive"):
             assert np.array_equal(
@@ -56,7 +56,7 @@ class TestARoundTripIsTheSameWorld:
         saved = run(80)
 
         restored = world()
-        load(restored, save(saved, tmp_path / "w.npz"))
+        load(restored, save(saved, tmp_path / "w.npz", names={}))
 
         assert restored.loop.tick_count == saved.loop.tick_count == 80
         assert restored.store.ids_issued == saved.store.ids_issued
@@ -67,7 +67,7 @@ class TestARoundTripIsTheSameWorld:
         saved = run(80)
 
         restored = world()
-        load(restored, save(saved, tmp_path / "w.npz"))
+        load(restored, save(saved, tmp_path / "w.npz", names={}))
 
         assert np.array_equal(restored.plants.biomass, saved.plants.biomass)
         assert np.array_equal(restored.plants.soil_nutrients, saved.plants.soil_nutrients)
@@ -80,7 +80,7 @@ class TestARoundTripIsTheSameWorld:
         with the tick beside it."""
         saved = run(80)
         assert saved.config.climate.seasons is not None, "the demo world should have seasons"
-        path = save(saved, tmp_path / "w.npz")
+        path = save(saved, tmp_path / "w.npz", names={})
 
         restored = world()
         load(restored, path)
@@ -96,7 +96,7 @@ class TestARoundTripIsTheSameWorld:
 
         restored = world()
         unfenced = restored.hydration.reachable.copy()
-        load(restored, save(saved, tmp_path / "w.npz"))
+        load(restored, save(saved, tmp_path / "w.npz", names={}))
 
         assert np.array_equal(restored.hydration.reachable, saved.hydration.reachable)
         assert not np.array_equal(restored.hydration.reachable, unfenced)
@@ -108,7 +108,7 @@ class TestARoundTripIsTheSameWorld:
         assert saved.store.capacity > world().store.capacity, "the run should have grown the store"
 
         restored = world()
-        load(restored, save(saved, tmp_path / "w.npz"))
+        load(restored, save(saved, tmp_path / "w.npz", names={}))
 
         assert restored.store.capacity == saved.store.capacity
         assert int(restored.store.alive.sum()) == int(saved.store.alive.sum())
@@ -119,7 +119,7 @@ class TestARoundTripIsTheSameWorld:
         saved = run(120)
 
         restored = world()
-        load(restored, save(saved, tmp_path / "w.npz"))
+        load(restored, save(saved, tmp_path / "w.npz", names={}))
 
         default_registry(
             0.0,
@@ -142,7 +142,7 @@ class TestAReloadedWorldContinues:
         """
         saved = run(80)
         restored = world()
-        load(restored, save(saved, tmp_path / "w.npz"))
+        load(restored, save(saved, tmp_path / "w.npz", names={}))
 
         saved.loop.advance(40)
         restored.loop.advance(40)
@@ -158,7 +158,7 @@ class TestAReloadedWorldContinues:
         repetition nobody asked for that compounds with every reload."""
         saved = run(80)
         restored = world()
-        load(restored, save(saved, tmp_path / "w.npz"))
+        load(restored, save(saved, tmp_path / "w.npz", names={}))
 
         assert restored.rng.bit_generator.state == saved.rng.bit_generator.state
         assert restored.rng.random() == saved.rng.random()
@@ -169,7 +169,7 @@ class TestAReloadedWorldContinues:
         saved = run(80)
         untouched = world()
 
-        load(world(), save(saved, tmp_path / "w.npz"))
+        load(world(), save(saved, tmp_path / "w.npz", names={}))
 
         assert not np.array_equal(untouched.store.x, saved.store.x)
 
@@ -180,7 +180,7 @@ class TestASnapshotBelongsToOneWorld:
         state into different rules collapses it for reasons invisible to the player. Refused rather
         than repaired, because there is no repair."""
         saved = run(20)
-        path = save(saved, tmp_path / "w.npz")
+        path = save(saved, tmp_path / "w.npz", names={})
 
         config = demo_world_config(FOUNDERS, SEED)
         cheaper = build_world(
@@ -225,7 +225,7 @@ class TestASnapshotBelongsToOneWorld:
         whole of the forward-compatibility story — and the first real migration a change here
         rather than an archaeology exercise."""
         saved = run(10)
-        path = save(saved, tmp_path / "w.npz")
+        path = save(saved, tmp_path / "w.npz", names={})
         _rewrite_meta(path, schema_version=SCHEMA_VERSION + 1)
 
         with pytest.raises(SnapshotError, match="no migration"):
@@ -235,7 +235,7 @@ class TestASnapshotBelongsToOneWorld:
         """A corrupt snapshot whose two accounts of occupancy differ would otherwise surface as a
         newborn overwriting a live entity, ticks later and somewhere else (§8.7)."""
         saved = run(40)
-        path = save(saved, tmp_path / "w.npz")
+        path = save(saved, tmp_path / "w.npz", names={})
         contents = dict(np.load(path, allow_pickle=False))
         contents["free_rows"] = np.append(contents["free_rows"], 0)
         np.savez(path, **contents)
@@ -262,7 +262,7 @@ class TestTheLedgerSurvivesAReload:
         assert saved.loop.interventions.balance < DEMO_BUDGET, "the cull should have been charged"
 
         restored = world()
-        load(restored, save(saved, tmp_path / "w.npz"))
+        load(restored, save(saved, tmp_path / "w.npz", names={}))
 
         assert restored.loop.interventions.balance == saved.loop.interventions.balance
 
@@ -275,7 +275,7 @@ class TestTheLedgerSurvivesAReload:
         assert saved.loop.interventions.earned > 0, "three samples should have paid"
 
         restored = world()
-        load(restored, save(saved, tmp_path / "w.npz"))
+        load(restored, save(saved, tmp_path / "w.npz", names={}))
         assert restored.loop.interventions.earned == saved.loop.interventions.earned
         assert restored.loop.interventions.income_per_tick == saved.loop.interventions.income_per_tick
 
@@ -292,7 +292,7 @@ class TestTheLedgerSurvivesAReload:
         assert [record.applied for record in saved.loop.interventions.history] == [True, False]
 
         restored = world()
-        load(restored, save(saved, tmp_path / "w.npz"))
+        load(restored, save(saved, tmp_path / "w.npz", names={}))
 
         assert restored.loop.interventions.history == saved.loop.interventions.history
 
@@ -304,7 +304,7 @@ class TestTheLedgerSurvivesAReload:
 
         restored = world()
         restored.loop.interventions.request(_cull(restored))
-        load(restored, save(saved, tmp_path / "w.npz"))
+        load(restored, save(saved, tmp_path / "w.npz", names={}))
         restored.loop.advance(1)
 
         assert restored.loop.interventions.history == []
@@ -317,7 +317,7 @@ class TestTheLedgerSurvivesAReload:
         unledgered.loop.interventions = None
 
         with pytest.raises(SnapshotError, match="intervention ledger"):
-            load(unledgered, save(saved, tmp_path / "w.npz"))
+            load(unledgered, save(saved, tmp_path / "w.npz", names={}))
 
     def test_a_world_with_a_ledger_cannot_load_a_snapshot_without_one(self, tmp_path):
         """It would keep whatever balance it was built with, which is a free budget."""
@@ -325,7 +325,7 @@ class TestTheLedgerSurvivesAReload:
         saved.loop.interventions = None
 
         with pytest.raises(SnapshotError, match="intervention ledger"):
-            load(world(), save(saved, tmp_path / "w.npz"))
+            load(world(), save(saved, tmp_path / "w.npz", names={}))
 
 
 # Half a cadence past a sample, so a reload lands between two, and late enough that the founders
@@ -344,7 +344,7 @@ class TestTheMetricHistorySurvivesAReload:
         cadence = DEMO_METRICS.every_n_ticks
         saved = run(SAVED_AT)
         restored = world()
-        load(restored, save(saved, tmp_path / "w.npz"))
+        load(restored, save(saved, tmp_path / "w.npz", names={}))
         assert restored.loop.metrics.samples == saved.loop.metrics.samples
 
         saved.loop.advance(4 * cadence)
@@ -360,7 +360,7 @@ class TestTheMetricHistorySurvivesAReload:
         zero conceptions and deaths, which reads as a world in which nothing happened."""
         saved = run(SAVED_AT)
         restored = world()
-        load(restored, save(saved, tmp_path / "w.npz"))
+        load(restored, save(saved, tmp_path / "w.npz", names={}))
 
         to_next_sample = DEMO_METRICS.every_n_ticks - SAVED_AT % DEMO_METRICS.every_n_ticks
         saved.loop.advance(to_next_sample)
@@ -379,7 +379,7 @@ class TestTheMetricHistorySurvivesAReload:
         unrecorded.loop.metrics = None
 
         with pytest.raises(SnapshotError, match="metric history"):
-            load(unrecorded, save(saved, tmp_path / "w.npz"))
+            load(unrecorded, save(saved, tmp_path / "w.npz", names={}))
 
     def test_a_recording_world_cannot_load_a_snapshot_without_a_history(self, tmp_path):
         """Its series would restart empty mid-world, and its first flows would read zero."""
@@ -387,7 +387,7 @@ class TestTheMetricHistorySurvivesAReload:
         saved.loop.metrics = None
 
         with pytest.raises(SnapshotError, match="metric history"):
-            load(world(), save(saved, tmp_path / "w.npz"))
+            load(world(), save(saved, tmp_path / "w.npz", names={}))
 
     def test_a_different_recording_policy_is_refused(self, tmp_path):
         """A series sampled every 20 ticks continued every 10 is two quantities on one axis — the
@@ -403,7 +403,7 @@ class TestTheMetricHistorySurvivesAReload:
         )
 
         with pytest.raises(SnapshotError, match="recording policy"):
-            load(restored, save(saved, tmp_path / "w.npz"))
+            load(restored, save(saved, tmp_path / "w.npz", names={}))
 
 
 def _rewrite_meta(path: Path, **changes) -> None:
@@ -429,23 +429,37 @@ class TestSpeciesSurviveAReload:
             built.genetics,
             built.speciation.lineage,
             Selection.from_indices(rows, built.store.capacity),
+            tick=built.loop.tick_count,
         )
 
     def test_the_lineage_and_the_new_species_come_back(self, tmp_path):
         built = world()
         daughter = self.split_off(built)
-        path = save(built, tmp_path / "w.npz")
+        path = save(built, tmp_path / "w.npz", names={})
 
         reloaded = world()
         load(reloaded, path)
 
         assert reloaded.speciation.lineage.ancestry(daughter) == (0, daughter)
+        assert reloaded.speciation.lineage.splits() == built.speciation.lineage.splits()
         assert reloaded.species.n_species == 2
         np.testing.assert_array_equal(reloaded.store.species_id, built.store.species_id)
 
     def test_a_world_that_never_split_reloads_with_no_lineage(self, tmp_path):
-        path = save(world(), tmp_path / "w.npz")
+        path = save(world(), tmp_path / "w.npz", names={})
         reloaded = world()
         load(reloaded, path)
 
-        assert reloaded.speciation.lineage.parents() == {}
+        assert reloaded.speciation.lineage.splits() == ()
+
+    def test_the_players_names_come_back_with_the_species_they_name(self, tmp_path):
+        """#314: names are saved in the snapshot, so a restore brings back names and lineage from
+        one moment, and `load` hands them back to whoever keeps them."""
+        built = world()
+        daughter = self.split_off(built)
+        path = save(built, tmp_path / "w.npz", names={0: "Grazers", daughter: "Hill folk"})
+
+        assert load(world(), path) == {0: "Grazers", daughter: "Hill folk"}
+
+    def test_a_world_nobody_named_loads_with_no_names(self, tmp_path):
+        assert load(world(), save(world(), tmp_path / "w.npz", names={})) == {}

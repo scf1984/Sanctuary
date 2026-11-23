@@ -6,10 +6,11 @@ import dataclasses
 import hashlib
 import json
 from pathlib import Path
-from typing import Optional
+from typing import Mapping, Optional
 
 import numpy as np
 
+from core.genetics.speciation import Split
 from core.world.interventions import Record
 
 # Bumped whenever what is written changes shape. Only the current version is read, so there is no
@@ -26,7 +27,11 @@ from core.world.interventions import Record
 #
 # v8 added income to the ledger (#308): what has been earned and the rate it is being earned at.
 # A v7 ledger cannot say how much of its balance was income, so it does not reconcile.
-SCHEMA_VERSION = 8
+#
+# v9 added each split's tick and founder count to the lineage, the player's names for species, and
+# the living count per species to every metric sample (#314). A v8 lineage cannot say when its
+# splits happened, and a v8 series has no per-species counts to fill in.
+SCHEMA_VERSION = 9
 
 # Every array the world cannot recompute. Terrain, water, the cue field and the forage field are
 # all pure functions of the config or of the state below, so storing them would be storing a
@@ -81,8 +86,15 @@ def fingerprint(config) -> str:
     ).hexdigest()
 
 
-def save(world, path: Path) -> Path:
+def save(world, path: Path, names: Mapping[int, str]) -> Path:
     """Write `world`'s state to `path`, and return it. Creates the parent directory.
+
+    `names` is what the player has called each species, by id (#314). It is presentation, so it
+    lives beside the world in `api` and never in `core/`, where something that decides an outcome
+    could come to read it. It is saved here rather than in a file of its own so a restore brings
+    back names and lineage from one moment: a name can never outlive, or predate, its species.
+    Required rather than defaulted, so a caller that holds names cannot forget to pass them and
+    lose them silently (§8.7).
 
     One file, arrays and metadata together, because a snapshot split across two is a snapshot that
     can be half-copied — and §3.2 treats losing one as unrecoverable, which makes atomicity of the
@@ -111,10 +123,15 @@ def save(world, path: Path) -> Path:
         "rng": world.rng.bit_generator.state,
         "interventions": _ledger(world.loop.interventions),
         "metrics": _recording(world.loop.metrics),
-        # Which species split from which (#16). The masks say what species exist and the ids say
-        # who belongs to each, but neither says where a species came from, and nothing can
-        # recompute it. JSON object keys are strings, so the ids are written as pairs.
-        "lineage": sorted(world.speciation.lineage.parents().items()),
+        # Which species split from which, when, and from how many (#16, #314). The masks say what
+        # species exist and the ids say who belongs to each, but neither says where a species came
+        # from, and nothing can recompute it. In the order the splits were made.
+        "lineage": [
+            [split.species_id, split.parent_species_id, split.tick, split.founders]
+            for split in world.speciation.lineage.splits()
+        ],
+        # JSON object keys are strings, so the ids are written as pairs.
+        "names": sorted([int(species), str(name)] for species, name in names.items()),
     }
     arrays = {f"store.{name}": getattr(store, name) for name in _STORE_COLUMNS}
     arrays["row_ids"] = store.row_ids()
@@ -140,8 +157,9 @@ def save(world, path: Path) -> Path:
     return path
 
 
-def load(world, path: Path) -> None:
-    """Restore `path` into `world`, in place, or raise `SnapshotError`.
+def load(world, path: Path) -> dict[int, str]:
+    """Restore `path` into `world`, in place, and return the species names saved with it, or
+    raise `SnapshotError`. The names go back to whoever keeps them (see `save`).
 
     `world` must already be assembled from the config the snapshot was taken under. That is the
     shape rather than a `load_world(path)` factory for two reasons, and both are §2.8's: the config
@@ -163,7 +181,12 @@ def load(world, path: Path) -> None:
             archive["free_rows"],
         )
         world.species.restore(archive["species_masks"])
-        world.speciation.lineage.restore(dict(meta["lineage"]))
+        world.speciation.lineage.restore(
+            tuple(
+                Split(species_id=species, parent_species_id=parent, tick=tick, founders=founders)
+                for species, parent, tick, founders in meta["lineage"]
+            )
+        )
         world.plants.biomass[...] = archive["plants.biomass"]
         world.plants.soil_nutrients[...] = archive["plants.soil_nutrients"]
         world.carrion.mass[...] = archive["carrion.mass"]
@@ -202,6 +225,7 @@ def load(world, path: Path) -> None:
     # anything, so the first frame after a load draws where the animals *are* rather than streaking
     # them in from wherever the pre-load world left them.
     world.loop.advance(0)
+    return {int(species): str(name) for species, name in meta["names"]}
 
 
 def _ledger(interventions) -> Optional[dict]:
