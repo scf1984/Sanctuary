@@ -30,7 +30,7 @@ def every_read(session):
         "inspect": session.inspect(some_id),
         "inspect_missing": session.inspect(-1),
         "ledger": session.ledger(),
-        "quote": session.quote(CullRequest(species_id=0, count=1, survivors=1)),
+        "quote": session.quote(CullRequest(species_id=0, count=1)),
         **{f"condition_{m}": session.condition(m) for m in info.conditions},
         **{f"field_{f}": session.field(f) for f in info.field_layers},
     }
@@ -42,7 +42,7 @@ def test_every_read_comes_back_equal(session):
 
 
 def test_requests_come_back_equal():
-    for request in (CullRequest(0, 3, 10), FenceRequest(1.0, 2.0, 9.5, 7.25)):
+    for request in (CullRequest(0, 3), FenceRequest(1.0, 2.0, 9.5, 7.25)):
         assert wire.loads(wire.dumps(request)) == request
 
 

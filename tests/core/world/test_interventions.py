@@ -6,11 +6,12 @@ know what did not happen (§2.4); and `TestInterventionsRunBeforeTheTickTheyLand
 whole argument for draining the queue before a tick's systems rather than after.
 """
 
+import numpy as np
 import pytest
 
 from worlds.demo import build_demo_world
 from core.selection import Selection
-from core.world.cull import Cull
+from core.world.cull import Cull, CullConfig
 from core.world.interventions import Interventions, Record
 
 
@@ -162,104 +163,132 @@ class TestTheLedgerAndTheHistoryAgree:
         assert len(queue.history) == 1
 
 
+def cull(built, species_id, count, seed=0):
+    """A cull held to the world's own guard, drawing from a generator of its own so a test can
+    repeat a draw (the world's generator is what the session passes)."""
+    return Cull(
+        built.ecology,
+        built.carrion,
+        built.store,
+        built.config.cull,
+        species_id=species_id,
+        count=count,
+        rng=np.random.default_rng(seed),
+    )
+
+
 class TestCulling:
     def test_it_removes_the_number_asked_for(self):
         built = world()
         species = int(built.store.species_id[built.store.alive][0])
         before = len(living_of(built, species))
 
-        built.loop.interventions.request(
-            Cull(built.ecology, built.store, species_id=species, count=10, survivors=5)
-        )
+        built.loop.interventions.request(cull(built, species, count=10))
         built.loop.advance(1)
 
         assert built.loop.interventions.history[-1].applied
         assert len(living_of(built, species)) <= before - 10
 
-    def test_it_returns_the_bodies_to_the_ground_they_fell_on(self):
-        """A cull is decomposition compressed into one tick, and the *soil* is what proves it —
-        `total_nutrients()` would hold either way, because the ledger counts an unreturned body as
-        exported (see `Cull`, and the gap filed against the invariant). What a skipped return would
-        do is sterilise the ground the player used the cull on."""
+    def test_the_bodies_become_carrion_where_each_animal_stood(self):
+        """#28, decision 4. Each body is laid whole, at its own cell, and nothing is returned to
+        the soil yet: the flesh stays owed on the export ledger while it lies there, and
+        `Carrion.decompose` is what pays it back (#214's invariant, below)."""
         built = world()
         species = int(built.store.species_id[built.store.alive][0])
-        cull = Cull(built.ecology, built.store, species_id=species, count=10, survivors=5)
+        culling = cull(built, species, count=10)
+        victims = culling._victims()
+        culling.rng = np.random.default_rng(0)  # the same draw again, for `apply`
+        cells = built.terrain.cell_indices(built.store.x[victims], built.store.y[victims])
+        expected = np.zeros_like(built.carrion.mass)
+        np.add.at(expected, cells, built.store.energy[victims].astype(np.float64))
+        carrion_before = built.carrion.mass.copy()
         exported_before = built.plants.exported_nutrients
         total_before = built.plants.total_nutrients()
 
-        # Applied directly rather than through a tick: `plant_growth` runs first in the order and
-        # converts soil into standing crop, and grazing adds to the export ledger, so neither
-        # column reads cleanly at a tick boundary. The queue's integration with the loop is what
-        # the tests above cover; this one is about where the bodies went.
-        cull.apply(built.store)
+        # Applied directly rather than through a tick, so nothing grazes or rots in between.
+        culling.apply(built.store)
 
-        assert built.plants.exported_nutrients < exported_before, "the bodies went nowhere"
-        assert built.plants.total_nutrients() == pytest.approx(total_before, rel=1e-9)
+        np.testing.assert_allclose(built.carrion.mass - carrion_before, expected, rtol=1e-12)
+        assert built.plants.exported_nutrients == exported_before
+        assert built.plants.total_nutrients() == total_before
+        assert not built.store.alive[victims].any()
 
-    def test_it_refuses_to_take_a_species_below_its_survivor_floor(self):
-        """§2.7's rule, and the reason this is the framework's first intervention rather than an
-        arbitrary one: the precondition is a real design constraint."""
+    def test_victims_are_drawn_at_random_from_the_species(self):
+        """#28, decision 3. The first build took the lowest rows, a selection rule nobody chose.
+        Over many draws every born member is taken about equally often, the lowest rows included."""
+        built = world()
+        species = int(built.store.species_id[built.store.alive][0])
+        members = living_of(built, species).to_indices()
+        count, draws = 5, 2_000
+        culling = cull(built, species, count=count, seed=7)
+
+        taken = np.concatenate([culling._victims() for _ in range(draws)])
+
+        assert np.isin(taken, members).all()
+        frequency = np.bincount(taken, minlength=built.store.capacity)[members] / draws
+        expected = count / len(members)
+        # Five binomial standard errors per member: fails on a biased draw, not on noise.
+        tolerance = 5 * np.sqrt(expected * (1 - expected) / draws)
+        assert np.abs(frequency - expected).max() < tolerance
+
+    def test_a_cull_may_take_a_species_down_to_its_guard_and_no_further(self):
+        """§2.7's rule, and #28's done-when: the guard rejects an over-large cull. The floor is the
+        world's (`CullConfig`), so no request can lower it."""
         built = world()
         species = int(built.store.species_id[built.store.alive][0])
         alive = len(living_of(built, species))
+        floor = built.config.cull.survivors
+        assert alive > floor + 1, "the fixture needs a species above its guard"
 
-        built.loop.interventions.request(
-            Cull(built.ecology, built.store, species_id=species, count=alive, survivors=10)
-        )
+        greedy = cull(built, species, count=alive - floor + 1)
+        exact = cull(built, species, count=alive - floor)
+
+        assert "§2.7" in greedy.refusal()
+        assert exact.refusal() is None
+
+        built.loop.interventions.request(greedy)
         built.loop.advance(1)
-
         assert "§2.7" in built.loop.interventions.history[-1].refusal
-        assert len(living_of(built, species)) > 0
+
+    def test_the_demo_world_keeps_six(self):
+        """The measured number (#28, decision 1): six born animals regrow to 200 within ten
+        generations in 20 of 20 runs (docs/spikes/viable-population.md, after #251)."""
+        assert build_demo_world(seed=1, n_entities=10).config.cull.survivors == 6
 
     def test_a_species_with_no_living_members_is_refused(self):
         built = world()
 
-        built.loop.interventions.request(
-            Cull(built.ecology, built.store, species_id=999, count=1, survivors=1)
-        )
+        built.loop.interventions.request(cull(built, species_id=999, count=1))
         built.loop.advance(1)
 
         assert "no living members" in built.loop.interventions.history[-1].refusal
 
-    def test_gestating_rows_do_not_count_as_survivors(self):
+    def test_gestating_rows_are_neither_survivors_nor_victims(self):
         """One carries a negative age and has not been born (#20), so counting it would let a cull
-        leave a species whose only remaining members are unborn."""
+        leave a species whose only remaining members are unborn; and it is born whether or not its
+        mother survives (§2.7), so a cull never reaches it."""
         built = world(ticks=120)
         species = int(built.store.species_id[built.store.alive][0])
-        gestating = int(
-            (
-                built.store.alive
-                & (built.store.age < 0)
-                & (built.store.species_id == species)
-            ).sum()
-        )
-        assert gestating > 0, "the demo world should be breeding by tick 120"
+        unborn = built.store.alive & (built.store.age < 0) & (built.store.species_id == species)
+        assert unborn.any(), "the demo world should be breeding by tick 120"
+        born = len(living_of(built, species))
 
-        cull = Cull(built.ecology, built.store, species_id=species, count=1, survivors=1)
+        culling = cull(built, species, count=born - built.config.cull.survivors)
 
-        assert len(cull._living()) == int(
-            (
-                built.store.alive
-                & (built.store.age >= 0)
-                & (built.store.species_id == species)
-            ).sum()
-        )
+        assert len(culling._living()) == born
+        assert not unborn[culling._victims()].any()
 
-    @pytest.mark.parametrize(
-        "kwargs, message",
-        [
-            ({"count": 0, "survivors": 1}, "at least one animal"),
-            ({"count": 1, "survivors": 0}, "eradication"),
-        ],
-    )
-    def test_a_cull_that_could_empty_a_species_is_rejected_at_construction(
-        self, kwargs, message
-    ):
-        """A survivor floor of zero honours §2.7's letter and breaks it: a population of one is
-        extinct on a delay."""
+    def test_a_cull_of_nobody_is_rejected_at_construction(self):
         built = world(ticks=1)
-        with pytest.raises(ValueError, match=message):
-            Cull(built.ecology, built.store, species_id=0, **kwargs)
+        with pytest.raises(ValueError, match="at least one animal"):
+            cull(built, species_id=0, count=0)
+
+    @pytest.mark.parametrize("survivors", [0, 1])
+    def test_a_guard_below_two_is_rejected(self, survivors):
+        """Reproduction needs two parents, so a guard leaving one honours §2.7's letter and breaks
+        it: a population of one is extinct on a delay."""
+        with pytest.raises(ValueError, match="eradicated"):
+            CullConfig(survivors=survivors)
 
 
 class TestInterventionsRunBeforeTheTickTheyLandOn:
@@ -299,18 +328,16 @@ class TestInterventionsRunBeforeTheTickTheyLandOn:
         with pytest.raises(Exception, match="exported_nutrients_are_held"):
             built.loop.advance(1)
 
-    def test_a_cull_returns_what_it_removes(self):
-        """The same removal done properly: `Cull.apply` hands every body back to the ground before
-        freeing its row, so the export ledger stays fully held."""
+    def test_a_cull_leaves_what_it_removes(self):
+        """The same removal done properly: `Cull.apply` lays every body as carrion before freeing
+        its row, so the export ledger stays fully held, and decomposing it keeps it so."""
         built = build_demo_world(seed=1, n_entities=60)
         built.loop.advance(60)
         built.loop.debug_checks = True
         built.loop.interventions = Interventions(balance=100.0)
         species = int(built.store.species_id[built.store.alive][0])
 
-        built.loop.interventions.request(
-            Cull(built.ecology, built.store, species_id=species, count=10, survivors=5)
-        )
+        built.loop.interventions.request(cull(built, species, count=10))
         built.loop.advance(5)  # must not raise
 
     def test_a_cull_lands_before_the_systems_that_read_the_population(self):
@@ -325,9 +352,7 @@ class TestInterventionsRunBeforeTheTickTheyLandOn:
         watcher = Noted(name="watcher")
         watcher.apply = lambda store: seen.append(len(living_of(built, species)))
         built.loop.interventions.request(watcher)
-        built.loop.interventions.request(
-            Cull(built.ecology, built.store, species_id=species, count=10, survivors=5)
-        )
+        built.loop.interventions.request(cull(built, species, count=10))
         built.loop.advance(1)
 
         assert seen == [before], "the intervention ran against a tick that had not started"

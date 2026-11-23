@@ -58,7 +58,7 @@ class TestRestarting:
         state = tmp_path / "w"
         session, _ = open_world(state, now=0.0, ticks_per_second=1.0, world="demo", seed=4, founders=40)
         session.advance(60)
-        session.request(api.CullRequest(species_id=0, count=2, survivors=10))
+        session.request(api.CullRequest(species_id=0, count=2))
         session.advance(1)
         # #314: a species' name is the player's, and a restart must not lose it.
         session.name(api.SpeciesNameRequest(species_id=0, name="Grazers"))

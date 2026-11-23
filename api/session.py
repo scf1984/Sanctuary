@@ -167,6 +167,7 @@ class Session:
             gene_names=tuple(self._world.genes.vocabulary.names),
             field_layers=FIELD_LAYERS,
             conditions=CONDITIONS,
+            cull_survivors=self._world.config.cull.survivors,
         )
 
     def terrain(self) -> TerrainView:
@@ -377,7 +378,13 @@ class Session:
         world = self._world
         if isinstance(request, CullRequest):
             return Cull(
-                world.ecology, world.store, request.species_id, request.count, request.survivors
+                world.ecology,
+                world.carrion,
+                world.store,
+                world.config.cull,
+                request.species_id,
+                request.count,
+                world.rng,
             )
         if isinstance(request, FenceRequest):
             return Fence(

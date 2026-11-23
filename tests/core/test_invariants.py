@@ -299,7 +299,8 @@ class TestExportedNutrientsAreHeld:
         assert nutrients_are_conserved(plants)(store) is None  # still blind to it
 
     def test_a_body_whose_energy_is_returned_before_release_does_not_trip(self):
-        """What `Cull.apply` does, and the correct way to remove an animal."""
+        """One correct way to remove an animal: return its body to the soil before release.
+        `Cull.apply` takes the other, laying it as carrion (#28)."""
         plants, carrion, store, ids = self.make_world()
         check = exported_nutrients_are_held(plants, carrion)
 

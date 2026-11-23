@@ -75,11 +75,9 @@ _EXPORT_DIRECTORY = Path("exports")
 # first's. The world name is part of it because the demo and temperate worlds (#268) share seeds.
 _SAVE_DIRECTORY = Path("saves")
 
-# What one keypress removes, and the floor it will not go below. Both are the viewer's choice
-# rather than the world's: §2.7 forbids eradicating a species by a single action and `Cull` is what
-# enforces that, so this is only how large a bite this particular button takes.
+# What one keypress removes. The viewer's choice: how many a cull must leave is the world's rule
+# (#28), so this is only how large a bite this particular button takes.
 _CULL_SIZE = 10
-_CULL_SURVIVORS = 20
 
 # What the overlay key cycles through. `None` is terrain alone, and it leads so that the view
 # opens on the same picture it always has.
@@ -135,9 +133,7 @@ def _cull(session: api.Session, entity_id: int) -> str:
     report = session.inspect(entity_id)
     if report is None:
         return f"entity {entity_id} is gone, so there is no species to cull"
-    session.request(
-        api.CullRequest(species_id=report.species, count=_CULL_SIZE, survivors=_CULL_SURVIVORS)
-    )
+    session.request(api.CullRequest(species_id=report.species, count=_CULL_SIZE))
     return f"cull of {_CULL_SIZE} from species {report.species} queued"
 
 

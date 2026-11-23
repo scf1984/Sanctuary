@@ -247,7 +247,15 @@ class TestASnapshotBelongsToOneWorld:
 def _cull(built, count=10):
     """A cull of the first living animal's species, small enough never to be refused."""
     species = int(built.store.species_id[built.store.alive][0])
-    return Cull(built.ecology, built.store, species_id=species, count=count, survivors=5)
+    return Cull(
+        built.ecology,
+        built.carrion,
+        built.store,
+        built.config.cull,
+        species_id=species,
+        count=count,
+        rng=built.rng,
+    )
 
 
 class TestTheLedgerSurvivesAReload:

@@ -1,50 +1,74 @@
-"""Culling: the one intervention #26 builds to prove its framework, and the rule it must obey.
+"""Culling: removing animals of one species, and the rule it must obey (#26, #28).
 
 §2.7 permits culling and forbids one thing outright — **never total eradication of a species by a
-single action**. That is what makes this a good first intervention rather than an arbitrary one: it
-exercises all three parts of the contract, and its precondition is a real design rule rather than a
-placeholder.
-
-The catalogue is not here. #27's fence and #28's siblings own their own effects; what this file
-owns is the demonstration that an effect can be recorded, costed, refused and applied.
+single action**. #26 built this to prove its framework; #28 settled the four things a player-facing
+cull needs (the owner's decisions on #28): what the guard promises, who sets it, which animals are
+taken, and where their bodies go.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 
+from core.ecology.carrion import Carrion
 from core.ecology.service import Ecology
 from core.entities.store import EntityStore
 from core.selection import Selection
 
 
+@dataclass(frozen=True)
+class CullConfig:
+    """The guard every cull in a world is held to.
+
+    survivors: how many born animals of a species a cull must leave. **A world rule, never a field
+        of the request** (#28, decision 2): a client choosing its own floor could send 1, and a
+        standing policy (#33) firing during an absence must be held to the number a click is. It is
+        fingerprinted with every other rule, so a world keeps its guard for life (§2.8). No default:
+        it is an absolute count, and what it promises is only true of the world it was measured on
+        (§2.6's rule for absolute quantities).
+
+        **At least two**, because reproduction needs two parents: a guard leaving one honours
+        §2.7's letter and eradicates the species on a delay. What the number should be above that is
+        a measurement of the world, not a choice; the demo world's is on #28.
+    """
+
+    survivors: int
+
+    def __post_init__(self) -> None:
+        if self.survivors < 2:
+            raise ValueError(
+                f"survivors must be at least 2, got {self.survivors}: reproduction needs two "
+                "parents, so a cull leaving fewer has eradicated the species on a delay (§2.7)"
+            )
+
+
 class Cull:
-    """Remove `count` animals of one species, returning their bodies to the soil.
+    """Remove `count` born animals of one species, at random, leaving their bodies as carrion.
 
-    ecology: consulted for the energy each culled animal still holds, and for the plant field that
-        energy goes back into. Bound at construction rather than passed, per `Intervention`.
-    species_id: which species to thin. The precondition is per-species because §2.7's rule is:
-        removing the last of a *species* is the forbidden act, and a world with three species has
-        three separate limits rather than one population floor.
+    ecology: whose pools the bodies are taken out of. carrion: the field they are laid on. Both are
+        bound at construction rather than passed, per `Intervention`.
+    config: the world's guard (`CullConfig`).
+    species_id: which species to thin. Per-species because §2.7's rule is: removing the last of a
+        *species* is the forbidden act, and a world with three species has three separate limits
+        rather than one population floor.
     count: how many to remove.
-    survivors: how many of that species must remain. **A number, not zero**, because "not total
-        eradication" is not the same as "leave one alive": a population of one is extinct on a
-        delay, and a rule that permitted it would be honouring §2.7's letter while breaking it.
-        Per-world rather than a constant here, for the same reason every other threshold is (§2.1).
+    rng: the world's own generator, so a reloaded world draws onward rather than replaying (#31).
 
-    **The bodies are returned to the field, and no invariant would have made us.** That is worth
-    stating precisely, because the obvious justification is wrong and was checked: releasing ten
-    animals holding 1,950 energy units without returning it leaves `total_nutrients()` at exactly
-    2,570,800 either way. The ledger counts their energy as *exported* — grazed out of the field
-    and not yet returned — so conservation holds over a world in which the nutrient is stranded
-    where nothing can ever reach it. `nutrients_are_conserved` cannot see the difference between a
-    closed loop and a slow leak into that ledger, which is filed separately (§7.4).
+    **Victims are drawn at random from the species** (#28, decision 3). The first build took the
+    first `count` rows, which nobody chose: row order follows allocation and free-list reuse, so a
+    cull fell hardest on whichever animals got their rows first — a selection rule hidden in an
+    implementation detail. A random draw removes numbers and selects for nothing, so a cull never
+    quietly evolves the species it was used on. Thinning one place rather than one species is a
+    different intervention, to be added beside this one rather than in it.
 
-    So the argument is ecological rather than arithmetic: an animal's body decomposes where it
-    falls, and a cull is decomposition compressed into one tick. Returning it at each animal's own
-    position is one call to the method `Ecology.spend` already excretes through, so it needed no
-    new mechanism — and a cull that skipped it would quietly sterilise the ground it was used on,
-    which is the opposite of what a steward asked for.
+    **The bodies become carrion where each animal stood** (#28, decision 4), exactly as a strike's
+    wound does (#179). A cull is a death that is not starvation and leaves a body distinct from its
+    fuel, which is what `Death` says carrion is for. The first build returned each body to the soil
+    at once, because carrion did not exist yet. It now reaches the soil as every other carcass does,
+    through `Carrion.decompose`, after whatever scavenges it has eaten. So a cull still does not
+    sterilise the ground it was used on (#26's point), and it briefly feeds what eats meat.
     """
 
     name = "cull"
@@ -52,29 +76,27 @@ class Cull:
     def __init__(
         self,
         ecology: Ecology,
+        carrion: Carrion,
         store: EntityStore,
+        config: CullConfig,
         species_id: int,
         count: int,
-        survivors: int,
+        rng: np.random.Generator,
     ) -> None:
         if count < 1:
             raise ValueError(f"a cull must remove at least one animal, got {count}")
-        if survivors < 1:
-            raise ValueError(
-                f"survivors must be at least 1, got {survivors}; a cull that may empty a species "
-                "is the eradication §2.7 forbids"
-            )
         self.ecology = ecology
+        self.carrion = carrion
         self.store = store
+        self.config = config
         self.species_id = species_id
         self.count = count
-        self.survivors = survivors
+        self.rng = rng
 
     def cost(self) -> float:
-        """One unit per animal. A placeholder rate and openly so: what an intervention *should*
-        cost is §5's open question, and this issue was told to build the framework and leave the
-        catalogue to #27 and #28. What matters here is that a cost is charged and reconciled, not
-        what it is."""
+        """One unit per animal. A placeholder rate and openly so: it is tuned as a table with the
+        fence's price and the world's income in the playtest (#292 phase 5), not settled ahead of
+        it (#28)."""
         return float(self.count)
 
     def refusal(self):
@@ -83,36 +105,36 @@ class Cull:
         alive = len(self._living())
         if alive == 0:
             return f"species {self.species_id} has no living members"
-        if alive - self.count < self.survivors:
+        left = alive - self.count
+        if left < self.config.survivors:
             return (
-                f"culling {self.count} would leave {alive - self.count} of species "
-                f"{self.species_id}, below the {self.survivors} this world requires; §2.7 forbids "
-                "eradicating a species by a single action"
+                f"culling {self.count} would leave {max(left, 0)} of species {self.species_id}; "
+                f"this world keeps at least {self.config.survivors} so a species can always regrow "
+                "(§2.7 forbids eradicating a species by a single action)"
             )
         return None
 
     def apply(self, store: EntityStore) -> None:
-        """Return each animal's remaining energy to the ground it stands on, then release it."""
-        victims = Selection.from_indices(
-            self._living().to_indices()[: self.count], store.capacity
-        )
-        mask = victims.to_mask()
-        # The pool goes back into the field before the rows are freed: `release` clears the id
-        # mapping these positions are read through, and reading after it is the ordering bug
-        # `Death.reap` documents for exactly the same reason.
-        self.ecology.plants.return_nutrients(
-            store.x[mask].astype(np.float64),
-            store.y[mask].astype(np.float64),
-            self.ecology.energy(victims).astype(np.float64),
-        )
-        store.release(store.row_ids()[mask])
+        """Lay each victim's body where it stands, then release it."""
+        rows = self._victims()
+        # The whole pool, at the pool's own float64 (#240), taken out by `kill` and laid by
+        # `deposit` in the same amount: the flesh stays owed on the export ledger while it lies on
+        # the ground, and `Carrion.decompose` pays it back (#214's invariant). Read before
+        # `release`, which clears the id mapping these rows are addressed through.
+        bodies = self.ecology.kill(rows, store.energy[rows].astype(np.float64))
+        self.carrion.deposit(store.x[rows], store.y[rows], bodies)
+        store.release(store.row_ids()[rows])
+
+    def _victims(self) -> np.ndarray:
+        """`count` born members of the species, each equally likely, as `(count,) int64` rows."""
+        return self.rng.choice(self._living().to_indices(), size=self.count, replace=False)
 
     def _living(self) -> Selection:
         """This species' born, living members — the population §2.7's rule is about.
 
         Gestating rows are excluded: one carries a negative age and has not been born (#20), so
-        counting it as a survivor would let a cull leave a species whose only remaining members
-        are unborn.
+        counting it as a survivor would let a cull leave a species whose only remaining members are
+        unborn. Nor is one culled: a pregnancy is born whether or not its mother survives (§2.7).
         """
         return Selection.from_mask(
             self.store.alive

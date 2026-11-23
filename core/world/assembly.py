@@ -96,6 +96,7 @@ from core.selection import Selection
 from core.services import ColumnRegistry
 from core.world.barriers import Barriers
 from core.world.climate import Climate, ClimateConfig
+from core.world.cull import CullConfig
 from core.world.terrain import Terrain, TerrainConfig
 from core.world.tick import TickLoop
 from core.world.water import Water
@@ -164,6 +165,7 @@ class WorldConfig:
     feeding: FeedingConfig
     predation: PredationConfig
     carrion: CarrionConfig
+    cull: CullConfig
     hydration: HydrationConfig
     cue_field: CueFieldConfig
     metabolism: MetabolismConfig

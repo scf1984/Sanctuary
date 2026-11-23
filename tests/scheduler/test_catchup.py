@@ -235,7 +235,7 @@ class TestCatchUpIsLivePlay:
             else:
                 for _ in range(120):
                     session.advance(1)
-            session.request(api.CullRequest(species_id=0, count=3, survivors=10))
+            session.request(api.CullRequest(species_id=0, count=3))
             if batched:
                 for _ in CatchUp(session, Anchor(0.0, 0, 1.0), chunk=50).run(now=300.0):
                     pass

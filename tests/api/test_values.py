@@ -124,7 +124,7 @@ class TestEverythingReturnedIsPlain:
             "ledger": session.ledger(),
             "species": session.species(),
             "name": session.name(SpeciesNameRequest(species_id=0, name="Grazers")),
-            "quote_cull": session.quote(CullRequest(species_id=0, count=1, survivors=1)),
+            "quote_cull": session.quote(CullRequest(species_id=0, count=1)),
             "quote_fence": session.quote(FenceRequest(1.0, 1.0, 9.0, 9.0)),
             **{f"condition_{mode}": session.condition(mode) for mode in info.conditions},
             **{f"field_{layer}": session.field(layer) for layer in info.field_layers},
