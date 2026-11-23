@@ -297,3 +297,123 @@ button:disabled {
     display: none;
   }
 }
+
+/* The lineage list (#314): left, above the legend, scrolling when the tree outgrows it. */
+.species {
+  position: absolute;
+  top: 64px;
+  left: 12px;
+  width: 280px;
+  max-height: calc(100% - 64px - 230px);
+  overflow-y: auto;
+  padding: 10px;
+  background: var(--panel);
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  backdrop-filter: blur(4px);
+}
+
+.species h2 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+}
+
+.species ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.species li {
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+.species li.selected {
+  background: rgba(143, 131, 224, 0.18);
+}
+
+.species li.extinct {
+  opacity: 0.5;
+}
+
+.species .line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.species .pick {
+  padding: 3px;
+  line-height: 0;
+}
+
+.species .dot {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1px solid #fcfcfb;
+}
+
+.species .name {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 4px;
+  text-align: left;
+  background: none;
+  border-color: transparent;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.species input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  color: var(--ink);
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 2px 4px;
+}
+
+.species .new {
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--accent);
+}
+
+.species .count {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.species .spark polyline {
+  fill: none;
+  stroke-width: 1.5;
+}
+
+.species .origin {
+  margin: 2px 0 0 26px;
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+
+.species .clear {
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+@media (max-width: 640px) {
+  .species {
+    width: calc(100% - 24px);
+    max-height: 35%;
+  }
+}

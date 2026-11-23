@@ -23,3 +23,22 @@ export function conditionColor(deficit: number): number {
 export function hex(color: number): string {
   return `#${color.toString(16).padStart(6, "0")}`;
 }
+
+/** Species, by id (#314): a categorical palette in a fixed order, stepped for the dark map and
+ * validated by the dataviz checks (lightness band, chroma, colour-blind and normal-vision
+ * separation between neighbours, 3:1 against the surface; all pass). A colour follows its
+ * species for life, so a split never repaints the species that were already there. Past eight the
+ * colours repeat, as decided on #314: selecting a species in the list is what tells two apart. */
+export const SPECIES_PALETTE: readonly number[] = [
+  0x3987e5, 0xd95926, 0x199e70, 0xc98500, 0xd55181, 0x0ca30c, 0x9085e9, 0xe66767,
+];
+
+/** Fill and ring for the animals a selection is not about: dark and nearly flat, so the selected
+ * species stands out on every terrain without the others vanishing entirely. */
+export const DIMMED_FILL = 0x3a3c37;
+export const DIMMED_RING = 0x6a6c64;
+
+export function speciesColor(species: number): number {
+  const slots = SPECIES_PALETTE.length;
+  return SPECIES_PALETTE[((species % slots) + slots) % slots] as number;
+}

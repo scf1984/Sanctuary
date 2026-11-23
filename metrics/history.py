@@ -65,6 +65,12 @@ class Sample:
     gestating: allocated and not yet born. Reported separately rather than folded in, because the
         two move independently and the gap between them is a leading indicator: gestation rising
         while living is flat is a generation arriving.
+    species_living: `living`, per species, indexed by species id, one entry for every species
+        registered at the time — so an extinct species reads 0 rather than vanishing, and the
+        tuple grows by one at each split (#314). Counts only: species richness and Shannon
+        entropy (#30) are compositions over these and are not decided here. Recorded from the
+        start because a series cannot be recomputed later (§4), and a daughter shrinking toward
+        extinction is the trend a player most needs to see coming.
     conceptions, deaths: how many since the previous sample, **derived rather than reported**. Ids
         are never reused (§2.3), so the number issued between two samples is exactly the number of
         rows allocated, and every allocation is a conception; the shortfall against the change in
@@ -115,6 +121,7 @@ class Sample:
     tick: int
     living: int
     gestating: int
+    species_living: tuple[int, ...]
     conceptions: int
     deaths: int
     median_energy: float
@@ -207,6 +214,11 @@ class MetricHistory:
             tick=tick,
             living=len(living),
             gestating=occupied - len(living),
+            species_living=tuple(
+                np.bincount(
+                    self.store.species_id[born], minlength=self.genetics.species.n_species
+                ).tolist()
+            ),
             conceptions=conceptions,
             deaths=deaths,
             median_energy=float(np.median(self.store.energy[born])) if len(living) else 0.0,
@@ -237,11 +249,21 @@ class MetricHistory:
 
         `gene_names` is left out. It is the vocabulary on every sample, and the vocabulary is part
         of the config a snapshot is fingerprinted against, so `restore` takes it from there.
+
+        `species_living` is ragged, since a split widens it, so it is stored `(n, widest)` and
+        padded with -1, which no count can be: `restore` trims the padding and nothing else.
         """
         width = len(self.vocabulary.names)
-        out = {}
+        out: dict[str, np.ndarray] = {}
         for field in fields(Sample):
             if field.name == "gene_names":
+                continue
+            if field.name == "species_living":
+                widest = max((len(s.species_living) for s in self.samples), default=0)
+                padded = np.full((len(self.samples), widest), _NO_SPECIES, dtype=np.int64)
+                for row, sample in enumerate(self.samples):
+                    padded[row, : len(sample.species_living)] = sample.species_living
+                out[field.name] = padded
                 continue
             # Keyed on the declared type, so a field of a type nobody mapped raises here rather
             # than being written in whatever dtype NumPy happens to infer.
@@ -265,7 +287,10 @@ class MetricHistory:
         self.samples = [
             Sample(
                 gene_names=self.vocabulary.names,
-                **{name: _plain(columns[name][row]) for name in names},
+                **{name: _plain(columns[name][row]) for name in names if name != "species_living"},
+                species_living=tuple(
+                    int(count) for count in columns["species_living"][row] if count != _NO_SPECIES
+                ),
             )
             for row in range(len(columns["tick"]))
         ]
@@ -335,6 +360,9 @@ class MetricHistory:
 
 # The dtype each `Sample` field is stored in by `MetricHistory.columns`, keyed by its declared type.
 # The module uses postponed annotations, so `field.type` is the annotation as written.
+# Padding in the stored `species_living` matrix, for a species not yet registered at that sample.
+_NO_SPECIES = -1
+
 _COLUMN_DTYPES = {"int": np.int64, "float": np.float64, "tuple[float, ...]": np.float64}
 
 

@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import type { BarrierView, Column, TerrainView } from "../api/values";
 import { fit, pan, toScreen, toWorld, zoomAt } from "./camera";
 import { fenceRequest, fenceSegments } from "./fence";
-import { CONDITION_RAMP, conditionStep } from "./palette";
+import { dotTints, UNKNOWN } from "./colours";
+import { CASING, CONDITION_RAMP, conditionStep, DIMMED_FILL, SPECIES_PALETTE, speciesColor } from "./palette";
 import { terrainPixels } from "./terrain";
 
 function grid(dtype: "<f4" | "|b1", rows: number, cols: number, values: number[]): Column {
@@ -85,6 +86,44 @@ describe("condition colour", () => {
   it("clips what arrives outside [0, 1] rather than indexing off the ramp", () => {
     expect(conditionStep(-3)).toBe(0);
     expect(conditionStep(7)).toBe(CONDITION_RAMP.length - 1);
+  });
+});
+
+describe("species colour", () => {
+  it("follows the species id, so a split never repaints the species already there", () => {
+    expect(speciesColor(0)).toBe(SPECIES_PALETTE[0]);
+    expect(speciesColor(3)).toBe(SPECIES_PALETTE[3]);
+  });
+
+  it("repeats past the palette rather than inventing a hue", () => {
+    expect(speciesColor(SPECIES_PALETTE.length + 1)).toBe(SPECIES_PALETTE[1]);
+  });
+});
+
+describe("dot tints", () => {
+  const species = new Int32Array([0, 1, 1]);
+
+  it("colours by species in species mode, every ring cased", () => {
+    const { fill, ring } = dotTints(3, true, null, species, null);
+
+    expect(Array.from(fill)).toEqual([speciesColor(0), speciesColor(1), speciesColor(1)]);
+    expect(Array.from(ring)).toEqual([CASING, CASING, CASING]);
+  });
+
+  it("colours by deficit in a condition mode, and grey while it has not arrived", () => {
+    expect(dotTints(1, false, new Float32Array([0.99]), species, null).fill[0]).toBe(CONDITION_RAMP[4]);
+    expect(dotTints(1, false, null, species, null).fill[0]).toBe(UNKNOWN);
+  });
+
+  it("dims everyone outside a selected species, in either mode", () => {
+    for (const bySpecies of [true, false]) {
+      const { fill, ring } = dotTints(3, bySpecies, new Float32Array([0, 0, 0]), species, 1);
+
+      expect(fill[0]).toBe(DIMMED_FILL);
+      expect(ring[0]).not.toBe(CASING);
+      expect(ring[1]).toBe(CASING);
+      expect(fill[1]).not.toBe(DIMMED_FILL);
+    }
   });
 });
 

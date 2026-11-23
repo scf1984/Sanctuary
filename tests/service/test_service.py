@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 import api
-from api import CullRequest, Refused
+from api import CullRequest, Refused, SpeciesNameRequest
 from scheduler import Anchor, Stage, Timeline, WakeSchedule
 from service import Service
 from tests.api.test_values import assert_plain
@@ -116,7 +116,7 @@ class TestTheProtocol:
         for value in (
             remote.status(), info, remote.terrain(), remote.frame(), remote.barriers(),
             remote.history(), remote.inspect(some_id), remote.inspect(-1), remote.ledger(),
-            remote.pace(),
+            remote.pace(), remote.species(),
             *(remote.condition(m) for m in info.conditions),
             *(remote.field(f) for f in info.field_layers),
         ):
@@ -132,6 +132,17 @@ class TestTheProtocol:
         service.wake(clock.now)
 
         assert remote.ledger().records[-1].cost == quote.cost
+
+    def test_a_species_named_remotely_is_named_at_once(self, served):
+        """#314: a name is not an intervention, so it waits for no tick boundary."""
+        _service, session, remote, _clock = served
+
+        named = remote.name(SpeciesNameRequest(species_id=0, name="Grazers"))
+
+        assert named.name == "Grazers"
+        assert remote.species() == session.species()
+        with pytest.raises(ValueError, match="no species 9"):
+            remote.name(SpeciesNameRequest(species_id=9, name="Ghosts"))
 
     def test_a_served_world_cannot_be_driven_by_a_client(self, served):
         """One execution path (#32): the schedule advances a served world, and nothing else."""

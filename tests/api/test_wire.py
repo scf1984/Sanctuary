@@ -47,7 +47,7 @@ def test_requests_come_back_equal():
 
 
 def test_a_progress_event_comes_back_equal():
-    progress = api.Progress(done=5, owed=9, status=api.Status(tick=105, collapsed=False, living=40))
+    progress = api.Progress(done=5, owed=9, status=api.Status(tick=105, collapsed=False, living=40, splits=1))
 
     assert wire.loads(wire.dumps(progress)) == progress
 
@@ -78,6 +78,6 @@ def test_non_finite_numbers_are_refused_rather_than_sent_to_a_browser_that_canno
 
 def test_the_text_is_plain_json():
     """What a browser's `JSON.parse` reads (#292): no NaN, no Python-specific forms."""
-    payload = wire.dumps(api.Status(tick=1, collapsed=False, living=2))
+    payload = wire.dumps(api.Status(tick=1, collapsed=False, living=2, splits=0))
 
-    assert json.loads(payload) == {"tick": 1, "collapsed": False, "living": 2, "$type": "Status"}
+    assert json.loads(payload) == {"tick": 1, "collapsed": False, "living": 2, "splits": 0, "$type": "Status"}

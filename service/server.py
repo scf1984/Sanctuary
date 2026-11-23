@@ -288,6 +288,7 @@ _READS: tuple[tuple[re.Pattern[str], Callable[..., object]], ...] = (
     (re.compile(r"^/barriers$"), lambda s: s.barriers()),
     (re.compile(r"^/history$"), lambda s: s.history()),
     (re.compile(r"^/ledger$"), lambda s: s.ledger()),
+    (re.compile(r"^/species$"), lambda s: s.species()),
     (re.compile(r"^/condition/([^/]+)$"), lambda s, mode: s.condition(mode)),
     (re.compile(r"^/field/([^/]+)$"), lambda s, layer: s.field(layer)),
     (re.compile(r"^/entity/(-?\d+)$"), lambda s, entity: s.inspect(int(entity))),
@@ -296,6 +297,7 @@ _READS: tuple[tuple[re.Pattern[str], Callable[..., object]], ...] = (
 _WRITES: dict[str, Callable[[api.Session, Any], object]] = {
     "/quote": lambda s, request: s.quote(request),
     "/request": lambda s, request: s.request(request),
+    "/name": lambda s, request: s.name(request),
 }
 
 

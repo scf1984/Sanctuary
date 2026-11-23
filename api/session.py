@@ -37,6 +37,8 @@ from api.values import (
     Quote,
     Request,
     Sample,
+    SpeciesNameRequest,
+    SpeciesReport,
     Status,
     TerrainView,
     WorldInfo,
@@ -68,6 +70,11 @@ FIELD_LAYERS: tuple[str, ...] = tuple(_LAYER_SOURCE)
 
 CONDITIONS: tuple[str, ...] = ("hunger", "thirst", "age")
 """The names `Session.condition` accepts. Every one is a deficit (see `ConditionView`)."""
+
+NAME_LIMIT = 40
+"""The longest name a species may be given, in characters. A name is saved in every snapshot and
+sent with every species list, so an unbounded one is a payload a typo could make megabytes long.
+Forty fits a row of the lineage list."""
 
 
 class Refused(Exception):
@@ -103,6 +110,10 @@ class Session:
         # Fixed for the session, deliberately: a ramp that rescales itself hides the slow decline a
         # field overlay exists to show. See `_layer_references`.
         self._references = _layer_references(world)
+        # What the player has called each species (#314). Kept here, beside the world and never in
+        # `core/`, because a name is presentation and nothing that decides an outcome may read it.
+        # Saved with the snapshot, so a restore brings back names and lineage from one moment.
+        self._names: dict[int, str] = {}
 
     # -- control ------------------------------------------------------------------------------
 
@@ -115,11 +126,16 @@ class Session:
 
     def status(self) -> Status:
         loop = self._world.loop
-        return Status(tick=loop.tick_count, collapsed=loop.collapsed, living=len(self._living()))
+        return Status(
+            tick=loop.tick_count,
+            collapsed=loop.collapsed,
+            living=len(self._living()),
+            splits=len(self._world.speciation.lineage.splits()),
+        )
 
     def save(self, path: str) -> str:
         """Write the world to `path`, returning where it went."""
-        return str(save(self._world, Path(path)))
+        return str(save(self._world, Path(path), self._names))
 
     def load(self, path: str) -> Status:
         """Restore the snapshot at `path` into this world, in place, or raise `Refused`.
@@ -131,7 +147,7 @@ class Session:
         if not snapshot.exists():
             raise Refused(f"no save at {snapshot}")
         try:
-            load(self._world, snapshot)
+            self._names = load(self._world, snapshot)
         except SnapshotError as refused:
             raise Refused(str(refused)) from None
         return self.status()
@@ -272,6 +288,34 @@ class Session:
             genes=genes,
         )
 
+    def species(self) -> tuple[SpeciesReport, ...]:
+        """Every species the world has held, extinct ones included, by id (#314).
+
+        By id is also oldest first, since a split takes the next id, so a parent always comes
+        before its daughters and a client can build the tree in one pass.
+        """
+        world = self._world
+        store = world.store
+        living = np.bincount(
+            store.species_id[store.alive & (store.age >= 0)],
+            minlength=world.species.n_species,
+        )
+        lineage = world.speciation.lineage
+        reports = []
+        for species in range(world.species.n_species):
+            split = lineage.split_of(species)
+            reports.append(
+                SpeciesReport(
+                    id=species,
+                    name=self._names.get(species),
+                    parent=None if split is None else split.parent_species_id,
+                    split_tick=None if split is None else split.tick,
+                    founders=None if split is None else split.founders,
+                    living=int(living[species]),
+                )
+            )
+        return tuple(reports)
+
     def ledger(self) -> Ledger:
         interventions = self._interventions()
         return Ledger(
@@ -294,6 +338,25 @@ class Session:
     def request(self, request: Request) -> None:
         """Queue `request` for the next tick boundary. The outcome lands in the ledger (#26)."""
         self._interventions().request(self._intervention(request))
+
+    def name(self, request: SpeciesNameRequest) -> SpeciesReport:
+        """Call a species what the player asked, at once, and return it as now reported (#314).
+
+        Raises ValueError for a species that does not exist, or a name that is blank or longer
+        than `NAME_LIMIT`. Surrounding whitespace is dropped, so a name cannot differ from
+        another only by a trailing space nobody can see.
+        """
+        if not isinstance(request, SpeciesNameRequest):
+            raise TypeError(f"naming takes a SpeciesNameRequest, not {request!r}")
+        if not 0 <= request.species_id < self._world.species.n_species:
+            raise ValueError(f"no species {request.species_id} in this world")
+        name = request.name.strip()
+        if not name:
+            raise ValueError("a species name cannot be blank")
+        if len(name) > NAME_LIMIT:
+            raise ValueError(f"a species name is at most {NAME_LIMIT} characters, got {len(name)}")
+        self._names[request.species_id] = name
+        return self.species()[request.species_id]
 
     # -- internals ----------------------------------------------------------------------------
 

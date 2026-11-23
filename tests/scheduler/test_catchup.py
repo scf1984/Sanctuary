@@ -39,7 +39,12 @@ class CountingWorld:
         return self.status()
 
     def status(self):
-        return Status(tick=self.tick, collapsed=self._collapsed(), living=0 if self._collapsed() else 1)
+        return Status(
+            tick=self.tick,
+            collapsed=self._collapsed(),
+            living=0 if self._collapsed() else 1,
+            splits=0,
+        )
 
 
 def run_to_end(catchup, now):

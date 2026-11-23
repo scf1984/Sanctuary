@@ -7,6 +7,7 @@ const at = (tick: number, ids: number[], x: number[], y: number[]): Positions =>
   ids: new Float64Array(ids),
   x: new Float32Array(x),
   y: new Float32Array(y),
+  species: new Int32Array(ids.length),
 });
 
 describe("blend", () => {

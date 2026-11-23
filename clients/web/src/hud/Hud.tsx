@@ -3,6 +3,7 @@
 
 import type { FenceRequest, Pace, Progress, Quote, Status, WorldInfo } from "../api/values";
 import type { Tool } from "../Game";
+import { SPECIES_MODE } from "../map/colours";
 import { CONDITION_RAMP, FENCE, hex } from "../map/palette";
 import { simTime } from "../world/clock";
 import { paceLabel } from "../world/pace";
@@ -125,22 +126,28 @@ export function Hud(props: Props) {
 
       <footer className="legend">
         <div className="modes">
-          {world.conditions.map((mode) => (
+          {[...world.conditions, SPECIES_MODE].map((mode) => (
             <button key={mode} className={props.mode === mode ? "active" : ""} onClick={() => props.onMode(mode)}>
               {mode}
             </button>
           ))}
         </div>
-        <div className="ramp" aria-label={`colour shows ${CONDITION_HELP[props.mode] ?? props.mode}`}>
-          {CONDITION_RAMP.map((color) => (
-            <span key={color} style={{ background: hex(color) }} />
-          ))}
-        </div>
-        <div className="ramp-labels">
-          <span>wanting nothing</span>
-          <span>at the edge</span>
-        </div>
-        <p className="help">Colour shows {CONDITION_HELP[props.mode] ?? props.mode}.</p>
+        {props.mode === SPECIES_MODE ? (
+          <p className="help">Colour shows each animal&apos;s species, as in the species list. Pick one there to single it out.</p>
+        ) : (
+          <>
+            <div className="ramp" aria-label={`colour shows ${CONDITION_HELP[props.mode] ?? props.mode}`}>
+              {CONDITION_RAMP.map((color) => (
+                <span key={color} style={{ background: hex(color) }} />
+              ))}
+            </div>
+            <div className="ramp-labels">
+              <span>wanting nothing</span>
+              <span>at the edge</span>
+            </div>
+            <p className="help">Colour shows {CONDITION_HELP[props.mode] ?? props.mode}.</p>
+          </>
+        )}
         <p className="help">
           <span className="swatch" style={{ background: hex(FENCE) }} /> fence
         </p>

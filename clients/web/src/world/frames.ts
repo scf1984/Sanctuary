@@ -17,16 +17,26 @@ export interface Positions {
   readonly ids: Float64Array;
   readonly x: Float32Array;
   readonly y: Float32Array;
+  /** Each animal's species id (#314), in the same order. */
+  readonly species: Int32Array;
 }
 
 export function positions(frame: Frame): Positions {
   const ids = decodeColumn(frame.ids).values;
   const x = decodeColumn(frame.x).values;
   const y = decodeColumn(frame.y).values;
-  if (!(ids instanceof Float64Array) || !(x instanceof Float32Array) || !(y instanceof Float32Array)) {
-    throw new TypeError(`unexpected frame dtypes: ids ${frame.ids.dtype}, x ${frame.x.dtype}, y ${frame.y.dtype}`);
+  const species = decodeColumn(frame.species).values;
+  if (
+    !(ids instanceof Float64Array) ||
+    !(x instanceof Float32Array) ||
+    !(y instanceof Float32Array) ||
+    !(species instanceof Int32Array)
+  ) {
+    throw new TypeError(
+      `unexpected frame dtypes: ids ${frame.ids.dtype}, x ${frame.x.dtype}, y ${frame.y.dtype}, species ${frame.species.dtype}`,
+    );
   }
-  return { tick: frame.tick, ids, x, y };
+  return { tick: frame.tick, ids, x, y, species };
 }
 
 /** Two consecutive frames, matched: `from[i]` is where `next`'s animal i was listed in

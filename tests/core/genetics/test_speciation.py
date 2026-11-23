@@ -9,6 +9,7 @@ from core.genetics.expression import GeneticsConfig
 from core.genetics.service import Genetics
 from core.genetics.speciation import (
     Lineage,
+    Split,
     MixedSpeciesError,
     Speciation,
     SpeciationConfig,
@@ -114,9 +115,9 @@ class TestLineage:
 
     def test_ancestry_walks_from_the_root_down(self):
         lineage = Lineage()
-        lineage.record_split(1, 0)
-        lineage.record_split(2, 1)
-        lineage.record_split(3, 1)
+        lineage.record_split(Split(1, 0, tick=0, founders=2))
+        lineage.record_split(Split(2, 1, tick=0, founders=2))
+        lineage.record_split(Split(3, 1, tick=0, founders=2))
 
         assert lineage.parent_of(2) == 1
         assert lineage.ancestry(2) == (0, 1, 2)
@@ -125,9 +126,9 @@ class TestLineage:
 
     def test_recording_a_species_twice_raises(self):
         lineage = Lineage()
-        lineage.record_split(1, 0)
+        lineage.record_split(Split(1, 0, tick=0, founders=2))
         with pytest.raises(ValueError):
-            lineage.record_split(1, 0)
+            lineage.record_split(Split(1, 0, tick=0, founders=2))
 
 
 class TestSplit:
@@ -139,7 +140,7 @@ class TestSplit:
         diverged = selection_of(store, rows, [0, 1, 2])
         stayed = selection_of(store, rows, [3, 4, 5])
 
-        new_species_id = split(genetics, Lineage(), diverged)
+        new_species_id = split(genetics, Lineage(), diverged, tick=0)
 
         assert new_species_id != parent_species_id
         assert (genetics.species_ids(diverged) == new_species_id).all()
@@ -150,7 +151,7 @@ class TestSplit:
         diverged = selection_of(store, rows, [0, 1])
         parent_species_id = int(genetics.species_ids(diverged)[0])
 
-        new_species_id = split(genetics, Lineage(), diverged)
+        new_species_id = split(genetics, Lineage(), diverged, tick=0)
 
         np.testing.assert_array_equal(
             genetics.species.mask_of(new_species_id),
@@ -163,7 +164,7 @@ class TestSplit:
         store, genetics, rows = make_world(4, expressed=("size", "sight"))
         diverged = selection_of(store, rows, [0, 1])
         parent_species_id = int(genetics.species_ids(diverged)[0])
-        new_species_id = split(genetics, Lineage(), diverged)
+        new_species_id = split(genetics, Lineage(), diverged, tick=0)
 
         genetics.species.mask_of(new_species_id)[:] = False
 
@@ -175,32 +176,47 @@ class TestSplit:
         diverged = selection_of(store, rows, [0, 1])
         parent_species_id = int(genetics.species_ids(diverged)[0])
 
-        new_species_id = split(genetics, lineage, diverged)
+        new_species_id = split(genetics, lineage, diverged, tick=0)
 
         assert lineage.parent_of(new_species_id) == parent_species_id
         assert lineage.ancestry(new_species_id) == (parent_species_id, new_species_id)
 
+    def test_split_records_when_and_from_how_many(self):
+        # A split is most often met on return, so the record has to say when it happened (#314).
+        store, genetics, rows = make_world(5)
+        lineage = Lineage()
+        diverged = selection_of(store, rows, [0, 1, 2])
+        parent_species_id = int(genetics.species_ids(diverged)[0])
+
+        new_species_id = split(genetics, lineage, diverged, tick=840)
+
+        assert lineage.split_of(new_species_id) == Split(
+            species_id=new_species_id, parent_species_id=parent_species_id, tick=840, founders=3
+        )
+        assert lineage.split_of(parent_species_id) is None
+        assert lineage.splits() == (lineage.split_of(new_species_id),)
+
     def test_repeated_splits_build_a_chain(self):
         store, genetics, rows = make_world(6)
         lineage = Lineage()
-        first = split(genetics, lineage, selection_of(store, rows, [0, 1, 2, 3]))
-        second = split(genetics, lineage, selection_of(store, rows, [0, 1]))
+        first = split(genetics, lineage, selection_of(store, rows, [0, 1, 2, 3]), tick=0)
+        second = split(genetics, lineage, selection_of(store, rows, [0, 1]), tick=0)
 
         assert lineage.ancestry(second) == (0, first, second)
 
     def test_splitting_an_empty_selection_raises(self):
         store, genetics, rows = make_world(4)
         with pytest.raises(ValueError):
-            split(genetics, Lineage(), Selection.none(store.capacity))
+            split(genetics, Lineage(), Selection.none(store.capacity), tick=0)
 
     def test_splitting_across_two_species_raises(self):
         store, genetics, rows = make_world(6)
-        split(genetics, Lineage(), selection_of(store, rows, [0, 1]))
+        split(genetics, Lineage(), selection_of(store, rows, [0, 1]), tick=0)
 
         # Rows 0-1 are now a different species from rows 2-5; a split spanning both has no single
         # parent to descend from.
         with pytest.raises(MixedSpeciesError):
-            split(genetics, Lineage(), selection_of(store, rows, [1, 2]))
+            split(genetics, Lineage(), selection_of(store, rows, [1, 2]), tick=0)
 
     def test_genes_are_untouched_by_a_split_including_unexpressed_ones(self):
         # Speciation is a species-id write and nothing else (CLAUDE.md §2.3): a gene the new
@@ -210,7 +226,7 @@ class TestSplit:
         genes_before = rng.uniform(0.5, 2.0, size=(4, len(GENE_NAMES))).astype(np.float32)
         store.genes[rows] = genes_before
 
-        split(genetics, Lineage(), selection_of(store, rows, [0, 1]))
+        split(genetics, Lineage(), selection_of(store, rows, [0, 1]), tick=0)
 
         np.testing.assert_array_equal(store.genes[rows], genes_before)
 
@@ -227,7 +243,7 @@ class TestSplitCostsNoReallocation:
         }
         capacity_before = store.capacity
 
-        split(genetics, Lineage(), selection_of(store, rows, range(500)))
+        split(genetics, Lineage(), selection_of(store, rows, range(500)), tick=0)
 
         assert store.capacity == capacity_before
         for name, array in columns_before.items():
@@ -243,7 +259,7 @@ class TestSplitCostsNoReallocation:
             store, genetics, rows = make_world(population)
             diverged = selection_of(store, rows, range(100))
             start = time.perf_counter()
-            split(genetics, Lineage(), diverged)
+            split(genetics, Lineage(), diverged, tick=0)
             return time.perf_counter() - start
 
         small = min(time_split(1_000) for _ in range(5))
@@ -325,7 +341,7 @@ class TestInterbreedingProbability:
         before_split = compatible(genetics, a.to_indices(), b.to_indices(), threshold)[0]
         assert before_split < 0.05
 
-        split(genetics, Lineage(), a)
+        split(genetics, Lineage(), a, tick=0)
         after_split = compatible(genetics, a.to_indices(), b.to_indices(), threshold)[0]
 
         assert after_split == 0.0
@@ -334,7 +350,7 @@ class TestInterbreedingProbability:
     def test_different_species_never_interbreed_however_similar(self):
         store, genetics, rows = self.two_creatures([[1.0] * len(GENE_NAMES), [1.0] * len(GENE_NAMES)])
         a, b = selection_of(store, rows, [0]), selection_of(store, rows, [1])
-        split(genetics, Lineage(), a)
+        split(genetics, Lineage(), a, tick=0)
 
         # Phenotypically identical, so distance alone would say fully compatible -- the recorded
         # split is what makes them incompatible.
@@ -439,7 +455,7 @@ class TestTheThresholdIsCountedInMutationSteps:
         store, genetics, rows = make_world(4)
         store.genes[rows[:2], MUTABILITY_COLUMN] = [0.5, 1.5]
         store.genes[rows[2:], MUTABILITY_COLUMN] = [3.0, 5.0]
-        split(genetics, Lineage(), selection_of(store, rows, [2, 3]))
+        split(genetics, Lineage(), selection_of(store, rows, [2, 3]), tick=0)
 
         step = species_mutation_step(genetics, Selection.from_indices(rows, store.capacity))
 
@@ -448,7 +464,7 @@ class TestTheThresholdIsCountedInMutationSteps:
     def test_a_species_with_nobody_in_the_population_has_no_step(self):
         store, genetics, rows = make_world(4)
         store.genes[rows, MUTABILITY_COLUMN] = 1.0
-        split(genetics, Lineage(), selection_of(store, rows, [2, 3]))
+        split(genetics, Lineage(), selection_of(store, rows, [2, 3]), tick=0)
 
         step = species_mutation_step(genetics, Selection.from_indices(rows[:2], store.capacity))
 

@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 import api
-from api import Column, CullRequest, FenceRequest
+from api import Column, CullRequest, FenceRequest, SpeciesNameRequest
 from tests.api.test_session import session_on
 
 _SCALARS = (type(None), bool, int, float, str)
@@ -122,6 +122,8 @@ class TestEverythingReturnedIsPlain:
             "inspect": session.inspect(some_id),
             "inspect_missing": session.inspect(-1),
             "ledger": session.ledger(),
+            "species": session.species(),
+            "name": session.name(SpeciesNameRequest(species_id=0, name="Grazers")),
             "quote_cull": session.quote(CullRequest(species_id=0, count=1, survivors=1)),
             "quote_fence": session.quote(FenceRequest(1.0, 1.0, 9.0, 9.0)),
             **{f"condition_{mode}": session.condition(mode) for mode in info.conditions},
@@ -145,7 +147,7 @@ class TestEverythingReturnedIsPlain:
         """A method added to `Session` without being walked is a method whose return nobody
         checked. Control and write calls are exercised by the session tests instead."""
         walked = {"status", "describe", "terrain", "frame", "barriers", "history", "inspect",
-                  "ledger", "quote", "condition", "field"}
+                  "ledger", "species", "name", "quote", "condition", "field"}
         control_and_write = {"advance", "save", "load", "request"}
         public = {name for name in vars(api.Session) if not name.startswith("_")}
 

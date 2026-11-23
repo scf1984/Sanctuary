@@ -9,15 +9,14 @@ import type { BarrierView, TerrainView, WorldInfo } from "../api/values";
 import { blendInto, pair, type Pairing, type Positions } from "../world/frames";
 import { blendPeriod } from "../world/pace";
 import { type Camera, fit, TOP_INSET, toScreen } from "./camera";
+import { type Tints, UNKNOWN } from "./colours";
 import { fenceSegments, type Segment } from "./fence";
-import { CASING, conditionColor, FENCE } from "./palette";
+import { CASING, FENCE } from "./palette";
 import { terrainPixels } from "./terrain";
 
 /** Pixels: a dot's fill radius, and the casing ring's width around it. */
 const DOT_RADIUS = 2.5;
 const CASING_WIDTH = 1;
-/** Neutral grey while a frame's condition has not arrived (never a ramp step: it would lie). */
-const UNKNOWN = 0x9a9a94;
 
 function disc(radius: number): Texture {
   const size = Math.ceil(radius * 2) + 2;
@@ -60,7 +59,8 @@ export class MapRenderer {
     this.app = app;
     this.world = world;
     this.camera = fit(world, { width: app.screen.width, height: app.screen.height }, TOP_INSET);
-    this.casing = new ParticleContainer({ dynamicProperties: { position: true, color: false } });
+    // The ring's colour moves too: a selected species dims everyone else's ring with their fill.
+    this.casing = new ParticleContainer({ dynamicProperties: { position: true, color: true } });
     this.fill = new ParticleContainer({ dynamicProperties: { position: true, color: true } });
     app.stage.addChild(this.ground, this.fences, this.casing, this.fill, this.draft);
     app.ticker.add(() => this.draw());
@@ -118,11 +118,12 @@ export class MapRenderer {
     this.drawFences();
   }
 
-  /** A new frame to blend toward, with each animal's deficit (or null while it has not arrived). */
-  setFrame(frame: Positions, deficits: Float32Array | null, now: number): void {
+  /** A new frame to blend toward, with each animal's colours (`dotTints`), or null while they
+   * cannot be known. The same tick again only repaints, which is how a new selection is shown. */
+  setFrame(frame: Positions, tints: Tints | null, now: number): void {
     const latest = this.pairing?.next ?? null;
     if (latest !== null && frame.tick === latest.tick) {
-      if (deficits !== null) this.colour(deficits);
+      if (tints !== null) this.colour(tints);
       return;
     }
     if (latest !== null) {
@@ -136,15 +137,17 @@ export class MapRenderer {
       this.y = new Float32Array(frame.ids.length);
     }
     // A new frame lists different animals in each slot, so last tick's colours would be someone
-    // else's: without this tick's condition, every dot goes grey.
-    this.colour(deficits);
+    // else's: without this tick's colours, every dot goes grey.
+    this.colour(tints);
   }
 
   /** Colours change once a tick, so they are set when a frame arrives, not on every drawn frame. */
-  private colour(deficits: Float32Array | null): void {
+  private colour(tints: Tints | null): void {
     const fill = this.fill.particleChildren;
+    const ring = this.casing.particleChildren;
     for (let i = 0; i < fill.length; i++) {
-      (fill[i] as Particle).tint = deficits === null ? UNKNOWN : conditionColor(deficits[i] as number);
+      (fill[i] as Particle).tint = tints === null ? UNKNOWN : (tints.fill[i] as number);
+      (ring[i] as Particle).tint = tints === null ? CASING : (tints.ring[i] as number);
     }
   }
 

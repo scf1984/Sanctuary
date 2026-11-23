@@ -14,6 +14,8 @@ import type {
   Quote,
   Request,
   Sample,
+  SpeciesNameRequest,
+  SpeciesReport,
   Status,
   TerrainView,
   WorldInfo,
@@ -32,7 +34,7 @@ async function call(path: string, init?: RequestInit): Promise<unknown> {
   throw new Error(`${path}: ${message}`);
 }
 
-function post(path: string, request: Request | PaceRequest): Promise<unknown> {
+function post(path: string, request: Request | PaceRequest | SpeciesNameRequest): Promise<unknown> {
   return call(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(request) });
 }
 
@@ -52,6 +54,17 @@ export async function history(): Promise<readonly Sample[]> {
   if (!Array.isArray(samples)) throw new TypeError("expected a list of Samples");
   return samples.map((sample) => expectType(sample, "Sample"));
 }
+
+/** Every species the world has held, extinct ones included, by id (#314). */
+export async function species(): Promise<readonly SpeciesReport[]> {
+  const reports = await call("/species");
+  if (!Array.isArray(reports)) throw new TypeError("expected a list of SpeciesReports");
+  return reports.map((report) => expectType(report, "SpeciesReport"));
+}
+
+/** Call species `id` by `name`, at once: naming is not an intervention and costs nothing. */
+export const name = async (id: number, name: string): Promise<SpeciesReport> =>
+  expectType(await post("/name", { $type: "SpeciesNameRequest", species_id: id, name }), "SpeciesReport");
 
 /** One animal, or null if it has died (ids are never reused, so null is final). */
 export async function inspect(id: number): Promise<EntityReport | null> {

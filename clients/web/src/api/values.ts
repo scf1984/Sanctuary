@@ -136,6 +136,7 @@ export interface Sample {
   readonly tick: number;
   readonly living: number;
   readonly gestating: number;
+  readonly species_living: readonly number[];
   readonly conceptions: number;
   readonly deaths: number;
   readonly median_energy: number;
@@ -147,11 +148,28 @@ export interface Sample {
   readonly expressed_spread: readonly number[];
 }
 
+export interface SpeciesNameRequest {
+  readonly $type: "SpeciesNameRequest";
+  readonly species_id: number;
+  readonly name: string;
+}
+
+export interface SpeciesReport {
+  readonly $type: "SpeciesReport";
+  readonly id: number;
+  readonly name: string | null;
+  readonly parent: number | null;
+  readonly split_tick: number | null;
+  readonly founders: number | null;
+  readonly living: number;
+}
+
 export interface Status {
   readonly $type: "Status";
   readonly tick: number;
   readonly collapsed: boolean;
   readonly living: number;
+  readonly splits: number;
 }
 
 export interface TerrainView {
@@ -179,4 +197,4 @@ export interface WorldInfo {
 export type Request = CullRequest | FenceRequest;
 
 /** Every tagged value the wire carries. */
-export type Value = Column | BarrierView | ConditionView | CullRequest | DriveShare | EntityReport | FenceRequest | FieldView | Frame | GeneReading | Ledger | Pace | PaceRequest | Progress | Quote | Record | Sample | Status | TerrainView | WorldInfo;
+export type Value = Column | BarrierView | ConditionView | CullRequest | DriveShare | EntityReport | FenceRequest | FieldView | Frame | GeneReading | Ledger | Pace | PaceRequest | Progress | Quote | Record | Sample | SpeciesNameRequest | SpeciesReport | Status | TerrainView | WorldInfo;
