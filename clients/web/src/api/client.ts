@@ -8,6 +8,8 @@ import type {
   FieldView,
   Frame,
   Ledger,
+  Pace,
+  PaceRequest,
   Progress,
   Quote,
   Request,
@@ -30,7 +32,7 @@ async function call(path: string, init?: RequestInit): Promise<unknown> {
   throw new Error(`${path}: ${message}`);
 }
 
-function post(path: string, request: Request): Promise<unknown> {
+function post(path: string, request: Request | PaceRequest): Promise<unknown> {
   return call(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(request) });
 }
 
@@ -64,6 +66,15 @@ export const quote = async (request: Request): Promise<Quote> => expectType(awai
 export async function request(request: Request): Promise<void> {
   await post("/request", request);
 }
+
+/** How fast the world runs now, at its own rate, and at most (#307). */
+export const pace = async (): Promise<Pace> => expectType(await call("/pace"), "Pace");
+
+/** Run the world at `ticksPerSecond` while this page watches: 0 pauses. Refused with nobody
+ * watching or past the fastest the world sustains. Closing the page restores the world's own
+ * rate, so a pause cannot outlive the player (CLAUDE.md §2.4). */
+export const setPace = async (ticksPerSecond: number): Promise<Pace> =>
+  expectType(await post("/pace", { $type: "PaceRequest", ticks_per_second: ticksPerSecond }), "Pace");
 
 /** Follow the event stream. Opening it is what makes the world "watched" (#36). The browser
  * reconnects by itself after a drop; `onState` says which state the stream is in. */

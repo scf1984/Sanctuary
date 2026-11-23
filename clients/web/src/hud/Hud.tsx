@@ -1,10 +1,11 @@
 // Everything a person reads over the map: where the world stands, what the colours mean, and the
 // fence tool's price. It draws what it is handed and computes nothing about the world (§4).
 
-import type { FenceRequest, Progress, Quote, Status, WorldInfo } from "../api/values";
+import type { FenceRequest, Pace, Progress, Quote, Status, WorldInfo } from "../api/values";
 import type { Tool } from "../Game";
 import { CONDITION_RAMP, FENCE, hex } from "../map/palette";
 import { simTime } from "../world/clock";
+import { paceLabel } from "../world/pace";
 
 export interface Notice {
   readonly id: number;
@@ -23,6 +24,12 @@ interface Props {
   status: Status | null;
   progress: Progress | null;
   connected: boolean;
+  /** The world's rate, or null until it has been read. */
+  pace: Pace | null;
+  /** The rates offered, in ticks a second (`speeds`). */
+  speeds: readonly number[];
+  onPace: (ticksPerSecond: number) => void;
+  onTogglePause: () => void;
   mode: string;
   onMode: (mode: string) => void;
   tool: Tool;
@@ -55,6 +62,7 @@ export function Hud(props: Props) {
         {status !== null && (
           <>
             <span title={`tick ${number(status.tick)}: one tick is one sim-minute`}>{simTime(status.tick)}</span>
+            {props.pace !== null && <PaceControls {...props} pace={props.pace} />}
             <span>
               <strong>{number(status.living)}</strong> alive
             </span>
@@ -146,6 +154,37 @@ export function Hud(props: Props) {
         ))}
       </ul>
     </>
+  );
+}
+
+function PaceControls({ pace, speeds, connected, onPace, onTogglePause }: Props & { pace: Pace }) {
+  const paused = pace.ticks_per_second === 0;
+  // Only a watching page may change the pace (§2.4), and while the stream is down this one is not.
+  const why = connected ? undefined : "reconnecting: the pace can be changed only while watching";
+  return (
+    <span className={`pace ${paused ? "paused" : ""}`}>
+      <button
+        className="pause"
+        disabled={!connected}
+        onClick={onTogglePause}
+        title={why ?? (paused ? "resume (space)" : "pause (space). Leaving the page resumes the world: it keeps running while you are away")}
+        aria-label={paused ? "resume" : "pause"}
+      >
+        {paused ? "▶" : "❚❚"}
+      </button>
+      {speeds.map((rate) => (
+        <button
+          key={rate}
+          disabled={!connected}
+          className={pace.ticks_per_second === rate ? "active" : ""}
+          onClick={() => onPace(rate)}
+          title={why ?? `${rate} ${rate === 1 ? "tick" : "ticks"} a second`}
+        >
+          {paceLabel({ ...pace, ticks_per_second: rate })}
+        </button>
+      ))}
+      {paused && <span className="paused-label">paused</span>}
+    </span>
   );
 }
 

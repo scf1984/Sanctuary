@@ -4,13 +4,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import * as client from "./api/client";
-import type { FenceRequest, Ledger, Progress, Quote, Status, WorldInfo } from "./api/values";
+import type { FenceRequest, Ledger, Pace, Progress, Quote, Status, WorldInfo } from "./api/values";
 import { decodeColumn } from "./api/wire";
 import { Hud, type Notice } from "./hud/Hud";
 import { pan, toWorld, zoomAt } from "./map/camera";
 import { fenceRequest } from "./map/fence";
 import { MapRenderer } from "./map/renderer";
 import { positions } from "./world/frames";
+import { speeds } from "./world/pace";
 
 export type Tool = "look" | "fence";
 
@@ -40,6 +41,10 @@ export function Game({ world }: { world: WorldInfo }) {
   const [ledger, setLedger] = useState<Ledger | null>(null);
   const [notices, setNotices] = useState<Notice[]>([]);
   const [failure, setFailure] = useState<string | null>(null);
+  const [pace, setPace] = useState<Pace | null>(null);
+  /** The rate a resume returns to: the last one chosen, so pausing a fast-forward and resuming
+   * keeps the fast-forward. */
+  const resumeAt = useRef<number | null>(null);
 
   // A request's outcome lands in the ledger at the next tick boundary (§2.7), so after asking, the
   // next progress event is when to look. `known` is how many records the player has been shown.
@@ -98,6 +103,39 @@ export function Game({ world }: { world: WorldInfo }) {
     setLedger(next);
   }, [notify]);
 
+  // -- pace --------------------------------------------------------------------------------------
+
+  const showPace = useCallback((next: Pace) => {
+    setPace(next);
+    if (renderer.current !== null) renderer.current.ticksPerSecond = next.ticks_per_second;
+  }, []);
+
+  const refreshPace = useCallback(async () => {
+    try {
+      showPace(await client.pace());
+    } catch (error) {
+      notify({ tone: "refused", text: `Could not read the pace: ${String(error)}` });
+    }
+  }, [showPace, notify]);
+
+  const choosePace = useCallback(
+    async (ticksPerSecond: number) => {
+      try {
+        showPace(await client.setPace(ticksPerSecond));
+        if (ticksPerSecond > 0) resumeAt.current = ticksPerSecond;
+      } catch (error) {
+        notify({ tone: "refused", text: error instanceof client.Refused ? error.message : String(error) });
+      }
+    },
+    [showPace, notify],
+  );
+
+  const togglePause = useCallback(() => {
+    if (pace === null) return;
+    if (pace.ticks_per_second > 0) void choosePace(0);
+    else void choosePace(resumeAt.current ?? pace.own_ticks_per_second);
+  }, [pace, choosePace]);
+
   // -- the world ---------------------------------------------------------------------------------
 
   useEffect(() => {
@@ -128,7 +166,12 @@ export function Game({ world }: { world: WorldInfo }) {
           awaitingOutcome.current = false;
           void client.barriers().then((view) => renderer.current?.setBarriers(view));
         }
-      }, setConnected);
+      }, (open) => {
+        setConnected(open);
+        // The service returns the world to its own rate when the last stream closes (§2.4), so a
+        // dropped and reopened stream may find a different pace than the one this page chose.
+        if (open) void refreshPace();
+      });
     })().catch((error: unknown) => setFailure(String(error)));
     return () => {
       live = false;
@@ -136,7 +179,7 @@ export function Game({ world }: { world: WorldInfo }) {
       renderer.current?.destroy();
       renderer.current = null;
     };
-  }, [world, refreshFrame, refreshLedger]);
+  }, [world, refreshFrame, refreshLedger, refreshPace]);
 
   useEffect(() => {
     void refreshFrame();
@@ -189,10 +232,14 @@ export function Game({ world }: { world: WorldInfo }) {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") cancel();
       if (event.key === "f") setTool((t) => (t === "fence" ? "look" : "fence"));
+      if (event.key === " " && !(event.target instanceof HTMLButtonElement)) {
+        event.preventDefault();
+        togglePause();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [cancel]);
+  }, [cancel, togglePause]);
 
   // -- pointer -----------------------------------------------------------------------------------
 
@@ -262,6 +309,10 @@ export function Game({ world }: { world: WorldInfo }) {
         status={status}
         progress={progress}
         connected={connected}
+        pace={pace}
+        speeds={pace === null ? [] : speeds(pace)}
+        onPace={(rate) => void choosePace(rate)}
+        onTogglePause={togglePause}
         mode={mode}
         onMode={setMode}
         tool={tool}
