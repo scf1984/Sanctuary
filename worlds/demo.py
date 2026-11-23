@@ -57,6 +57,7 @@ from core.genetics.registry import ExpressionMode, GeneSpec, Unit
 from core.world.diffusion import DiffusionConfig
 from core.world.assembly import World, WorldConfig, build_world
 from core.world.climate import ClimateConfig, SeasonsConfig
+from core.world.cull import CullConfig
 from core.world.terrain import TerrainConfig
 from core.world.interventions import Interventions
 from metrics import Income, IncomeConfig, MetricHistory, MetricsConfig
@@ -516,6 +517,13 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
             # of "is a kill worth defending", tuned as one against `intake_rate` (§2.1).
             decay_rate=0.05,
         ),
+        # Six born animals: the fewest a cull may leave and still have the species regrow to the
+        # founding 200 within ten generations, in 20 of 20 runs (#28, decision 1; measured after
+        # #251 in docs/spikes/viable-population.md). Two would only promise the species is not
+        # doomed, and a pair recovers within ten generations 7 times in 20, so a cull the game
+        # allowed would often look like the extinction it promised to prevent. Re-measured when a
+        # MAJOR lands.
+        cull=CullConfig(survivors=6),
         feeding=FeedingConfig(
             # Chosen so a *naive* founder population is viable, which is a stricter and temporary
             # requirement than it looks: nothing dies (#21) and nothing breeds (#20), so selection

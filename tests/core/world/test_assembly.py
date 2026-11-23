@@ -30,6 +30,7 @@ from core.entities.growth import GrowthConfig
 from core.ecology.cues import CueFieldConfig, ScentGenes
 from core.ecology.diet import DietConfig
 from core.ecology.carrion import CarrionConfig
+from core.world.cull import CullConfig
 from core.ecology.feeding import FeedingConfig
 from core.ecology.hydration import HydrationConfig
 from core.ecology.predation import PredationConfig
@@ -177,6 +178,7 @@ def world_config(**overrides):
         feeding=FeedingConfig(intake_rate=0.6, assimilation_max=0.5, size_gene="size"),
         predation=PredationConfig(strike_range=1.0, strike_power=20.0),
         carrion=CarrionConfig(decay_rate=0.1),
+        cull=CullConfig(survivors=5),
         cue_field=CueFieldConfig(diffusion_range=3.0),
         metabolism=MetabolismConfig(
             dehydration_penalty=0.0,

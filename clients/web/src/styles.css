@@ -411,6 +411,42 @@ button:disabled {
   font-size: 12px;
 }
 
+.species .cull-open {
+  padding: 1px 6px;
+  font-size: 11px;
+}
+
+.species .cull-open.active {
+  border-color: var(--accent);
+}
+
+.species .cull {
+  margin: 6px 0 2px 26px;
+  font-size: 12px;
+}
+
+.species .cull label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.species .cull input {
+  flex: 0 0 64px;
+  width: 64px;
+}
+
+.species .cull .help,
+.species .cull .price {
+  margin: 4px 0;
+}
+
+.species .cull .actions {
+  display: flex;
+  gap: 6px;
+}
+
 @media (max-width: 640px) {
   .species {
     width: calc(100% - 24px);

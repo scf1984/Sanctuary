@@ -315,7 +315,7 @@ class TestInspect:
 class TestInterventions:
     def test_a_quote_names_the_price_the_boundary_then_charges(self):
         session = session_on(founders=60, seed=1)
-        cull = CullRequest(species_id=0, count=3, survivors=20)
+        cull = CullRequest(species_id=0, count=3)
         quote = session.quote(cull)
 
         session.request(cull)
@@ -327,9 +327,9 @@ class TestInterventions:
         assert record.cost == quote.cost
 
     def test_a_quote_gives_the_refusal_the_boundary_then_records(self):
-        """§2.7: a cull may never take a species below its survivors."""
+        """§2.7: a cull may never take a species below the world's guard (#28)."""
         session = session_on(founders=30, seed=1)
-        greedy = CullRequest(species_id=0, count=25, survivors=20)
+        greedy = CullRequest(species_id=0, count=25)
         quote = session.quote(greedy)
 
         session.request(greedy)
@@ -337,6 +337,17 @@ class TestInterventions:
 
         assert quote.refusal is not None
         assert session.ledger().records[-1].refusal == quote.refusal
+
+    def test_the_cull_guard_is_the_worlds_and_a_client_is_told_it(self):
+        """#28, decision 2: the request carries no floor, so the world's is the only one, and
+        `describe()` says what it is so a client can offer only culls that will land."""
+        session = session_on(founders=60, seed=1)
+        guard = session.describe().cull_survivors
+        born = next(report.living for report in session.species() if report.id == 0)
+
+        assert guard == session._world.config.cull.survivors == 6
+        assert session.quote(CullRequest(species_id=0, count=born - guard)).refusal is None
+        assert session.quote(CullRequest(species_id=0, count=born - guard + 1)).refusal is not None
 
     def test_a_quote_charges_nothing(self):
         session = session_on(founders=60, seed=1)

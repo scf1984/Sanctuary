@@ -1688,7 +1688,7 @@ by" hunger and no animal stands still merely because the drive that won has no m
     and will be born whether or not its parents survive, so a world whose last two adults died
     leaving one pregnancy is not over.
 - Interventions include fencing to isolate populations, culling (never total eradication of a
-  species by a single action), terraforming, introducing species, and standing policies.
+  species by a single action; see below), terraforming, introducing species, and standing policies.
 - Metrics — biodiversity, population trends, inter-species interaction — are a secondary surface,
   suitable for a dashboard client or a phone widget.
 - **Scenarios are layered on the sandbox, never instead of it** (#292, the owner's decision). A
@@ -1722,16 +1722,38 @@ by" hunger and no animal stands still merely because the drive that won has no m
   and it means the tick *reacts* to the intervention rather than leaving it inert until the next
   one.
 
-  **A cull returns the bodies to the ground they fell on**, and no invariant made it. That is worth
-  recording because the obvious justification is wrong and was checked: releasing animals holding
-  1,950 energy units leaves `total_nutrients()` unchanged either way, because the ledger counts
-  their energy as *exported* whether or not it ever comes back. Conservation holds over a world
-  where the nutrient is stranded — a gap in the check itself, filed as #214. So the argument is
-  ecological: a body decomposes where it falls, a cull is that compressed into one tick, and a cull
-  that skipped it would sterilise the ground the player used it on.
+  **A cull thins one species, at random, and never below the world's guard** — settled in #28
+  (the owner's four decisions), which made it the client's second priced intervention.
 
-  **The catalogue is still open** (§5). #26 built the framework and one intervention; #27's fence
-  and #28's siblings own their own effects.
+  - **The guard promises regrowth, not mere survival.** A cull must leave enough born animals that
+    the species regrows to its founding size within ten generations. On the demo world that is
+    **6**: 20 of 20 runs recovered (`docs/spikes/viable-population.md`, after #251). Two would only
+    promise the species is not doomed, and a pair recovers in ten generations 7 times in 20, so a
+    cull the game allowed would often look like the extinction §2.7 forbids. The number is
+    re-measured when a MAJOR lands.
+  - **The guard is a world rule** (`CullConfig.survivors`, fingerprinted), and the request carries
+    no floor. A client choosing its own could send 1, and a standing policy (#33) firing during an
+    absence must be held to the number a click is. `WorldInfo.cull_survivors` tells a client the
+    number so it offers only culls that will land. It is never below 2: reproduction needs two
+    parents.
+  - **Victims are drawn at random from the species' born members.** The first build took the
+    first rows, which nobody chose: row order follows allocation and reuse, so a cull fell hardest
+    on whichever animals got their rows first. A random draw removes numbers and selects for
+    nothing, so a cull never quietly evolves its species. Thinning one *place* is a different
+    intervention, to be added beside this one. A gestating young is neither counted nor taken: it
+    is born whether or not its mother survives.
+  - **The bodies become carrion where each animal stood**, exactly as a strike's do (#179). A cull
+    is a death that is not starvation and leaves a body, which is what carrion is for. The first
+    build returned each body to the soil at once, because carrion did not exist yet. It now reaches
+    the soil through `Carrion.decompose`, after whatever scavenges it, so a cull still does not
+    sterilise the ground it was used on. That argument was always ecological rather than about
+    conservation: a body released with its energy unreturned leaves `total_nutrients()` unchanged,
+    which is the gap #214's `exported_nutrients_are_held` now closes.
+
+  Both of the last two are **MAJOR** under §2.8. No world had shipped with culls in its history.
+
+  **The catalogue is still open** (§5). #26 built the framework, #27 the fence and #28 the cull;
+  #28's siblings own their own effects.
 
 - **Income is ecosystem value, paid on the population that has held** — the currency's source
   decided on #26, the floor on #26, and the formula on #308, all by the owner, and built in #308
@@ -2003,6 +2025,9 @@ built in #306. It lives in `clients/web`:
 - **A fence asks before it builds.** Dragging prices it (`POST /quote`), releasing shows the price
   and a confirm, and only then is it requested. It cannot be taken down, so the release that
   commits it in the viewer is one step too few for a game.
+- **A cull is asked for on its species' row** (#28), since it thins a species rather than a place.
+  A count, capped at what the guard allows, is priced as it is typed and committed only by a
+  confirm, as a fence is.
 
 **A position snapshot is never read without the occupancy that qualifies it** — decided in #119,
 which owned it, and it governs every future overlay (#39) rather than the entity dots alone.

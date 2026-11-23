@@ -30,7 +30,6 @@ export interface CullRequest {
   readonly $type: "CullRequest";
   readonly species_id: number;
   readonly count: number;
-  readonly survivors: number;
 }
 
 export interface DriveShare {
@@ -191,6 +190,7 @@ export interface WorldInfo {
   readonly gene_names: readonly string[];
   readonly field_layers: readonly string[];
   readonly conditions: readonly string[];
+  readonly cull_survivors: number;
 }
 
 /** What a client may ask a world to do (POST /quote, POST /request). */

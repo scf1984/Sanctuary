@@ -125,6 +125,8 @@ class WorldInfo:
     gene_names: the gene vocabulary, in column order.
     field_layers: the names `Session.field` accepts.
     conditions: the names `Session.condition` accepts.
+    cull_survivors: the fewest born animals a cull may leave of a species (§2.7, #28), so a client
+        can say what the guard keeps before it asks.
     """
 
     name: str
@@ -136,6 +138,7 @@ class WorldInfo:
     gene_names: tuple[str, ...]
     field_layers: tuple[str, ...]
     conditions: tuple[str, ...]
+    cull_survivors: int
 
 
 @dataclass(frozen=True)
@@ -289,11 +292,14 @@ class Quote:
 
 @dataclass(frozen=True)
 class CullRequest:
-    """Remove `count` animals of `species_id`, never leaving fewer than `survivors` (§2.7)."""
+    """Remove `count` born animals of `species_id`, chosen at random (#28).
+
+    Carries no floor: how many a cull must leave is the world's rule (`WorldInfo.cull_survivors`),
+    so no client can weaken it.
+    """
 
     species_id: int
     count: int
-    survivors: int
 
 
 @dataclass(frozen=True)

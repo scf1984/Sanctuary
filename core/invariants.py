@@ -286,7 +286,8 @@ def exported_nutrients_are_held(plants: Plants, carrion: Carrion) -> Predicate:
     - `Ecology.transfer` moves energy between living pools, gestating young included (#20);
     - `Ecology.kill` takes flesh off a body and `Carrion.deposit` lays the same amount on the
       ground, where it stays owed until `Carrion.decompose` returns it;
-    - `Cull.apply` returns a body before freeing its row, and `Death.reap` frees only empty pools.
+    - `Cull.apply` lays a body as carrion before freeing its row (#28), and `Death.reap` frees
+      only empty pools.
 
     So, after any tick, ``exported / nutrient_per_biomass == Σ energy over living rows + carrion``.
     Carrion is the only in-flight term: everything else that moves within a tick has landed by the

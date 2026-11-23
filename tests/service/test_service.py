@@ -124,7 +124,7 @@ class TestTheProtocol:
 
     def test_an_intervention_requested_remotely_lands_at_the_next_boundary(self, served):
         service, _session, remote, clock = served
-        cull = CullRequest(species_id=0, count=2, survivors=10)
+        cull = CullRequest(species_id=0, count=2)
         quote = remote.quote(cull)
 
         remote.request(cull)
@@ -306,7 +306,7 @@ class TestPace:
         watch(service, remote)
 
         with pytest.raises(TypeError, match="PaceRequest"):
-            remote._post("/pace", CullRequest(species_id=0, count=1, survivors=1))
+            remote._post("/pace", CullRequest(species_id=0, count=1))
 
     def test_leaving_resumes_the_worlds_own_rate_at_that_moment(self, served):
         """A world paused and then closed keeps running, and owes nothing for the pause itself."""

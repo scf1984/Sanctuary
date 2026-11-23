@@ -171,7 +171,7 @@ export function Game({ world }: { world: WorldInfo }) {
       for (const record of next.records.slice(known.current)) {
         notify(
           record.refusal === null
-            ? { tone: "ok", text: `${label(record.name)} built for ${record.cost.toFixed(0)}.` }
+            ? { tone: "ok", text: `${label(record.name)} ${DONE[record.name] ?? "done"} for ${record.cost.toFixed(0)}.` }
             : { tone: "refused", text: `${label(record.name)} refused: ${record.refusal}` },
         );
       }
@@ -312,6 +312,26 @@ export function Game({ world }: { world: WorldInfo }) {
     setDraft(null);
   }, [pending, notify]);
 
+  // -- culling (#28) -------------------------------------------------------------------------------
+
+  const quoteCull = useCallback(
+    (species: number, count: number) => client.quote({ $type: "CullRequest", species_id: species, count }),
+    [],
+  );
+
+  const cull = useCallback(
+    async (species: number, count: number) => {
+      try {
+        await client.request({ $type: "CullRequest", species_id: species, count });
+        awaitingOutcome.current = true;
+        notify({ tone: "info", text: `Cull of ${count} queued: it happens at the next tick.` });
+      } catch (error) {
+        notify({ tone: "refused", text: error instanceof client.Refused ? error.message : String(error) });
+      }
+    },
+    [notify],
+  );
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       // Typing a species' name is not a command.
@@ -421,11 +441,18 @@ export function Game({ world }: { world: WorldInfo }) {
           selected={selected}
           onSelect={setSelected}
           onRename={(id, name) => void rename(id, name)}
+          guard={world.cull_survivors}
+          balance={ledger?.balance ?? null}
+          onQuote={quoteCull}
+          onCull={cull}
         />
       )}
     </div>
   );
 }
+
+/** What a landed intervention did, by its recorded name: "Fence built", "Cull done". */
+const DONE: Readonly<Record<string, string>> = { fence: "built", cull: "done" };
 
 /** An intervention's recorded name for a person: "fence" reads as "Fence". */
 function label(name: string): string {
