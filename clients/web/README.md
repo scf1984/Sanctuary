@@ -10,10 +10,16 @@ cd clients/web
 npm ci
 npm run build
 cd ../..
-python -m service --state saves/world1
+python -m service --state saves/world1 --scenario first-split
 ```
 
 Then open http://127.0.0.1:8765. The service serves this build at `/`.
+
+`--scenario first-split` founds a world with the first scenario's goal, briefing and hints
+(#317). Leave it out for a sandbox with no goal. The scenario is recorded when the world is
+founded, so later runs on the same `--state` need only that flag. Asking an existing world for
+a different scenario is refused. `python -m service --help` lists the scenarios and the other
+founding flags, such as `--seed`.
 
 ## Develop
 
