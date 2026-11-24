@@ -5,8 +5,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import * as client from "./api/client";
-import type { FenceRequest, Ledger, Pace, Progress, Quote, SpeciesReport, Status, WorldInfo } from "./api/values";
+import type { FenceRequest, Ledger, Pace, Progress, Quote, ScenarioReport, SpeciesReport, Status, WorldInfo } from "./api/values";
 import { decodeColumn } from "./api/wire";
+import { Briefing, Hint, HINT_TEXT } from "./hud/Goal";
 import { Hud, type Notice } from "./hud/Hud";
 import { SpeciesPanel } from "./hud/Species";
 import { pan, toWorld, zoomAt } from "./map/camera";
@@ -15,6 +16,7 @@ import { fenceRequest } from "./map/fence";
 import { MapRenderer } from "./map/renderer";
 import { positions, type Positions } from "./world/frames";
 import { newSplits, speciesLabel, speciesSeries } from "./world/lineage";
+import { currentHint, markDone, readSeen, writeSeen, type HintId, type Seen } from "./world/onboarding";
 import { speeds } from "./world/pace";
 
 export type Tool = "look" | "fence";
@@ -60,6 +62,10 @@ export function Game({ world }: { world: WorldInfo }) {
    * shows them, each unnamed daughter marked to be named. */
   const knownSpecies = useRef<Set<number> | null>(null);
   const historyRead = useRef(0);
+  const [scenario, setScenario] = useState<ScenarioReport | null>(null);
+  /** What this browser has seen of the scenario's onboarding (#317), once the scenario is known. */
+  const [seen, setSeen] = useState<Seen | null>(null);
+  const [briefing, setBriefing] = useState(false);
 
   // A request's outcome lands in the ledger at the next tick boundary (§2.7), so after asking, the
   // next progress event is when to look. `known` is how many records the player has been shown.
@@ -146,6 +152,44 @@ export function Game({ world }: { world: WorldInfo }) {
     setSpecies(next);
   }, [notify]);
 
+  // -- the scenario (#317) ------------------------------------------------------------------------
+
+  /** The outcome this page last showed, so the moment a goal is met or lost is announced once. Null
+   * until the first read, which announces nothing: an outcome reached while the player was away is
+   * on the goal panel when they arrive. */
+  const shownOutcome = useRef<string | null>(null);
+  const refreshScenario = useCallback(async () => {
+    const next = await client.scenario();
+    if (next !== null && shownOutcome.current === "open" && next.outcome !== "open") {
+      notify(
+        next.outcome === "met"
+          ? { tone: "ok", text: `Goal done: ${next.title}. The world keeps running as a sandbox.` }
+          : { tone: "refused", text: `Goal lost: ${next.reason ?? "a species died out"}.` },
+      );
+    }
+    shownOutcome.current = next?.outcome ?? null;
+    setScenario(next);
+  }, [notify]);
+
+  const remember = useCallback(
+    (change: (current: Seen) => Seen) => {
+      setSeen((current) => {
+        if (current === null || scenario === null) return current;
+        const next = change(current);
+        writeSeen(storage(), scenario.name, next);
+        return next;
+      });
+    },
+    [scenario],
+  );
+
+  const closeBriefing = useCallback(() => {
+    setBriefing(false);
+    remember((current) => ({ ...current, briefing: true }));
+  }, [remember]);
+
+  const dismissHint = useCallback((hint: HintId) => remember((current) => markDone(current, hint)), [remember]);
+
   const refreshHistory = useCallback(async () => {
     historyRead.current = performance.now();
     const samples = await client.history();
@@ -198,13 +242,15 @@ export function Game({ world }: { world: WorldInfo }) {
   const choosePace = useCallback(
     async (ticksPerSecond: number) => {
       try {
-        showPace(await client.setPace(ticksPerSecond));
+        const next = await client.setPace(ticksPerSecond);
+        showPace(next);
         if (ticksPerSecond > 0) resumeAt.current = ticksPerSecond;
+        if (ticksPerSecond > next.own_ticks_per_second) dismissHint("pace");
       } catch (error) {
         notify({ tone: "refused", text: error instanceof client.Refused ? error.message : String(error) });
       }
     },
-    [showPace, notify],
+    [showPace, notify, dismissHint],
   );
 
   const togglePause = useCallback(() => {
@@ -231,7 +277,7 @@ export function Game({ world }: { world: WorldInfo }) {
       map.setTerrain(terrain);
       map.setBarriers(barriers);
       setStatus(first);
-      await Promise.all([refreshFrame(), refreshLedger(), refreshSpecies(), refreshHistory()]);
+      await Promise.all([refreshFrame(), refreshLedger(), refreshSpecies(), refreshHistory(), refreshScenario()]);
       stop = client.follow((event) => {
         setProgress(event);
         setStatus(event.status);
@@ -241,6 +287,7 @@ export function Game({ world }: { world: WorldInfo }) {
         void refreshLedger();
         // Every tick too: the counts move, and a split rides `status.splits` (#314).
         void refreshSpecies();
+        void refreshScenario();
         if (performance.now() - historyRead.current > HISTORY_INTERVAL) void refreshHistory();
         if (awaitingOutcome.current) {
           awaitingOutcome.current = false;
@@ -259,7 +306,26 @@ export function Game({ world }: { world: WorldInfo }) {
       renderer.current?.destroy();
       renderer.current = null;
     };
-  }, [world, refreshFrame, refreshLedger, refreshPace, refreshSpecies, refreshHistory]);
+  }, [world, refreshFrame, refreshLedger, refreshPace, refreshSpecies, refreshHistory, refreshScenario]);
+
+  // The briefing opens by itself once, the first time this browser meets the scenario.
+  const scenarioName = scenario?.name ?? null;
+  useEffect(() => {
+    if (scenarioName === null) return;
+    const read = readSeen(storage(), scenarioName);
+    setSeen(read);
+    if (!read.briefing) setBriefing(true);
+  }, [scenarioName]);
+
+  const fenced = ledger?.records.some((record) => record.name === "fence" && record.refusal === null) ?? false;
+  const hint =
+    scenario === null || seen === null || briefing
+      ? null
+      : currentHint(seen, {
+          fenced,
+          split: species.length > 1,
+          named: species.some((report) => report.name !== null),
+        });
 
   useEffect(() => {
     void refreshFrame();
@@ -433,6 +499,11 @@ export function Game({ world }: { world: WorldInfo }) {
         onCancel={cancel}
         notices={notices}
         failure={failure}
+        scenario={scenario}
+        species={species}
+        onBriefing={() => setBriefing(true)}
+        hint={hint}
+        onDismissHint={dismissHint}
       />
       {species.length > 0 && (
         <SpeciesPanel
@@ -445,14 +516,25 @@ export function Game({ world }: { world: WorldInfo }) {
           balance={ledger?.balance ?? null}
           onQuote={quoteCull}
           onCull={cull}
+          hint={hint === "species" ? <Hint text={HINT_TEXT.species} onDismiss={() => dismissHint("species")} /> : undefined}
         />
       )}
+      {briefing && scenario !== null && <Briefing scenario={scenario} first={seen?.briefing === false} onClose={closeBriefing} />}
     </div>
   );
 }
 
 /** What a landed intervention did, by its recorded name: "Fence built", "Cull done". */
 const DONE: Readonly<Record<string, string>> = { fence: "built", cull: "done" };
+
+/** This browser's storage, or nothing where reading it throws (a sandboxed frame). */
+function storage(): Storage | undefined {
+  try {
+    return window.localStorage;
+  } catch {
+    return undefined;
+  }
+}
 
 /** An intervention's recorded name for a person: "fence" reads as "Fence". */
 function label(name: string): string {

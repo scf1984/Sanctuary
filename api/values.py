@@ -47,6 +47,7 @@ __all__ = [
     "Record",
     "Request",
     "Sample",
+    "ScenarioReport",
     "SpeciesNameRequest",
     "SpeciesReport",
     "Status",
@@ -338,6 +339,39 @@ class SpeciesReport:
     split_tick: Optional[int]
     founders: Optional[int]
     living: int
+
+
+@dataclass(frozen=True)
+class ScenarioReport:
+    """The scenario a world was founded with, and where its goal stands (#317).
+
+    name: the scenario's name, as it was founded with.
+    title, goal_text, briefing: what a person is told, written beside the goal they describe
+        (`worlds.scenarios`). A client shows them and writes none of its own (§4).
+    outcome: "open", "met" or "lost". Met and lost are final.
+    progress: dimensionless. Before the split, how far the founding species' two most separated
+        groups have come toward one, at the latest check that measured it; 1 is where it splits
+        them. None until a check has measured it. 1 from the split on. A measurement, never a
+        forecast (§2.3).
+    parent, daughter: the species the goal names, once its split has happened; None before.
+    split_tick, due_tick: when that split happened, and the tick of the sample at which both
+        species must still be alive. None before the split.
+    resolved_tick: when the goal was met or lost; None while it is open.
+    reason: why it was lost, for a person; None otherwise.
+    """
+
+    name: str
+    title: str
+    goal_text: str
+    briefing: tuple[str, ...]
+    outcome: str
+    progress: Optional[float]
+    parent: Optional[int]
+    daughter: Optional[int]
+    split_tick: Optional[int]
+    due_tick: Optional[int]
+    resolved_tick: Optional[int]
+    reason: Optional[str]
 
 
 @dataclass(frozen=True)

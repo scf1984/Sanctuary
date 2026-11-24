@@ -76,6 +76,13 @@ _GENERATION_TICKS = sum(_FOUNDER_MATURITY) / 2.0 + sum(_FOUNDER_GESTATION) / 2.0
 # §2.1: a year is a lifespan, about six generations, so ~1.5 generations live through each season.
 _GENERATIONS_PER_YEAR = 6
 _YEAR_LENGTH = round(_GENERATIONS_PER_YEAR * _GENERATION_TICKS)
+# The same generation, in whole ticks, for what reads it from outside: the first scenario's goal
+# asks a daughter to survive one (#317), and it must be this world's generation and not a second
+# number beside it.
+GENERATION_TICKS = round(_GENERATION_TICKS)
+# The fewest animals a split may found a species with. Named because the first scenario's briefing
+# tells the player how many to fence in (#317), and that must be the number the check uses.
+SPLIT_FOUNDERS = 20
 
 
 # The thermal drive's two numbers (#249), measured on this world's founders across a year
@@ -460,7 +467,7 @@ def demo_world_config(n_entities: int, seed: int) -> WorldConfig:
             threshold=SPECIATION_THRESHOLD,
             # A placeholder for what #99's `selfing_rate` should decide (see SpeciationConfig):
             # enough animals that a daughter is a breeding population and not a stray family.
-            min_founders=20,
+            min_founders=SPLIT_FOUNDERS,
             # About one founding generation (120 ticks). Isolation takes hundreds of them to
             # reach a split, so a check once a generation cannot be meaningfully late.
             every_n_ticks=round(_GENERATION_TICKS),
@@ -824,7 +831,12 @@ def _compose(config: WorldConfig, seed: int) -> World:
     # Attached rather than assembled, because a recorder reads a finished world and `core/` must
     # stay importable without `metrics/` (§4). This is the composition root doing composition.
     history = MetricHistory(
-        world.store, world.genetics, world.plants, world.genes.vocabulary, DEMO_METRICS
+        world.store,
+        world.genetics,
+        world.plants,
+        world.speciation,
+        world.genes.vocabulary,
+        DEMO_METRICS,
     )
     ledger = Interventions(balance=DEMO_BUDGET)
     world.loop.metrics = history

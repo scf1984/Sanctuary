@@ -14,6 +14,7 @@ import numpy as np
 from core.ecology.plants import Plants
 from core.entities.store import EntityStore
 from core.genetics.service import Genetics
+from core.genetics.speciation import Speciation
 from core.genetics.vocabulary import GeneVocabulary
 from core.selection import Selection
 
@@ -71,6 +72,18 @@ class Sample:
         entropy (#30) are compositions over these and are not decided here. Recorded from the
         start because a series cannot be recomputed later (§4), and a daughter shrinking toward
         extinction is the trend a player most needs to see coming.
+    species_divergence: dimensionless, per species, indexed like `species_living`: how far the
+        last speciation check found the species' two most separated groups toward a split, as
+        `Speciation.divergence` holds it (#317). 1 is where the check splits them. 0 for a species
+        the check did not measure, because it was too small to propose two groups of
+        `min_founders` or was registered after the check ran. Recorded here rather than computed
+        on request, for the same reason as every other field: it is what shows a fence working
+        during the hours before a split, and a series cannot be recomputed (§4).
+
+        **An unfenced species does not read 0.** The check proposes two groups even in one
+        well-mixed population (`propose` halves a blob), and two halves of a blob have centroids
+        some way apart, so a species nobody isolated reads a baseline above zero (measured in
+        `docs/spikes/scenario-progress.md`). What rises above it is isolation.
     conceptions, deaths: how many since the previous sample, **derived rather than reported**. Ids
         are never reused (§2.3), so the number issued between two samples is exactly the number of
         rows allocated, and every allocation is a conception; the shortfall against the change in
@@ -122,6 +135,7 @@ class Sample:
     living: int
     gestating: int
     species_living: tuple[int, ...]
+    species_divergence: tuple[float, ...]
     conceptions: int
     deaths: int
     median_energy: float
@@ -140,8 +154,9 @@ class Sample:
 class MetricHistory:
     """Records `Sample`s on a cadence and answers questions about the series.
 
-    store, genetics, plants: read, never written. This module owns no column and no field — it is a
-        reader, which is what lets it run during offline catch-up without changing anything (§2.4).
+    store, genetics, plants, speciation: read, never written. This module owns no column and no
+        field — it is a reader, which is what lets it run during offline catch-up without changing
+        anything (§2.4).
     vocabulary: gene names in column order, so a sample can name its own numbers.
 
     Sampling is **not** a system in `TICK_ORDER`. That tuple is the declared rule for what a tick
@@ -156,12 +171,14 @@ class MetricHistory:
         store: EntityStore,
         genetics: Genetics,
         plants: Plants,
+        speciation: Speciation,
         vocabulary: GeneVocabulary,
         config: MetricsConfig,
     ) -> None:
         self.store = store
         self.genetics = genetics
         self.plants = plants
+        self.speciation = speciation
         self.vocabulary = vocabulary
         self.config = config
         self.samples: list[Sample] = []
@@ -170,6 +187,9 @@ class MetricHistory:
         # reports zero for both.
         self._previous: Optional[tuple[int, int]] = None
         self._subscribers: list[Callable[[Sample], None]] = []
+        # Species id -> the tick of the first sample that found none of it allocated, born or
+        # gestating. See `extinct_at`.
+        self._extinctions: dict[int, int] = {}
 
     def subscribe(self, callback: Callable[[Sample], None]) -> None:
         """Call `callback` with every sample as it is recorded, after it joins the window.
@@ -191,6 +211,7 @@ class MetricHistory:
         if tick % self.config.every_n_ticks:
             return None
         sample = self.sample(tick)
+        self._note_extinctions(tick)
         self.samples.append(sample)
         # Oldest first: a client watching a live world wants the recent past, and the long view
         # belongs in the metrics store rather than in a process's memory (see `MetricsConfig`).
@@ -219,6 +240,10 @@ class MetricHistory:
                     self.store.species_id[born], minlength=self.genetics.species.n_species
                 ).tolist()
             ),
+            species_divergence=tuple(
+                float(self.speciation.divergence.get(species, 0.0))
+                for species in range(self.genetics.species.n_species)
+            ),
             conceptions=conceptions,
             deaths=deaths,
             median_energy=float(np.median(self.store.energy[born])) if len(living) else 0.0,
@@ -228,6 +253,34 @@ class MetricHistory:
             gene_names=self.vocabulary.names,
             **self._phenotype(living),
         )
+
+    def extinct_at(self, species_id: int) -> Optional[int]:
+        """The tick of the first sample that found `species_id` with nobody allocated, or `None`
+        while it has members, born or gestating.
+
+        Kept beside the window rather than read off it, because the window forgets: it holds the
+        last `history_limit` samples, and a goal asking whether a daughter died within a generation
+        of its split (#317) must still have the answer a week later. Extinction is permanent, since
+        a species with nobody allocated has no one to breed it (§2.7), so this is a fact once
+        recorded, one entry per species at most, and can only be appended to.
+
+        Gestating young count as members, as they do for collapse (§2.7): a species whose last
+        adults died carrying young is not extinct, because the young are born whatever happens to
+        their parents. That is why this is not `species_living` reading zero.
+        """
+        return self._extinctions.get(species_id)
+
+    @property
+    def extinctions(self) -> dict[int, int]:
+        """Every extinction recorded, species id to tick, for a snapshot to carry (#31)."""
+        return dict(self._extinctions)
+
+    def _note_extinctions(self, tick: int) -> None:
+        allocated = np.bincount(
+            self.store.species_id[self.store.alive], minlength=self.genetics.species.n_species
+        )
+        for species in np.flatnonzero(allocated == 0).tolist():
+            self._extinctions.setdefault(int(species), tick)
 
     @property
     def previous_reading(self) -> Optional[tuple[int, int]]:
@@ -250,19 +303,23 @@ class MetricHistory:
         `gene_names` is left out. It is the vocabulary on every sample, and the vocabulary is part
         of the config a snapshot is fingerprinted against, so `restore` takes it from there.
 
-        `species_living` is ragged, since a split widens it, so it is stored `(n, widest)` and
-        padded with -1, which no count can be: `restore` trims the padding and nothing else.
+        The per-species fields are ragged, since a split widens them, so each is stored
+        `(n, widest)` and padded with -1, which no count and no divergence can be: `restore` trims
+        the padding and nothing else.
         """
         width = len(self.vocabulary.names)
         out: dict[str, np.ndarray] = {}
         for field in fields(Sample):
             if field.name == "gene_names":
                 continue
-            if field.name == "species_living":
-                widest = max((len(s.species_living) for s in self.samples), default=0)
-                padded = np.full((len(self.samples), widest), _NO_SPECIES, dtype=np.int64)
+            if field.name in _PER_SPECIES:
+                widest = max((len(getattr(s, field.name)) for s in self.samples), default=0)
+                padded = np.full(
+                    (len(self.samples), widest), _NO_SPECIES, dtype=_PER_SPECIES[field.name]
+                )
                 for row, sample in enumerate(self.samples):
-                    padded[row, : len(sample.species_living)] = sample.species_living
+                    values = getattr(sample, field.name)
+                    padded[row, : len(values)] = values
                 out[field.name] = padded
                 continue
             # Keyed on the declared type, so a field of a type nobody mapped raises here rather
@@ -275,9 +332,12 @@ class MetricHistory:
         return out
 
     def restore(
-        self, columns: Mapping[str, np.ndarray], previous: Optional[tuple[int, int]]
+        self,
+        columns: Mapping[str, np.ndarray],
+        previous: Optional[tuple[int, int]],
+        extinctions: Mapping[int, int],
     ) -> None:
-        """Replace the window and the previous reading with saved ones (#31).
+        """Replace the window, the previous reading and the extinctions with saved ones (#31).
 
         Nothing about the cadence is restored, because nothing about it is held: `record_if_due`
         reads the tick it is handed. The tick counter comes back with the world, and the window
@@ -287,14 +347,20 @@ class MetricHistory:
         self.samples = [
             Sample(
                 gene_names=self.vocabulary.names,
-                **{name: _plain(columns[name][row]) for name in names if name != "species_living"},
+                **{name: _plain(columns[name][row]) for name in names if name not in _PER_SPECIES},
                 species_living=tuple(
                     int(count) for count in columns["species_living"][row] if count != _NO_SPECIES
+                ),
+                species_divergence=tuple(
+                    float(reading)
+                    for reading in columns["species_divergence"][row]
+                    if reading != _NO_SPECIES
                 ),
             )
             for row in range(len(columns["tick"]))
         ]
         self._previous = None if previous is None else (int(previous[0]), int(previous[1]))
+        self._extinctions = {int(species): int(tick) for species, tick in extinctions.items()}
 
     def _flows(self, issued: int, occupied: int) -> tuple[int, int]:
         """(conceptions, deaths) since the previous sample, from the two counters alone.
@@ -360,8 +426,10 @@ class MetricHistory:
 
 # The dtype each `Sample` field is stored in by `MetricHistory.columns`, keyed by its declared type.
 # The module uses postponed annotations, so `field.type` is the annotation as written.
-# Padding in the stored `species_living` matrix, for a species not yet registered at that sample.
+# Padding in a stored per-species matrix, for a species not yet registered at that sample.
 _NO_SPECIES = -1
+# The per-species `Sample` fields, and the dtype each is stored in.
+_PER_SPECIES = {"species_living": np.int64, "species_divergence": np.float64}
 
 _COLUMN_DTYPES = {"int": np.int64, "float": np.float64, "tuple[float, ...]": np.float64}
 

@@ -1,8 +1,12 @@
 // Everything a person reads over the map: where the world stands, what the colours mean, and the
 // fence tool's price. It draws what it is handed and computes nothing about the world (§4).
 
-import type { FenceRequest, Pace, Progress, Quote, Status, WorldInfo } from "../api/values";
+import type { ReactNode } from "react";
+
+import type { FenceRequest, Pace, Progress, Quote, ScenarioReport, SpeciesReport, Status, WorldInfo } from "../api/values";
 import type { Tool } from "../Game";
+import type { HintId } from "../world/onboarding";
+import { GoalPanel, Hint, HINT_TEXT } from "./Goal";
 import { SPECIES_MODE } from "../map/colours";
 import { CONDITION_RAMP, FENCE, hex } from "../map/palette";
 import { simTime } from "../world/clock";
@@ -46,6 +50,13 @@ interface Props {
   onCancel: () => void;
   notices: readonly Notice[];
   failure: string | null;
+  /** The scenario being played, or null for a sandbox (#317). */
+  scenario: ScenarioReport | null;
+  species: readonly SpeciesReport[];
+  onBriefing: () => void;
+  /** The onboarding hint to show now, if it is one anchored here. */
+  hint: HintId | null;
+  onDismissHint: (hint: HintId) => void;
 }
 
 /** One tick is one sim-minute (CLAUDE.md §2.1). */
@@ -63,7 +74,12 @@ export function Hud(props: Props) {
         {status !== null && (
           <>
             <span title={`tick ${number(status.tick)}: one tick is one sim-minute`}>{simTime(status.tick)}</span>
-            {props.pace !== null && <PaceControls {...props} pace={props.pace} />}
+            {props.pace !== null && (
+              <span className="anchor">
+                <PaceControls {...props} pace={props.pace} />
+                {props.hint === "pace" && bubble(props, "pace", "below")}
+              </span>
+            )}
             <span>
               <strong>{number(status.living)}</strong> alive
             </span>
@@ -97,6 +113,7 @@ export function Hud(props: Props) {
       {props.failure !== null && <div className="banner failure">Lost the world: {props.failure}</div>}
 
       <aside className="tools">
+        {props.scenario !== null && <GoalPanel scenario={props.scenario} species={props.species} onBriefing={props.onBriefing} />}
         <div className="group">
           <button className={props.tool === "look" ? "active" : ""} onClick={() => props.onTool("look")} title="drag to pan, scroll to zoom">
             Look
@@ -108,6 +125,7 @@ export function Hud(props: Props) {
             Fit
           </button>
         </div>
+        {props.hint === "fence" && bubble(props, "fence")}
         {props.tool === "fence" && props.pending === null && (
           <p className="hint">
             Drag a box to fence it in. Whoever is inside stays inside. Right-drag pans.
@@ -162,6 +180,10 @@ export function Hud(props: Props) {
       </ul>
     </>
   );
+}
+
+function bubble(props: Props, hint: HintId, className?: string): ReactNode {
+  return <Hint text={HINT_TEXT[hint]} onDismiss={() => props.onDismissHint(hint)} className={className} />;
 }
 
 function PaceControls({ pace, speeds, connected, onPace, onTogglePause }: Props & { pace: Pace }) {

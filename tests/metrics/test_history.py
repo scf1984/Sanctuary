@@ -21,7 +21,7 @@ def world(seed=1, n_entities=60, config=EVERY_TICK):
     """A real assembled world with a recorder attached, as `build_demo_world` wires one."""
     built = build_demo_world(seed=seed, n_entities=n_entities)
     built.loop.metrics = MetricHistory(
-        built.store, built.genetics, built.plants, built.genes.vocabulary, config
+        built.store, built.genetics, built.plants, built.speciation, built.genes.vocabulary, config
     )
     return built
 
@@ -203,6 +203,19 @@ class TestSpeciesPopulations:
         assert sample.species_living[daughter] == 15
         assert sum(sample.species_living) == sample.living
 
+    def test_divergence_is_what_the_check_last_measured_and_zero_where_it_measured_nothing(self):
+        """#317: the series a scenario's progress is drawn from. A daughter the check has not
+        looked at yet reads 0, one entry per species like the counts."""
+        built = world()
+        daughter = self.split_off(built, 15)
+        built.speciation.divergence = {0: 0.25}
+
+        sample = built.loop.metrics.sample(tick=0)
+
+        assert sample.species_divergence[0] == 0.25
+        assert sample.species_divergence[daughter] == 0.0
+        assert len(sample.species_divergence) == len(sample.species_living)
+
     def test_an_extinct_species_reads_zero_rather_than_vanishing(self):
         built = world()
         daughter = self.split_off(built, 10)
@@ -223,10 +236,13 @@ class TestSpeciesPopulations:
         recorder = built.loop.metrics
         before = list(recorder.samples)
 
-        recorder.restore(recorder.columns(), recorder.previous_reading)
+        recorder.restore(recorder.columns(), recorder.previous_reading, recorder.extinctions)
 
         assert [s.species_living for s in recorder.samples] == [
             s.species_living for s in before
+        ]
+        assert [s.species_divergence for s in recorder.samples] == [
+            s.species_divergence for s in before
         ]
         assert len(before[0].species_living) == 1
         assert len(before[-1].species_living) == 2
@@ -304,7 +320,12 @@ class TestRecordingChangesNothing:
         it measures is not a metric."""
         watched = build_demo_world(seed=7, n_entities=60)
         watched.loop.metrics = MetricHistory(
-            watched.store, watched.genetics, watched.plants, watched.genes.vocabulary, EVERY_TICK
+            watched.store,
+            watched.genetics,
+            watched.plants,
+            watched.speciation,
+            watched.genes.vocabulary,
+            EVERY_TICK,
         )
         unwatched = build_demo_world(seed=7, n_entities=60)
         unwatched.loop.metrics = None

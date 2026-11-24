@@ -52,6 +52,50 @@ class TestFounding:
         assert record["anchor"] == {"wall_seconds": 1.5, "tick": 0, "ticks_per_second": 2.0}
 
 
+class TestScenarios:
+    """#317: a world's goal is chosen when it is founded, and a restart plays the same one."""
+
+    def test_the_founding_records_the_scenario_and_a_restart_plays_it(self, tmp_path):
+        session, founding = open_world(
+            tmp_path, now=0.0, ticks_per_second=1.0, world="demo", seed=1, founders=20,
+            scenario="first-split",
+        )
+        close_world(session, tmp_path)
+
+        reopened, again = open_world(tmp_path, now=1.0, ticks_per_second=1.0)
+
+        assert founding.scenario == again.scenario == "first-split"
+        assert reopened.scenario().name == "first-split"
+        assert json.loads((tmp_path / "world.json").read_text(encoding="utf-8"))["scenario"] == (
+            "first-split"
+        )
+
+    def test_a_sandbox_world_has_no_scenario(self, tmp_path):
+        session, founding = open_world(
+            tmp_path, now=0.0, ticks_per_second=1.0, world="demo", seed=1, founders=20
+        )
+
+        assert founding.scenario is None
+        assert session.scenario() is None
+
+    def test_a_founding_written_before_scenarios_reads_as_a_sandbox(self, tmp_path):
+        open_world(tmp_path, now=0.0, ticks_per_second=1.0, world="demo", seed=1, founders=20)
+        path = tmp_path / "world.json"
+        record = json.loads(path.read_text(encoding="utf-8"))
+        del record["scenario"]
+        path.write_text(json.dumps(record), encoding="utf-8")
+
+        _session, founding = open_world(tmp_path, now=1.0, ticks_per_second=1.0)
+
+        assert founding.scenario is None
+
+    def test_a_sandbox_cannot_be_reopened_as_a_scenario(self, tmp_path):
+        open_world(tmp_path, now=0.0, ticks_per_second=1.0, world="demo", seed=1, founders=20)
+
+        with pytest.raises(ValueError, match="not what was asked for"):
+            open_world(tmp_path, now=1.0, ticks_per_second=1.0, scenario="first-split")
+
+
 class TestRestarting:
     def test_a_stop_and_restart_loses_no_state(self, tmp_path):
         """The done-when. A world stopped at tick 60 and reopened is the world it was."""

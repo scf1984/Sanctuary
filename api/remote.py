@@ -38,6 +38,7 @@ from api.values import (
     Request,
     Sample,
     SpeciesNameRequest,
+    ScenarioReport,
     SpeciesReport,
     Status,
     TerrainView,
@@ -106,6 +107,9 @@ class RemoteSession:
 
     def species(self) -> tuple[SpeciesReport, ...]:
         return self._get("/species")
+
+    def scenario(self) -> Optional[ScenarioReport]:
+        return self._get("/scenario")
 
     # -- write --------------------------------------------------------------------------------
 

@@ -5,7 +5,7 @@ every return value is plain, entities are named by id, interventions are request
 and nothing a client holds can reach back into a running world.
 """
 
-from api.session import CONDITIONS, FIELD_LAYERS, Refused, Session, create, worlds
+from api.session import CONDITIONS, FIELD_LAYERS, Refused, Session, create, scenarios, worlds
 from api.values import (
     BarrierView,
     Column,
@@ -25,6 +25,7 @@ from api.values import (
     Record,
     Request,
     Sample,
+    ScenarioReport,
     SpeciesNameRequest,
     SpeciesReport,
     Status,
@@ -63,6 +64,7 @@ __all__ = [
     "RemoteSession",
     "Request",
     "Sample",
+    "ScenarioReport",
     "Session",
     "SpeciesNameRequest",
     "SpeciesReport",
@@ -71,5 +73,6 @@ __all__ = [
     "WorldInfo",
     "connect",
     "create",
+    "scenarios",
     "worlds",
 ]

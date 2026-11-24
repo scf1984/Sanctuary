@@ -111,8 +111,11 @@ class TestEverythingReturnedIsPlain:
     def calls(self, session):
         info = session.describe()
         some_id = int(session.frame().ids.to_numpy()[0])
+        playing = api.create("demo", seed=2, founders=20, scenario="first-split")
+        playing.advance(25)
         return {
             "worlds": api.worlds(),
+            "scenarios": api.scenarios(),
             "status": session.status(),
             "describe": info,
             "terrain": session.terrain(),
@@ -123,6 +126,8 @@ class TestEverythingReturnedIsPlain:
             "inspect_missing": session.inspect(-1),
             "ledger": session.ledger(),
             "species": session.species(),
+            "scenario_sandbox": session.scenario(),
+            "scenario": playing.scenario(),
             "name": session.name(SpeciesNameRequest(species_id=0, name="Grazers")),
             "quote_cull": session.quote(CullRequest(species_id=0, count=1)),
             "quote_fence": session.quote(FenceRequest(1.0, 1.0, 9.0, 9.0)),
@@ -147,7 +152,7 @@ class TestEverythingReturnedIsPlain:
         """A method added to `Session` without being walked is a method whose return nobody
         checked. Control and write calls are exercised by the session tests instead."""
         walked = {"status", "describe", "terrain", "frame", "barriers", "history", "inspect",
-                  "ledger", "species", "name", "quote", "condition", "field"}
+                  "ledger", "species", "scenario", "name", "quote", "condition", "field"}
         control_and_write = {"advance", "save", "load", "request"}
         public = {name for name in vars(api.Session) if not name.startswith("_")}
 

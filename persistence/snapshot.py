@@ -31,7 +31,12 @@ from core.world.interventions import Record
 # v9 added each split's tick and founder count to the lineage, the player's names for species, and
 # the living count per species to every metric sample (#314). A v8 lineage cannot say when its
 # splits happened, and a v8 series has no per-species counts to fill in.
-SCHEMA_VERSION = 9
+#
+# v10 added what the speciation check last measured, per species, to the world and to every metric
+# sample, and the tick each extinct species was found extinct (#317). A v9 series cannot show how
+# far a fenced group had come toward a split, and a v9 recorder cannot say whether a daughter died
+# within a generation once the window has forgotten.
+SCHEMA_VERSION = 10
 
 # Every array the world cannot recompute. Terrain, water, the cue field and the forage field are
 # all pure functions of the config or of the state below, so storing them would be storing a
@@ -130,6 +135,13 @@ def save(world, path: Path, names: Mapping[int, str]) -> Path:
             [split.species_id, split.parent_species_id, split.tick, split.founders]
             for split in world.speciation.lineage.splits()
         ],
+        # What the last speciation check measured (#317). It decides nothing, but without it a
+        # reloaded world reads no divergence until the next check, a generation later, and the
+        # series a player watches for progress drops to zero for no reason they could see.
+        "divergence": sorted(
+            [int(species), float(reading)]
+            for species, reading in world.speciation.divergence.items()
+        ),
         # JSON object keys are strings, so the ids are written as pairs.
         "names": sorted([int(species), str(name)] for species, name in names.items()),
     }
@@ -187,6 +199,9 @@ def load(world, path: Path) -> dict[int, str]:
                 for species, parent, tick, founders in meta["lineage"]
             )
         )
+        world.speciation.divergence = {
+            int(species): float(reading) for species, reading in meta["divergence"]
+        }
         world.plants.biomass[...] = archive["plants.biomass"]
         world.plants.soil_nutrients[...] = archive["plants.soil_nutrients"]
         world.carrion.mass[...] = archive["carrion.mass"]
@@ -203,6 +218,7 @@ def load(world, path: Path) -> dict[int, str]:
                     if name.startswith("metrics.")
                 },
                 meta["metrics"]["previous"],
+                {int(species): int(tick) for species, tick in meta["metrics"]["extinctions"]},
             )
 
     if meta["interventions"] is not None:
@@ -251,7 +267,8 @@ def _recording(metrics) -> Optional[dict]:
 
     The window itself goes in the arrays (`MetricHistory.columns`), because it is large. This is
     the part that is small: the previous reading the first sample after a reload differences its
-    conceptions and deaths against, and the recording policy the window was taken under, which
+    conceptions and deaths against, the tick each extinct species was found extinct (which the
+    window forgets, #317), and the recording policy the window was taken under, which
     `_refuse_if_foreign` checks. A recorder's config is not a rule and is not in the fingerprint,
     since a recording never moves an outcome, so it needs its own check.
     """
@@ -260,6 +277,8 @@ def _recording(metrics) -> Optional[dict]:
     return {
         "config": dataclasses.asdict(metrics.config),
         "previous": metrics.previous_reading,
+        # JSON object keys are strings, so the ids are written as pairs.
+        "extinctions": sorted([int(species), int(tick)] for species, tick in metrics.extinctions.items()),
     }
 
 
