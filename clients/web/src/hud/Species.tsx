@@ -5,7 +5,7 @@
 // It is also where a cull is asked for (#28): a cull thins one species, chosen at random, so the
 // species' own row is the control. Like a fence, it shows its price before it commits.
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import type { Quote, SpeciesReport } from "../api/values";
 import { hex, speciesColor } from "../map/palette";
@@ -32,16 +32,19 @@ interface Props {
   balance: number | null;
   onQuote: (species: number, count: number) => Promise<Quote>;
   onCull: (species: number, count: number) => Promise<void>;
+  /** An onboarding hint anchored to this list (#317), or nothing. */
+  hint?: ReactNode;
 }
 
 const number = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 0 });
 
-export function SpeciesPanel({ species, series, selected, onSelect, onRename, guard, balance, onQuote, onCull }: Props) {
+export function SpeciesPanel({ species, series, selected, onSelect, onRename, guard, balance, onQuote, onCull, hint }: Props) {
   const rows = lineageRows(species);
   const byId = new Map(species.map((report) => [report.id, report]));
   return (
     <aside className="species">
       <h2>Species</h2>
+      {hint}
       {species.length === 1 && (
         <p className="help">
           One species so far. Fence a group off and wait: isolated long enough, it drifts apart and splits into a new one.

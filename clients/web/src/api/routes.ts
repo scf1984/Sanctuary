@@ -9,6 +9,7 @@ export const ROUTES = [
   "/history",
   "/ledger",
   "/species",
+  "/scenario",
   "/condition",
   "/field",
   "/entity",

@@ -16,8 +16,8 @@ from core.world.terrain import Terrain
 from core.world.water import Water
 
 
-def session_on(founders=40, seed=3, world="demo"):
-    return api.create(world, seed=seed, founders=founders)
+def session_on(founders=40, seed=3, world="demo", scenario=None):
+    return api.create(world, seed=seed, founders=founders, scenario=scenario)
 
 
 def row_of(session, entity_id):
@@ -27,6 +27,17 @@ def row_of(session, entity_id):
 class TestCreate:
     def test_the_named_worlds_are_offered(self):
         assert set(api.worlds()) == {"demo", "temperate"}
+
+    def test_the_named_scenarios_are_offered(self):
+        assert api.scenarios() == ("first-split",)
+
+    def test_an_unknown_scenario_is_refused_rather_than_dropped(self):
+        with pytest.raises(ValueError, match="unknown scenario"):
+            session_on(scenario="no-such-goal")
+
+    def test_a_scenario_is_refused_on_a_world_it_was_not_written_for(self):
+        with pytest.raises(ValueError, match="runs on the 'demo' world"):
+            session_on(world="temperate", scenario="first-split")
 
     def test_an_unknown_world_is_refused_rather_than_defaulted(self):
         with pytest.raises(ValueError, match="unknown world"):
@@ -441,3 +452,37 @@ class TestSpecies:
         session.load(path)
 
         assert session.species()[0].name == "Grazers"
+
+
+class TestScenario:
+    """#317: the scenario a world was founded with, and its goal, read afresh on every call."""
+
+    def test_a_sandbox_world_has_none(self):
+        assert session_on(founders=20).scenario() is None
+
+    def test_the_report_carries_the_scenarios_own_words_and_an_open_goal(self):
+        from worlds import SCENARIOS
+
+        session = session_on(founders=20, scenario="first-split")
+        session.advance(20)
+
+        report = session.scenario()
+        written = SCENARIOS["first-split"]
+
+        assert (report.title, report.goal_text, report.briefing) == (
+            written.title,
+            written.goal_text,
+            written.briefing,
+        )
+        assert report.outcome == "open"
+        assert report.parent is None and report.resolved_tick is None
+
+    def test_a_scenario_changes_nothing_the_world_does(self):
+        """It is layered on the sandbox (§2.7), so the same seed runs the same world with or
+        without one."""
+        sandbox = session_on(founders=20, seed=5)
+        playing = session_on(founders=20, seed=5, scenario="first-split")
+        sandbox.advance(30)
+        playing.advance(30)
+
+        np.testing.assert_array_equal(sandbox.frame().x.to_numpy(), playing.frame().x.to_numpy())

@@ -1533,6 +1533,24 @@ by" hunger and no animal stands still merely because the drive that won has no m
     accordingly). A larger pen takes longer, which is real peripatric speciation.
   - **Cost**: one check is 420 ms at 100,000 animals of one species, once a generation, so about
     3.5 ms per tick spread out. The lineage is state and is snapshotted (schema v7).
+  - **The check keeps what it measured** (#317, decision 3): `Speciation.divergence`, per species,
+    the proposed groups' centroid gap over the gap a split needs, so 1 is the gate firing. It is
+    computed from the same two numbers the gate compares, never a second estimate, and recorded on
+    every metrics sample as `species_divergence`. A species the check could not measure (fewer
+    than two groups of `min_founders`) has no reading, and the scenario's progress then shows the
+    last one measured rather than dropping to nothing.
+
+    **Measured, and weaker than decision 3 hoped** (`docs/spikes/scenario-progress.md`). The
+    clustering halves even an unfenced species, so the reading never starts at zero: an unfenced
+    herd reads 0.24 to 0.60 over six seeds, and wanders by a fifth from one generation to the
+    next. A fenced pen of a few dozen to a hundred, among thousands outside, does not become one
+    of the two proposed groups until it has drifted most of the way, so the reading tracks the
+    halves of the herd for most of the wait. A pen of 60 to 100 jumped from that range to a split
+    within three generations; one that dwindled to 20–35 was picked out earlier and climbed. Pens
+    split 66 to 178 generations after the fence, 2.6 to 6.4 hours at the live rate. The reading is
+    honest about what it is, the gate's own number, but it is not a smooth measure of a pen's
+    drift. A pen-against-the-rest reading would be, and would need the sealed regions (#169) the
+    split check deliberately does not read (#16).
   - **The lineage records when and from how many** (#314, the owner's decision 2). Each split is a
     `Split`: daughter, parent, the tick it happened on, and its founder count. A split is most often
     met on return, so when it happened is part of what it is, and nothing can recompute it
@@ -1698,6 +1716,31 @@ by" hunger and no animal stands still merely because the drive that won has no m
   not stewardship. **A goal is a check against recorded metrics (#30, #161), never a prediction**:
   §2.3 rules out computing what a world will do, so a scenario can only ask what it did.
   Competitions (#41) are a separate thing: statistical, over replicates (§2.2).
+
+  **The first scenario** (#317, the owner's seven decisions) is *A species of your own*, on the
+  demo world (`worlds.scenarios`):
+
+  - **The goal is the world's first split, with parent and daughter both alive a generation
+    later.** Its whole input is already recorded: the lineage and the per-species series. A split
+    by terrain alone counts too, since nothing records which split a fence caused. The generation
+    is the demo world's own (`GENERATION_TICKS`), so a daughter has bred rather than only been
+    counted.
+  - **It can be lost**, when the founding species dies out before any split or either species of
+    the first split dies out before the generation is up. Extinction is permanent (§2.7), so a loss
+    is too. **Met and lost are both final.** A met goal stays met whatever the world does next,
+    and the world runs on as a sandbox either way.
+  - **A goal is read, never kept** (`metrics.goals`). It is a pure function of the lineage, the
+    metric window and the extinctions the recorder keeps, so it answers the same live, after an
+    absence and after a reload, and has nothing of its own to save. Read off the window alone it
+    would break: the window forgets after `history_limit` samples, about 11 hours at the demo
+    world's live rate, and a daughter that died within its generation would then stop reading as a
+    loss. So the recorder keeps the tick each species was found extinct beside the window
+    (`MetricHistory.extinct_at`), counting a gestating young as a member as collapse does.
+  - **A scenario is not a rule.** The same seed runs the same world with or without one, so it is
+    not in the config and not fingerprinted. The founding (`world.json`) records it, so a restart
+    plays the same goal, and a world founded before scenarios reads as a sandbox.
+  - **Its words live beside its goal**: title, goal and briefing are `worlds/` content handed to
+    the client, never written there (§4).
 - **An intervention is recorded data applied at a tick boundary, never a mutation from outside** —
   settled in #26, which owns the framework. Every part of that sentence is load-bearing:
 
@@ -1899,8 +1942,8 @@ wrapping work. If it is not, no amount of service code will save it.
   tagged with its type's name, so no message shape is written down anywhere twice. Only
   `api.values`' own types decode. NaN and infinity are refused, since `JSON.parse` rejects them.
 - **A state directory holds the founding, the timeline and the snapshot.** The founding
-  (`world.json`: the world's name, seed, founders and anchor) is written once and never changes, so
-  it cannot disagree with a newer snapshot. The timeline (`timeline.json`) holds every rate change
+  (`world.json`: the world's name, seed, founders, scenario and anchor) is written once and never
+  changes, so it cannot disagree with a newer snapshot. The timeline (`timeline.json`) holds every rate change
   since the anchor (§2.4), rewritten before each takes effect. A restart rebuilds the world from
   the founding, restores the snapshot, and pays the downtime from the timeline. A snapshot is replaced only once the new one is whole. A hard kill
   loses everything since the last graceful stop, which is #52's to solve.
@@ -1945,8 +1988,9 @@ wrapping work. If it is not, no amount of service code will save it.
 
   **The intervention ledger and the metric history are state too** (schema v6, #31; v8 added what
   income has earned and the rate it pays at, #308; v9 added each split's tick and founders, the
-  player's species names, and the living count per species on every sample, #314). Without the
-  ledger a reload hands back a fresh budget, and a costly cull can be repeated for free. Without the
+  player's species names, and the living count per species on every sample, #314; v10 added what
+  the speciation check last measured, per species, on the world and on every sample, and the tick
+  each extinct species was found extinct, #317). Without the ledger a reload hands back a fresh budget, and a costly cull can be repeated for free. Without the
   series every scenario goal and every income reading restarts from nothing, and a series cannot
   be replayed (§2.2, §4). Three rules come with them:
 
@@ -2028,6 +2072,16 @@ built in #306. It lives in `clients/web`:
 - **A cull is asked for on its species' row** (#28), since it thins a species rather than a place.
   A count, capped at what the guard allows, is priced as it is typed and committed only by a
   confirm, as a fence is.
+- **A scenario has a goal panel and an onboarding** (#317, decisions 6 and 7). The goal panel sits
+  above the tools: the goal, how far the founding species' groups have drifted, and once split,
+  which two species must live until when. A briefing opens by itself the first time a browser
+  meets a scenario. After it, one hint at a time sits on the control it names: Fence, then the
+  speed buttons, then, after a split, the species list. A hint goes once the player has done what
+  it says, or once the world already shows it done, as with a fence built from another device.
+  **What a viewer has seen is kept in that browser**, never in the snapshot, because it is about
+  the person and not the world; a second device shows the hints again. A returning player learns
+  what happened from the goal panel and the split announcement (#314). A "while you were away"
+  summary is #34's, so it is not built twice.
 
 **A position snapshot is never read without the occupancy that qualifies it** — decided in #119,
 which owned it, and it governs every future overlay (#39) rather than the entity dots alone.

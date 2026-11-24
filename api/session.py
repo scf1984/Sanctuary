@@ -37,6 +37,7 @@ from api.values import (
     Quote,
     Request,
     Sample,
+    ScenarioReport,
     SpeciesNameRequest,
     SpeciesReport,
     Status,
@@ -50,7 +51,7 @@ from core.world.fence import Fence
 from core.world.interventions import Intervention
 from metrics import MetricHistory
 from persistence import SnapshotError, load, save
-from worlds import WORLDS, build_named_world
+from worlds import SCENARIOS, WORLDS, Scenario, build_named_world, scenario_named
 
 # Where each layer's grid lives on an assembled world: `(service attribute, field attribute)`. One
 # table rather than a naming convention, because the fields genuinely live on different services,
@@ -91,22 +92,47 @@ def worlds() -> tuple[str, ...]:
     return tuple(WORLDS)
 
 
-def create(world: str, seed: int, founders: int) -> Session:
-    """Build the world called `world` and open a session on it.
+def scenarios() -> tuple[str, ...]:
+    """The scenario names `create` accepts."""
+    return tuple(SCENARIOS)
+
+
+def create(world: str, seed: int, founders: int, scenario: Optional[str] = None) -> Session:
+    """Build the world called `world` and open a session on it, playing `scenario` if one is named.
 
     `seed` is logged for replaying a crash, never a promise of determinism (§2.2). An unknown name
-    raises rather than falling back to some default world (§8.7).
+    raises rather than falling back to some default world (§8.7), and so does a scenario written
+    for a different world: a goal checked against a world it was not written for would be read as
+    a result.
+
+    None for `scenario` is the sandbox with no goal, which is still a whole game (§2.7).
     """
-    return Session(build_named_world(world, seed, founders), world, seed)
+    chosen = None
+    if scenario is not None:
+        chosen = scenario_named(scenario)
+        if chosen.world != world:
+            raise ValueError(
+                f"scenario {scenario!r} runs on the {chosen.world!r} world, not {world!r}"
+            )
+    return Session(build_named_world(world, seed, founders), world, seed, scenario, chosen)
 
 
 class Session:
     """A client's handle on one world. See the module docstring for the rules it keeps."""
 
-    def __init__(self, world: World, name: str, seed: int) -> None:
+    def __init__(
+        self,
+        world: World,
+        name: str,
+        seed: int,
+        scenario_name: Optional[str] = None,
+        scenario: Optional[Scenario] = None,
+    ) -> None:
         self._world = world
         self._name = name
         self._seed = seed
+        self._scenario_name = scenario_name
+        self._scenario = scenario
         # Fixed for the session, deliberately: a ramp that rescales itself hides the slow decline a
         # field overlay exists to show. See `_layer_references`.
         self._references = _layer_references(world)
@@ -316,6 +342,39 @@ class Session:
                 )
             )
         return tuple(reports)
+
+    def scenario(self) -> Optional[ScenarioReport]:
+        """The scenario this world was founded with and where its goal stands, or None for a world
+        played as a sandbox (#317).
+
+        Assessed afresh on every call from what the world recorded, never kept (`metrics.goals`),
+        so it answers the same after an absence, a restart or a reload as it would have live.
+        """
+        if self._scenario is None or self._scenario_name is None:
+            return None
+        recorder = self._world.loop.metrics
+        if recorder is None:
+            raise RuntimeError(
+                f"world {self._name!r} records no history, so scenario "
+                f"{self._scenario_name!r} has nothing to check its goal against"
+            )
+        reading = self._scenario.goal.assess(
+            cast(MetricHistory, recorder), self._world.speciation.lineage
+        )
+        return ScenarioReport(
+            name=self._scenario_name,
+            title=self._scenario.title,
+            goal_text=self._scenario.goal_text,
+            briefing=self._scenario.briefing,
+            outcome=reading.outcome,
+            progress=reading.progress,
+            parent=reading.parent,
+            daughter=reading.daughter,
+            split_tick=reading.split_tick,
+            due_tick=reading.due_tick,
+            resolved_tick=reading.resolved_tick,
+            reason=reading.reason,
+        )
 
     def ledger(self) -> Ledger:
         interventions = self._interventions()

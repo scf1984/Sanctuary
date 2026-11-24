@@ -211,10 +211,51 @@ def has_diverged(
         split" or "split but still fertile".
     columns: the vocabulary indices distance reads (the signature block in every world so far).
     """
+    apart, needed = _separation(genetics, a, b, ordinary, threshold, columns)
+    return bool(apart >= needed)
+
+
+def divergence(
+    genetics: Genetics,
+    a: Selection,
+    b: Selection,
+    ordinary: float,
+    threshold: float,
+    columns: np.ndarray,
+) -> float:
+    """How far `a` and `b` have come toward a split: their centroid gap over the gap a split needs.
+
+    Dimensionless. `has_diverged` is exactly this reaching 1, read from the same two numbers, so the
+    progress a player is shown (#317) is the quantity the gate decides on and cannot disagree with
+    it. It is a measurement of now, never a forecast (§2.3): drift is a random walk, and the ratio
+    can fall as well as rise. Arguments as `has_diverged`.
+    """
+    return _ratio(*_separation(genetics, a, b, ordinary, threshold, columns))
+
+
+def _separation(
+    genetics: Genetics,
+    a: Selection,
+    b: Selection,
+    ordinary: float,
+    threshold: float,
+    columns: np.ndarray,
+) -> tuple[float, float]:
+    """`(centroid gap, gap a split needs)`, both in the signature genes' own units.
+
+    The one place the comparison's two sides are computed, so `has_diverged` and `divergence` read
+    the same arithmetic. The gate compares the two directly rather than their ratio against 1,
+    which would round differently at the boundary and so decide a split the gate never made.
+    """
     rows = np.concatenate([a.to_indices(), b.to_indices()])
     step = float(mutation_step(genetics, rows).mean())
-    gap = split_gap(ordinary, threshold) * step
-    return bool(centroid_between(genetics, a, b, columns) >= gap)
+    return float(centroid_between(genetics, a, b, columns)), split_gap(ordinary, threshold) * step
+
+
+def _ratio(apart: float, needed: float) -> float:
+    """`apart / needed`. With no mutability to count steps in, the gate needs no gap at all and
+    splits whatever it is offered, so the reading is 1 there: reaching 1 is the gate firing."""
+    return apart / needed if needed > 0.0 else 1.0
 
 
 def split(genetics: Genetics, lineage: Lineage, diverged: Selection, tick: int) -> int:
@@ -395,6 +436,14 @@ class Speciation:
 
     Owns the `Lineage`, since a split is the only thing that writes one. Owns no store column:
     species ids are `Genetics`'.
+
+    `divergence` is what the last check measured, by species id: `divergence()` of the two groups
+    it proposed (#317). Recorded only for a species the check could have split, one big enough
+    to propose two groups of `min_founders`; a species absent from it was not measured. It is
+    replaced whole at every check, so it never mixes readings from two generations. It decides
+    nothing: the check would compute it anyway, and keeping it is what lets a metric record the
+    quantity the gate reads rather than a second estimate of it. Saved in the snapshot, because
+    a reload would otherwise read nothing until the next check, a generation later.
     """
 
     def __init__(
@@ -403,6 +452,7 @@ class Speciation:
         self.genetics = genetics
         self.config = config
         self.lineage = lineage
+        self.divergence: dict[int, float] = {}
         # Signature genes are positions in cue space, so dimensionless (§2.6).
         self.columns = np.array(
             [genes.index_of(name, unit=Unit.DIMENSIONLESS) for name in config.distance_genes],
@@ -446,6 +496,7 @@ class Speciation:
         species_ids = self.genetics.species_ids_at(rows)
         capacity = population.capacity
         made = []
+        self.divergence = {}
         for species_id in np.unique(species_ids).tolist():
             members = Selection.from_indices(rows[species_ids == species_id], capacity)
             if len(members) < 2 * self.config.min_founders:
@@ -453,14 +504,16 @@ class Speciation:
             first, second = propose(self.genetics, members, self.columns)
             if min(len(first), len(second)) < self.config.min_founders:
                 continue
-            if not has_diverged(
+            apart, needed = _separation(
                 self.genetics,
                 first,
                 second,
                 self.config.ordinary,
                 self.config.threshold,
                 self.columns,
-            ):
+            )
+            self.divergence[species_id] = _ratio(apart, needed)
+            if not apart >= needed:
                 continue
             # The smaller group is the daughter: a split is a group leaving its parent stock, and
             # the stock is the larger side. Which keeps the old id is otherwise arbitrary.

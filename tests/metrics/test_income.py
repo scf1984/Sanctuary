@@ -147,7 +147,7 @@ class TestInAWorld:
     def test_a_real_recorder_pays_on_its_own_samples(self):
         world = build_demo_world(seed=2, n_entities=40)
         history = MetricHistory(
-            world.store, world.genetics, world.plants, world.genes.vocabulary,
+            world.store, world.genetics, world.plants, world.speciation, world.genes.vocabulary,
             MetricsConfig(every_n_ticks=10, history_limit=100),
         )
         ledger = Interventions(balance=0.0)

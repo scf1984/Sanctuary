@@ -21,7 +21,7 @@ from typing import Callable, Optional, Sequence
 import api
 from service.server import Service
 from service.state import close_world, keep_timeline, open_timeline, open_world
-from worlds import pacing_for
+from worlds import pacing_for, scenario_named
 
 # The game client's build output (#306): `npm run build` in `clients/web` writes it.
 _CLIENT = Path(__file__).resolve().parents[1] / "clients" / "web" / "dist"
@@ -36,6 +36,11 @@ def parse(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--world", choices=api.worlds(), help="founds a new world (default demo)")
     parser.add_argument("--seed", type=int, help="founds a new world (default 0)")
     parser.add_argument("--founders", type=int, help="founds a new world (default 200)")
+    parser.add_argument(
+        "--scenario",
+        choices=api.scenarios(),
+        help="founds a new world playing this scenario, on the world it names (default: a sandbox)",
+    )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument(
@@ -57,11 +62,20 @@ def run(
     announce: Callable[[str], None] = lambda line: print(line, flush=True),
 ) -> Path:
     """Serve until `stopping` is set, then drain and snapshot. Returns where the snapshot went."""
-    asked = {"world": args.world, "seed": args.seed, "founders": args.founders}
+    asked = {
+        "world": args.world,
+        "seed": args.seed,
+        "founders": args.founders,
+        "scenario": args.scenario,
+    }
     if not (args.state / "world.json").exists():
         # Defaults apply only when founding. For a world that already exists, an argument left out
         # means "whatever it was founded with", and one given must match it (see `open_world`).
-        asked = {key: _FOUNDING_DEFAULTS[key] if value is None else value for key, value in asked.items()}
+        # A scenario names its own world, so that is the default world when one is asked for.
+        defaults = dict(_FOUNDING_DEFAULTS, scenario=None)
+        if args.scenario is not None:
+            defaults["world"] = scenario_named(args.scenario).world
+        asked = {key: defaults[key] if value is None else value for key, value in asked.items()}
     now = clock()
     session, founding = open_world(
         args.state,
@@ -86,7 +100,9 @@ def run(
     threading.Thread(target=server.serve_forever, name="http", daemon=True).start()
     service.start()
     announce(
-        f"serving {founding.world!r} (seed {founding.seed}) at http://{args.host}:{server.server_port}, "
+        f"serving {founding.world!r} (seed {founding.seed}"
+        f"{'' if founding.scenario is None else f', scenario {founding.scenario!r}'}) "
+        f"at http://{args.host}:{server.server_port}, "
         f"tick {session.status().tick}; Ctrl+C to stop"
     )
     if client is None:

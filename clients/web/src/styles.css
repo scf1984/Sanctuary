@@ -453,3 +453,165 @@ button:disabled {
     max-height: 35%;
   }
 }
+
+/* The scenario's goal (#317): top of the right-hand panel, above the tools it asks the player to use. */
+.goal {
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--edge);
+}
+
+.goal h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.goal .outcome {
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.goal.met .outcome {
+  color: #1d1f1c;
+  background: var(--ok);
+}
+
+.goal.lost .outcome {
+  color: #1d1f1c;
+  background: var(--refused);
+}
+
+.goal .goal-text,
+.goal .status {
+  margin: 4px 0;
+  line-height: 1.4;
+}
+
+.goal .goal-text {
+  color: var(--ink-soft);
+}
+
+.goal .meter {
+  height: 8px;
+  margin: 8px 0 4px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.goal .meter span {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  background: var(--accent);
+  transition: width 400ms ease;
+}
+
+.link-button {
+  padding: 0;
+  font-size: 12px;
+  color: var(--accent);
+  background: none;
+  border: none;
+}
+
+.link-button:hover:not(:disabled) {
+  background: none;
+  text-decoration: underline;
+}
+
+/* The briefing: a card over the map on first open, closed by the one button that starts the game. */
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(10, 11, 10, 0.6);
+  z-index: 10;
+}
+
+.briefing {
+  max-width: 520px;
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 20px 24px;
+  background: #242722;
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  line-height: 1.5;
+}
+
+.briefing h1 {
+  margin: 0 0 6px;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.briefing .goal-text {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.briefing p {
+  margin: 10px 0;
+  color: var(--ink-soft);
+}
+
+.briefing .actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+/* An onboarding hint, anchored to the control it names and put away by doing what it says. */
+.hint-bubble {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 8px 0;
+  padding: 7px 8px 7px 10px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--ink);
+  background: rgba(143, 131, 224, 0.2);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+}
+
+.hint-bubble .dismiss {
+  flex: none;
+  padding: 0 4px;
+  line-height: 1.2;
+  background: none;
+  border: none;
+  color: var(--ink-soft);
+}
+
+.anchor {
+  position: relative;
+}
+
+.hint-bubble.below {
+  position: absolute;
+  top: calc(100% + 12px);
+  left: 0;
+  width: 260px;
+  margin: 0;
+  background: #2e2a45;
+  z-index: 5;
+}
+
+/* The bar's hint hangs below it over the species list, and the bar's blur makes it a stacking
+   context of its own, so the bar as a whole has to sit above the panels for the hint to show. */
+.bar {
+  z-index: 6;
+}

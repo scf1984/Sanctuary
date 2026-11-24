@@ -406,6 +406,7 @@ class TestTheMetricHistorySurvivesAReload:
             restored.store,
             restored.genetics,
             restored.plants,
+            restored.speciation,
             restored.genes.vocabulary,
             dataclasses.replace(DEMO_METRICS, every_n_ticks=DEMO_METRICS.every_n_ticks // 2),
         )
@@ -471,3 +472,30 @@ class TestSpeciesSurviveAReload:
 
     def test_a_world_nobody_named_loads_with_no_names(self, tmp_path):
         assert load(world(), save(world(), tmp_path / "w.npz", names={})) == {}
+
+    def test_what_the_check_last_measured_comes_back(self, tmp_path):
+        """#317: otherwise a reloaded world reads no divergence until the next check, a
+        generation later, and the progress a player watches drops to zero for no reason."""
+        built = world()
+        built.speciation.divergence = {0: 0.37}
+
+        reloaded = world()
+        load(reloaded, save(built, tmp_path / "w.npz", names={}))
+
+        assert reloaded.speciation.divergence == {0: 0.37}
+
+    def test_an_extinction_comes_back_after_the_window_has_forgotten_it(self, tmp_path):
+        """#317: the goal asks when a species died out, and the window only holds the recent
+        past, so the recorder keeps extinctions beside it and the snapshot carries them."""
+        built = world()
+        daughter = self.split_off(built)
+        members = built.store.alive & (built.store.species_id == daughter)
+        built.store.release(built.store.row_ids()[members])
+        built.loop.advance(DEMO_METRICS.every_n_ticks)
+        found = built.loop.metrics.extinct_at(daughter)
+
+        reloaded = world()
+        load(reloaded, save(built, tmp_path / "w.npz", names={}))
+
+        assert found is not None
+        assert reloaded.loop.metrics.extinct_at(daughter) == found

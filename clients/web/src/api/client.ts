@@ -14,6 +14,7 @@ import type {
   Quote,
   Request,
   Sample,
+  ScenarioReport,
   SpeciesNameRequest,
   SpeciesReport,
   Status,
@@ -60,6 +61,12 @@ export async function species(): Promise<readonly SpeciesReport[]> {
   const reports = await call("/species");
   if (!Array.isArray(reports)) throw new TypeError("expected a list of SpeciesReports");
   return reports.map((report) => expectType(report, "SpeciesReport"));
+}
+
+/** The scenario this world plays and where its goal stands, or null for a sandbox (#317). */
+export async function scenario(): Promise<ScenarioReport | null> {
+  const report = await call("/scenario");
+  return report === null ? null : expectType(report, "ScenarioReport");
 }
 
 /** Call species `id` by `name`, at once: naming is not an intervention and costs nothing. */

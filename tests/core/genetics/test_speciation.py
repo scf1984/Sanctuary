@@ -8,6 +8,7 @@ from core.genetics.inheritance import inherit_genes
 from core.genetics.expression import GeneticsConfig
 from core.genetics.service import Genetics
 from core.genetics.speciation import (
+    divergence,
     Lineage,
     Split,
     MixedSpeciesError,
@@ -663,6 +664,76 @@ class TestCheck:
         assert len(first_round) == 1
         assert len(second_round) == 1
         assert genetics.species.n_species == 3
+
+
+class TestDivergenceReading:
+    """#317: what the check measured, kept for the scenario's progress, and the gate's own number."""
+
+    def test_reaching_one_is_exactly_the_gate_firing(self):
+        """The reading and `has_diverged` come from the same two numbers, so a player shown 100%
+        and a gate that has not split cannot both happen, and neither can the reverse."""
+        store, genetics, rows = make_world(2)
+        store.genes[rows] = np.array(
+            [[0.0] * len(GENE_NAMES), [3.0, 4.0, *([0.0] * (len(GENE_NAMES) - 2))]], dtype=np.float32
+        )
+        unit_steps(genetics)
+        a, b = selection_of(store, rows, [0]), selection_of(store, rows, [1])
+
+        for threshold in (4.0, 4.9, 5.0, 5.1, 10.0):
+            reading = divergence(genetics, a, b, 0.0, threshold, COLUMNS)
+            assert reading == pytest.approx(5.0 / threshold)
+            assert (reading >= 1.0) == has_diverged(genetics, a, b, 0.0, threshold, COLUMNS)
+
+    def test_the_check_records_what_it_measured_per_species(self):
+        store, genetics, rows = blobs(30, (0.0, 3.0), 0.3, np.random.default_rng(0))
+        speciation = speciation_for(genetics, threshold=5.0)
+        everyone = selection_of(store, rows, range(60))
+        first, second = propose(genetics, everyone, COLUMNS)
+
+        assert speciation.check(everyone, tick=0) == ()
+        assert set(speciation.divergence) == {0}
+        assert speciation.divergence[0] == pytest.approx(
+            divergence(genetics, first, second, 0.0, 5.0, COLUMNS)
+        )
+        assert 0.0 < speciation.divergence[0] < 1.0
+
+    def test_a_split_reads_at_least_one(self):
+        store, genetics, rows = blobs(30, (0.0, 10.0), 0.3, np.random.default_rng(0))
+        speciation = speciation_for(genetics, threshold=5.0)
+
+        speciation.check(selection_of(store, rows, range(60)), tick=0)
+
+        assert speciation.divergence[0] >= 1.0
+
+    def test_a_species_too_small_to_split_is_not_measured(self):
+        """Fewer than two groups of `min_founders` could never split, so a reading for it would
+        be progress toward something the gate refuses."""
+        store, genetics, rows = blobs(8, (0.0, 3.0), 0.3, np.random.default_rng(0))
+        speciation = speciation_for(genetics, threshold=5.0, min_founders=10)
+
+        speciation.check(selection_of(store, rows, range(16)), tick=0)
+
+        assert speciation.divergence == {}
+
+    def test_each_check_replaces_the_last_rather_than_mixing_generations(self):
+        store, genetics, rows = blobs(30, (0.0, 3.0), 0.3, np.random.default_rng(0))
+        speciation = speciation_for(genetics, threshold=5.0)
+        speciation.check(selection_of(store, rows, range(60)), tick=0)
+
+        speciation.check(selection_of(store, rows, range(15)), tick=1)
+
+        assert speciation.divergence == {}
+
+    def test_off_period_ticks_keep_the_last_reading(self):
+        store, genetics, rows = blobs(30, (0.0, 3.0), 0.3, np.random.default_rng(0))
+        speciation = speciation_for(genetics, threshold=5.0, every_n_ticks=100)
+        everyone = selection_of(store, rows, range(60))
+        speciation.check(everyone, tick=100)
+        held = dict(speciation.divergence)
+
+        speciation.check(everyone, tick=150)
+
+        assert speciation.divergence == held != {}
 
 
 # The statistical harness for TestIsolationCausesSpeciation: two pools of POPULATION, bred for

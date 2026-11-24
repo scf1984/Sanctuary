@@ -289,6 +289,7 @@ _READS: tuple[tuple[re.Pattern[str], Callable[..., object]], ...] = (
     (re.compile(r"^/history$"), lambda s: s.history()),
     (re.compile(r"^/ledger$"), lambda s: s.ledger()),
     (re.compile(r"^/species$"), lambda s: s.species()),
+    (re.compile(r"^/scenario$"), lambda s: s.scenario()),
     (re.compile(r"^/condition/([^/]+)$"), lambda s, mode: s.condition(mode)),
     (re.compile(r"^/field/([^/]+)$"), lambda s, layer: s.field(layer)),
     (re.compile(r"^/entity/(-?\d+)$"), lambda s, entity: s.inspect(int(entity))),

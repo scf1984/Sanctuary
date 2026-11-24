@@ -62,6 +62,17 @@ def test_a_restart_keeps_the_founding_and_pays_the_downtime(tmp_path):
     thread.join(timeout=30.0)
 
 
+def test_a_scenario_founds_its_own_world_and_is_served(tmp_path):
+    """#317: `--scenario` alone is enough, since a scenario names the world it runs on."""
+    stopping, thread, lines, remote = serve(tmp_path / "w", "--scenario", "first-split")
+
+    assert remote.describe().name == "demo"
+    assert remote.scenario().name == "first-split"
+    assert "scenario 'first-split'" in lines[0]
+    stopping.set()
+    thread.join(timeout=30.0)
+
+
 def test_asking_an_existing_world_to_be_another_is_refused(tmp_path):
     stopping, thread, _lines, _remote = serve(tmp_path / "w")
     stopping.set()
