@@ -78,5 +78,5 @@ export function Hint(props: { text: string; onDismiss: () => void; className?: s
 export const HINT_TEXT = {
   fence: "Start here: press Fence, then drag a box around some animals. Give them grass and water.",
   pace: "A split takes hours. Fast-forward while you watch, or close the page: the world keeps running.",
-  species: "A new species has split off. Press “name it” beside it in this list to give it a name.",
+  species: "A new species has split off. Press “name it” under it in this list to give it a name.",
 } as const;

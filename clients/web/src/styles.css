@@ -385,8 +385,13 @@ button:disabled {
 
 .species .new {
   margin-left: 6px;
+  padding: 0 4px;
   font-size: 11px;
   color: var(--accent);
+  background: none;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  white-space: nowrap;
 }
 
 .species .count {
