@@ -852,15 +852,15 @@ WORLDS = {"demo": build_demo_world, "temperate": build_temperate_world}
 DEFAULT_WORLD = "demo"
 
 # How a served demo world keeps time (#32, #36). One tick per real second is §2.1's live rate.
-# While watched it wakes every second, so a viewer sees each tick as it happens. Away, it decays as
-# §2.4's own example does: hourly for a day, then daily. The temperate world differs from the demo
+# While watched it wakes every second, so a viewer sees each tick as it happens. Away, it wakes
+# hourly for as long as the absence lasts (#321). A wake pays the whole debt, so the interval is
+# the most a returning player can owe: decaying to daily, as §2.4's example does, left a return a
+# day in owing up to 86,400 ticks, 60-72 minutes of catch-up at the 20-24 ticks a second the
+# #292 pilot measured, for no saving in total compute. The temperate world differs from the demo
 # only in its sky (#261), so it keeps time the same way.
 DEMO_PACING = Pacing(
     ticks_per_second=1.0,
-    schedule=WakeSchedule(
-        watched_interval=1.0,
-        absent=(Stage(until=86_400.0, interval=3_600.0), Stage(until=math.inf, interval=86_400.0)),
-    ),
+    schedule=WakeSchedule(watched_interval=1.0, absent=(Stage(until=math.inf, interval=3_600.0),)),
     # The slowest stretch of a settled world, rounded down (#307, §8.5): over seeds 0-2, ticks
     # 3,000-6,000 (2,800-4,000 animals) ran 4.6-13.3 ticks a second per 250-tick window, median
     # 9.3, on the development machine. A rate the median sustains would still fall behind in the

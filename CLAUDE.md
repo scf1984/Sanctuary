@@ -244,6 +244,12 @@ by" hunger and no animal stands still merely because the drive that won has no m
 - Wake schedule is **configurable per world** and may decay (hourly for a day, then daily, etc.).
 - **The schedule controls when compute happens, not how fast the world moves.** Waking hourly and
   then daily batches the same ticks differently; it must not make the world age more slowly.
+- **The longest absent interval is the longest a returning player waits.** A wake pays the whole
+  debt, so a return owes everything since the last one, and the first request pays it while the
+  player watches. Decay saves wakes, never compute. The demo world therefore wakes hourly for the
+  whole absence (#321, the owner's decision): decaying to daily left a return a day in owing up to
+  86,400 ticks, 60–72 minutes of catch-up at the 20–24 ticks a second #292's pilot measured. A
+  hosted service with many worlds (#37) may still want fewer wakes, and that is its own schedule.
 - **There is one execution path, and watching is a short interval on it** — gate 2 on #35, decided
   by the owner and built in #32 (`scheduler/`). A watched world is not run by a real-time loop. It
   is caught up by the same executor as an absent one, waking every `watched_interval` seconds
