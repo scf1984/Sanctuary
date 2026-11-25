@@ -117,7 +117,13 @@ function SpeciesRow(props: {
           <span className="dot" style={{ background: hex(speciesColor(report.id)) }} />
         </button>
         {editing === null ? (
-          <button className="name" onClick={() => setEditing(report.name ?? "")} title="rename">
+          // The name is the tooltip because a deep row leaves it a few dozen pixels, and the ellipsis
+          // would otherwise hide it everywhere but the rename field (#325).
+          <button
+            className="name"
+            onClick={() => setEditing(report.name ?? "")}
+            title={`${speciesLabel(report)}, click to rename`}
+          >
             {speciesLabel(report)}
           </button>
         ) : (
