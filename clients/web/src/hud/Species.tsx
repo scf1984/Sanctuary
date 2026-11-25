@@ -119,7 +119,6 @@ function SpeciesRow(props: {
         {editing === null ? (
           <button className="name" onClick={() => setEditing(report.name ?? "")} title="rename">
             {speciesLabel(report)}
-            {unnamed && <span className="new">name it</span>}
           </button>
         ) : (
           <input
@@ -162,6 +161,13 @@ function SpeciesRow(props: {
       {parent !== null && report.split_tick !== null && (
         <p className="origin">
           Split from {speciesLabel(parent)} on {simTime(report.split_tick)}, {number(report.founders ?? 0)} founders
+          {/* Here rather than in the name button, which clips whatever does not fit beside the
+              count and the cull, and narrows with every level of the tree (#322). */}
+          {unnamed && editing === null && (
+            <button className="new" onClick={() => setEditing("")}>
+              name it
+            </button>
+          )}
         </p>
       )}
       {culling && !extinct && (
